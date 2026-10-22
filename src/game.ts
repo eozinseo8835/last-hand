@@ -9,6 +9,8 @@ export const CONFIG = {
   SUSPENSE_MAX_MS: 2500,
   DANGER_CHAMBER: 4,
   GORE_LEVEL: 'medium' as 'low' | 'medium',
+  LOOK_SENSITIVITY: 0.0035,
+  PIXEL_HEIGHT: 360,
 };
 
 export type GamePhase =
