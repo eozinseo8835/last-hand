@@ -1,83 +1,245 @@
-import { useEffect, useState } from 'react';
-export function Revolver({ raised = false, ai = false }: { raised?: boolean; ai?: boolean }) {
-  return <svg className={`revolver ${raised ? 'raised' : ''} ${ai ? 'ai-gun' : ''}`} viewBox="0 0 280 150" aria-hidden="true">
-    <defs><linearGradient id="steel" x2="0.2" y2="1"><stop stopColor="#8b8c80"/><stop offset=".28" stopColor="#50564f"/><stop offset=".5" stopColor="#242b28"/><stop offset=".65" stopColor="#62665b"/><stop offset="1" stopColor="#1a201d"/></linearGradient><linearGradient id="grip" x2="1" y2=".8"><stop stopColor="#624334"/><stop offset="1" stopColor="#261d18"/></linearGradient></defs>
-    <path d="M64 67L42 130Q38 142 60 142L86 139Q95 136 92 126L81 87Z" fill="url(#grip)" stroke="#151713" strokeWidth="3"/>
-    <path d="M48 128L62 85M56 132L72 87M65 131L78 100" stroke="#1d1915" strokeWidth="2" opacity=".6"/>
-    <path d="M82 74C134 64 142 113 102 116Q87 115 82 102M90 84Q119 77 119 98Q117 111 101 109" fill="url(#steel)" fillRule="evenodd" stroke="#1d221d" strokeWidth="3"/>
-    <path d="M98 80Q96 97 105 101" fill="none" stroke="#84877a" strokeWidth="4"/>
-    <path d="M49 35L60 24L78 31L95 34L107 29L246 29L251 34L250 57L122 61L118 77L75 86L52 68Z" fill="url(#steel)" stroke="#171e19" strokeWidth="3"/>
-    <path d="M122 31L245 31M129 56L247 52" stroke="#a4a797" strokeWidth="2" opacity=".6"/>
-    <path d="M236 29L237 22L247 22L248 30M65 31L58 16L49 12L43 17L51 29" fill="#454c42" stroke="#1a201b" strokeWidth="2"/>
-    <rect x="79" y="32" width="48" height="44" rx="12" fill="url(#steel)" stroke="#151b17" strokeWidth="3"/>
-    <path d="M90 39L89 65M106 37L105 69M120 39L118 64" stroke="#161d17" strokeWidth="5" strokeLinecap="round"/>
-    <path d="M92 38L91 62M108 38L107 66" stroke="#72776a" strokeWidth="1.5"/>
-    <circle cx="63" cy="54" r="4" fill="#1c221a" stroke="#6b7260"/><circle cx="66" cy="115" r="3" fill="#b0a18a"/>
-  </svg>;
+import { useEffect, useRef, useState } from 'react';
+import * as THREE from 'three';
+import { CONFIG, type GamePhase, type Round } from './game';
+import { createRoom } from './scene/room';
+import { createActors } from './scene/actors';
+import { createLookState, dragLook, shouldRecenter, updateLook } from './scene/camera';
+
+export type SceneProps = {
+  phase: GamePhase;
+  round: Round | null;
+  roundNumber: number;
+  revealed: boolean;
+  suspense: boolean;
+  dead: 'player' | 'ai' | null;
+  shotEffect: 'click' | 'shot' | null;
+  danger: boolean;
+  recenterToken: number;
+};
+
+function splatterTexture() {
+  const canvas = document.createElement('canvas'); canvas.width = canvas.height = 128;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#4a1711';
+  let seed = 93;
+  const random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+  for (let i = 0; i < 64; i++) {
+    const angle = random() * Math.PI * 2, radius = random() * 54;
+    ctx.beginPath(); ctx.ellipse(64 + Math.cos(angle) * radius, 64 + Math.sin(angle) * radius, 2 + random() * 12, 1 + random() * 5, angle, 0, Math.PI * 2); ctx.fill();
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.magFilter = texture.minFilter = THREE.NearestFilter;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
 }
 
-export default function Scene({ intro, danger, suspense, dead, blood, lowGore }: { intro: boolean; danger: boolean; suspense: boolean; dead: 'player' | 'ai' | null; blood: boolean; lowGore: boolean }) {
- const [flicker, setFlicker] = useState(false);
- useEffect(() => {
-  let pause: ReturnType<typeof setTimeout>, flash: ReturnType<typeof setTimeout>;
-  const schedule = () => { pause = setTimeout(() => {
-   setFlicker(true); flash = setTimeout(() => { setFlicker(false); schedule(); }, 65 + Math.random() * 115);
-  }, (danger ? 900 : 2600) + Math.random() * (danger ? 1800 : 5000)); };
-  schedule(); return () => { clearTimeout(pause); clearTimeout(flash); };
- }, [danger]);
- const center = intro ? 930 : 720;
- return <svg className={`room-art ${danger ? 'danger' : ''} ${suspense ? 'dimmed' : ''} ${dead === 'player' ? 'fallen' : ''}`} viewBox="0 0 1440 810" aria-hidden="true">
-  <defs>
-   <radialGradient id="roomLight" cx="61%" cy="43%" r="59%"><stop stopColor="#333328"/><stop offset=".48" stopColor="#191d19"/><stop offset="1" stopColor="#0b0e0d"/></radialGradient>
-   <radialGradient id="felt" cx="59%" cy="27%" r="74%"><stop stopColor="#3b4840"/><stop offset=".4" stopColor="#273a31"/><stop offset="1" stopColor="#101e19"/></radialGradient>
-   <linearGradient id="wood" x2="0" y2="1"><stop stopColor="#66503b"/><stop offset=".4" stopColor="#31281f"/><stop offset="1" stopColor="#141510"/></linearGradient>
-   <linearGradient id="suit" x2="1" y2=".6"><stop stopColor="#101614"/><stop offset=".5" stopColor="#242b27"/><stop offset="1" stopColor="#0b100e"/></linearGradient>
-   <radialGradient id="mask" cx="39%" cy="30%" r="75%"><stop stopColor="#c8bfa1"/><stop offset=".4" stopColor="#9c9783"/><stop offset=".8" stopColor="#666a5d"/><stop offset="1" stopColor="#333d33"/></radialGradient>
-   <linearGradient id="beam" x2="0" y2="1"><stop stopColor="#e9d4a5" stopOpacity=".09"/><stop offset="1" stopColor="#ddcca4" stopOpacity="0"/></linearGradient>
-   <radialGradient id="bulbGlow"><stop stopColor="#ffdf99" stopOpacity=".34"/><stop offset=".2" stopColor="#dca654" stopOpacity=".08"/><stop offset="1" stopColor="#dca654" stopOpacity="0"/></radialGradient>
-   <linearGradient id="skin" x2=".7" y2="1"><stop stopColor="#857c65"/><stop offset=".5" stopColor="#575847"/><stop offset="1" stopColor="#292f25"/></linearGradient>
-   <filter id="grain"><feTurbulence baseFrequency=".78" numOctaves="3" seed="9" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/><feComponentTransfer><feFuncA type="linear" slope=".12"/></feComponentTransfer><feBlend in="SourceGraphic" mode="soft-light"/></filter>
-   <filter id="blur"><feGaussianBlur stdDeviation="13"/></filter>
-   <radialGradient id="vignette"><stop offset=".35" stopOpacity="0"/><stop offset="1" stopOpacity=".78"/></radialGradient>
-  </defs>
-  <rect width="1440" height="810" fill="url(#roomLight)"/>
-  <g opacity=".23" stroke="#606457" fill="none"><path d="M120 0V510M345 0V450M1100 0V450M1325 0V510"/><path d="M0 392H1440M0 399H1440" strokeWidth="4"/><path d="M160 0V380H320V0M1125 0V380H1295V0"/></g>
-  <path d="M0 75Q720 5 1440 75M0 92Q720 22 1440 92" fill="none" stroke="#090c0b" strokeWidth="13"/>
-  <path d={`M${center - 9} 116L${center - 440} 650H${center + 430}L${center + 9} 116Z`} fill="url(#beam)"/>
-  <ellipse cx={center} cy="436" rx="190" ry="34" fill="#080c09" opacity=".7"/>
-  <g transform={`translate(${center} 0)`} className={`opponent ${dead === 'ai' ? 'slumped' : ''}`}>
-   <path d="M-127 360Q-133 291 -97 282L100 282Q138 300 126 368L140 467H-140Z" fill="#141a16" stroke="#31382d" strokeWidth="3"/>
-   <path d="M-40 296L-87 312Q-119 319 -136 362L-182 433L-119 456L-65 401L-69 461H77L63 391L119 451L181 428L135 352Q120 325 86 312L36 294Z" fill="url(#suit)" stroke="#2c342b" strokeWidth="1.5"/>
-   <path d="M-28 285L-35 318L0 410L35 318L25 285Z" fill="#3c4035"/>
-   <path d="M-16 315L0 329L17 315L7 345L15 395L0 416L-12 390L-6 344Z" fill="#141b17"/>
-   <path d="M-36 302L-68 319L-48 349L-66 363L-9 437L-29 347ZM36 302L68 319L48 349L66 363L10 437L29 347Z" fill="#31392f" stroke="#45493a" strokeWidth=".8"/>
-   <path d="M-133 395L-109 417M132 393L112 412M-62 420H-35" stroke="#424737" strokeWidth="2" opacity=".6"/>
-   <path d="M-30 277L-28 309Q0 326 29 307L29 272" fill="#343d31"/>
-   <path d="M-53 231Q-68 178 -39 154Q0 130 40 155Q64 173 54 229L41 278Q30 307 1 316Q-33 307 -44 280Z" fill="#161d17"/>
-   <path d="M-46 195Q-45 158 0 157Q47 157 47 199L40 254Q36 279 0 296Q-34 282 -40 256Z" fill="url(#mask)" stroke="#797b67" strokeWidth=".8"/>
-   <path d="M-30 180Q-10 164 13 171M-35 195Q-37 226 -29 247" fill="none" stroke="#d2c6a3" strokeWidth="2" opacity=".2"/>
-   <path d="M29 187Q44 221 28 263L5 284Q33 267 36 240Z" fill="#3c473a" opacity=".2"/>
-   <path d="M-164 429Q-170 433 -181 436L-213 442Q-226 447 -220 452L-187 449L-210 459Q-219 466 -209 468L-178 458L-197 472Q-203 478 -193 479L-167 464L-181 477Q-185 484 -175 482L-143 463L-126 451Z" fill="url(#skin)" stroke="#333e2e"/>
-   <path d="M159 427Q169 433 181 435L213 441Q226 446 220 451L187 448L210 458Q219 465 209 467L178 457L197 471Q203 477 193 478L167 463L181 476Q185 483 175 481L143 462L126 450Z" fill="url(#skin)" stroke="#333e2e"/>
-  </g>
-  <path d="M-110 554Q720 297 1550 554L1580 846H-140Z" fill="url(#wood)" stroke="#463a2c" strokeWidth="4"/>
-  <path d="M-80 560Q720 323 1520 560L1530 811H-90Z" fill="url(#felt)" stroke="#7a6950" strokeOpacity=".36" strokeWidth="3"/>
-  <path d="M-50 568Q720 345 1490 568" fill="none" stroke="#b09d76" strokeOpacity=".14" strokeWidth="1"/>
-  <g stroke="#b9b49a" opacity=".09"><path d="M114 620L174 603M1040 503L1093 505M1170 704L1237 716M341 754L365 747M510 478L535 474"/><path d="M230 513L245 516M1140 576L1169 570M857 766L877 760"/></g>
-  <ellipse cx={center} cy="547" rx="205" ry="90" fill="#a3a788" opacity=".025" filter="url(#blur)"/>
-  <g className="player-hands" fill="url(#skin)" stroke="#202c22" strokeWidth="2">
-   <path d="M188 810L264 728Q274 715 287 716L320 697L339 687Q352 687 346 699L320 720L352 708Q367 707 361 718L337 731L365 724Q382 723 375 736L347 749L376 742Q389 744 383 753L337 779L326 810Z"/>
-   <path d="M1252 810L1176 728Q1166 715 1153 716L1120 697L1101 687Q1088 687 1094 699L1120 720L1088 708Q1073 707 1079 718L1103 731L1075 724Q1058 723 1065 736L1093 749L1064 742Q1051 744 1057 753L1103 779L1114 810Z"/>
-   <path d="M170 810L249 733L287 776L275 810ZM1270 810L1191 733L1153 776L1165 810Z" fill="#131e19" stroke="#323c2e"/>
-  </g>
-  {blood && !lowGore && <g fill="#6a221c" opacity=".85"><path d="M628 293l12-38 9 35 42-21-20 35 48 19-47 3-8 40-20-34-40 22 13-35-28-23z"/><circle cx="614" cy="267" r="5"/><circle cx="696" cy="282" r="8"/><circle cx="600" cy="318" r="7"/><path d="M665 477q53-19 100 4l39 18-79 9-68-13z"/></g>}
-  <g transform={`translate(${center} 0)`} className={`hanging-lamp ${blood ? 'swing' : ''}`} style={{opacity:flicker ? .45 : 1}}>
-   <circle cy="103" r="145" fill="url(#bulbGlow)"/>
-   <path d="M0-20V71" stroke="#070a08" strokeWidth="5"/><path d="M-11 72L-16 94H16L11 72Z" fill="#3a372b" stroke="#59513a"/>
-   <path className="bulb" d="M-13 95Q-25 119 -11 132Q0 140 11 132Q25 119 13 95Z" fill="#eed4a0"/><path d="M-5 101L-3 122H3L5 101" stroke="#fff3ca" strokeWidth="1.5" fill="none"/>
-   <path d="M-16 94H16M-12 84H12M-12 89H12" stroke="#776448" strokeWidth="2"/>
-  </g>
-  <rect width="1440" height="810" filter="url(#grain)" opacity=".23" style={{mixBlendMode:'soft-light'}}/>
-  <rect width="1440" height="810" fill="url(#vignette)" pointerEvents="none"/>
- </svg>;
+const retroFragment = `
+  uniform sampler2D sceneTexture;
+  uniform float time;
+  varying vec2 vUv;
+  float noise(vec2 p) { return fract(sin(dot(p, vec2(12.9898,78.233)) + time * .29) * 43758.5453); }
+  float bayer(vec2 p) {
+    vec2 q = mod(floor(p), 4.);
+    if(q.y < 1.) return q.x < 1. ? 0. : q.x < 2. ? 8. : q.x < 3. ? 2. : 10.;
+    if(q.y < 2.) return q.x < 1. ? 12. : q.x < 2. ? 4. : q.x < 3. ? 14. : 6.;
+    if(q.y < 3.) return q.x < 1. ? 3. : q.x < 2. ? 11. : q.x < 3. ? 1. : 9.;
+    return q.x < 1. ? 15. : q.x < 2. ? 7. : q.x < 3. ? 13. : 5.;
+  }
+  void main() {
+    vec3 color = texture2D(sceneTexture, vUv).rgb;
+    color = pow(max(color, vec3(0.)), vec3(1. / 2.2));
+    color *= vec3(1.035, 1.015, .94);
+    float ordered = (bayer(gl_FragCoord.xy) / 16. - .5) * .75;
+    vec3 levels = vec3(28., 30., 26.);
+    color = floor(color * levels + ordered) / levels;
+    color += (noise(gl_FragCoord.xy) - .5) * .018;
+    vec2 uv = (vUv - .5) * vec2(1.12, 1.);
+    float vignette = 1. - smoothstep(.16, .77, length(uv)) * .72;
+    float highlight = smoothstep(.88, 1., max(color.r, max(color.g, color.b)));
+    color *= mix(vignette, 1., highlight * .85);
+    gl_FragColor = vec4(max(color, vec3(0.)), 1.);
+  }
+`;
+
+/** Rendering consumes a public view of the game; no deck or revolver secrets enter this layer. */
+export default function Scene(props: SceneProps) {
+  const host = useRef<HTMLDivElement>(null);
+  const latest = useRef(props);
+  latest.current = props;
+  const [unavailable, setUnavailable] = useState(false);
+
+  useEffect(() => {
+    const mount = host.current;
+    if (!mount) return;
+    // DOM-only tests do not provide a GPU. The actual scene is validated in Chromium.
+    if (!('WebGLRenderingContext' in window)) return;
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false, powerPreference: 'high-performance' });
+    } catch {
+      setUnavailable(true); return;
+    }
+    renderer.setPixelRatio(1);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.18;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.autoUpdate = false;
+    renderer.shadowMap.type = THREE.BasicShadowMap;
+    const canvas = renderer.domElement;
+    canvas.className = 'pixel-canvas';
+    canvas.setAttribute('aria-label', '3D bunker. Hold the left mouse button and drag to look around.');
+    canvas.dataset.testid = 'bunker-canvas';
+    mount.appendChild(canvas);
+
+    const world = new THREE.Scene();
+    world.background = new THREE.Color('#090d0b');
+    world.fog = new THREE.FogExp2('#0c110f', .135);
+    const camera = new THREE.PerspectiveCamera(58, 16 / 9, .055, 28);
+    camera.rotation.order = 'YXZ';
+    const room = createRoom(world);
+    const actors = createActors(world);
+    const blood = new THREE.Group();
+    const bloodMap = splatterTexture();
+    const bloodMaterial = new THREE.MeshBasicMaterial({ map: bloodMap, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
+    const wallStain = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.25), bloodMaterial);
+    wallStain.position.set(0, 1.7, -4.075);
+    const tableStain = new THREE.Mesh(new THREE.PlaneGeometry(1.1, .9), bloodMaterial);
+    tableStain.rotation.x = -Math.PI / 2;
+    tableStain.position.set(0, .889, -.62);
+    blood.add(wallStain, tableStain); blood.visible = false; world.add(blood);
+    const muzzle = new THREE.PointLight('#fff1bd', 0, 4, 2); world.add(muzzle);
+
+    const target = new THREE.WebGLRenderTarget(640, CONFIG.PIXEL_HEIGHT, {
+      minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthBuffer: true,
+    });
+    const postScene = new THREE.Scene();
+    const postCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    const postMaterial = new THREE.ShaderMaterial({
+      uniforms: { sceneTexture: { value: target.texture }, time: { value: 0 } },
+      vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }',
+      fragmentShader: retroFragment,
+      depthTest: false, depthWrite: false, toneMapped: false,
+    });
+    const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), postMaterial); postScene.add(quad);
+    function resize() {
+      const bounds = mount!.getBoundingClientRect();
+      const aspect = bounds.width / Math.max(1, bounds.height);
+      const width = Math.round(CONFIG.PIXEL_HEIGHT * aspect);
+      renderer.setSize(width, CONFIG.PIXEL_HEIGHT, false);
+      target.setSize(width, CONFIG.PIXEL_HEIGHT);
+      camera.aspect = aspect; camera.updateProjectionMatrix();
+    }
+    const observer = new ResizeObserver(resize); observer.observe(mount); resize();
+
+    let look = createLookState();
+    if (latest.current.phase === 'START') look.yaw = look.targetYaw = .20;
+    let dragging = false, lastX = 0, lastY = 0;
+    function pointerDown(event: PointerEvent) {
+      if (event.button !== 0 || shouldRecenter(latest.current.phase, latest.current.suspense)) return;
+      dragging = true; lastX = event.clientX; lastY = event.clientY;
+      canvas.setPointerCapture(event.pointerId); canvas.classList.add('is-dragging');
+      event.preventDefault();
+    }
+    function pointerMove(event: PointerEvent) {
+      if (!dragging) return;
+      if (!shouldRecenter(latest.current.phase, latest.current.suspense)) {
+        dragLook(look, event.clientX - lastX, event.clientY - lastY, CONFIG.LOOK_SENSITIVITY);
+      }
+      lastX = event.clientX; lastY = event.clientY;
+    }
+    function pointerUp(event: PointerEvent) {
+      dragging = false; canvas.classList.remove('is-dragging');
+      if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+    }
+    canvas.addEventListener('pointerdown', pointerDown);
+    canvas.addEventListener('pointermove', pointerMove);
+    canvas.addEventListener('pointerup', pointerUp);
+    canvas.addEventListener('pointercancel', pointerUp);
+    canvas.addEventListener('lostpointercapture', pointerUp);
+
+    let frame = 0, lastTime = performance.now(), startTime = lastTime;
+    let previousRound = -1, previousRevealed = false, previousEffect: SceneProps['shotEffect'] = null;
+    let previousRecenter = latest.current.recenterToken, previousPhase = latest.current.phase;
+    let impulse = 0, flash = 0, deathProgress = 0, renderedFrames = 0;
+    let fpsStart = performance.now(), fpsFrames = 0;
+    const gunPosition = new THREE.Vector3();
+    function animate(now: number) {
+      const dt = Math.min((now - lastTime) / 1000, .05); lastTime = now;
+      const time = (now - startTime) / 1000, state = latest.current;
+      const replay = state.phase === 'DEALING' && state.roundNumber === 1 && previousPhase !== 'DEALING';
+      if (replay) {
+        look = createLookState(); impulse = flash = deathProgress = 0;
+        blood.visible = false; previousEffect = null; room.reset();
+      }
+      if (state.roundNumber !== previousRound || state.revealed !== previousRevealed) {
+        actors.setCards(state.round, state.revealed);
+        previousRound = state.roundNumber; previousRevealed = state.revealed;
+      }
+      if (state.recenterToken !== previousRecenter) {
+        look.targetYaw = look.targetPitch = 0; previousRecenter = state.recenterToken;
+      }
+      const locked = shouldRecenter(state.phase, state.suspense);
+      updateLook(look, dt, locked);
+      if (state.shotEffect && state.shotEffect !== previousEffect) {
+        impulse = state.shotEffect === 'shot' ? 1 : .28;
+        flash = state.shotEffect === 'shot' ? 1 : 0;
+      }
+      previousEffect = state.shotEffect;
+      previousPhase = state.phase;
+      impulse = Math.max(0, impulse - dt * 1.6);
+      flash = Math.max(0, flash - dt * 10);
+      if (state.dead === 'player') deathProgress = Math.min(1, deathProgress + dt / 1.8);
+      else deathProgress = 0;
+      blood.visible = state.dead === 'ai' && CONFIG.GORE_LEVEL !== 'low';
+      room.update(time, dt, state.danger, state.suspense, impulse);
+      actors.update(time, dt, state);
+      actors.gun.getWorldPosition(gunPosition);
+      muzzle.position.copy(gunPosition); muzzle.intensity = flash * 22;
+      const sway = Math.sin(time * 1.15) * .0025;
+      camera.position.set(Math.sin(time * .7) * .005, 1.85 + Math.sin(time * 1.1) * .007 - deathProgress * .38, 2.65);
+      camera.rotation.set(-.173 + look.pitch + sway + Math.sin(time * 73) * impulse * .025, look.yaw + Math.sin(time * 61) * impulse * .018, -deathProgress * .62 + Math.cos(time * 82) * impulse * .012);
+      canvas.dataset.yaw = look.yaw.toFixed(5); canvas.dataset.pitch = look.pitch.toFixed(5);
+      canvas.dataset.targetYaw = look.targetYaw.toFixed(5); canvas.dataset.targetPitch = look.targetPitch.toFixed(5);
+      canvas.dataset.cameraLocked = String(locked); canvas.dataset.phase = state.phase;
+      canvas.dataset.blood = String(blood.visible); canvas.dataset.strangerSlumped = String(state.dead === 'ai');
+      canvas.dataset.round = String(state.roundNumber);
+      postMaterial.uniforms.time.value = time;
+      // A lower shadow refresh rate suits the period look and leaves the GPU headroom.
+      renderer.shadowMap.needsUpdate = renderedFrames++ % 4 === 0;
+      renderer.setRenderTarget(target); renderer.render(world, camera);
+      if (++fpsFrames > 0 && now - fpsStart > 1000) {
+        canvas.dataset.fps = (fpsFrames * 1000 / (now - fpsStart)).toFixed(1);
+        canvas.dataset.drawCalls = String(renderer.info.render.calls);
+        canvas.dataset.triangles = String(renderer.info.render.triangles);
+        fpsStart = now; fpsFrames = 0;
+      }
+      renderer.setRenderTarget(null); renderer.render(postScene, postCamera);
+      frame = requestAnimationFrame(animate);
+    }
+    frame = requestAnimationFrame(animate);
+
+    return () => {
+      cancelAnimationFrame(frame); observer.disconnect();
+      canvas.removeEventListener('pointerdown', pointerDown);
+      canvas.removeEventListener('pointermove', pointerMove);
+      canvas.removeEventListener('pointerup', pointerUp);
+      canvas.removeEventListener('pointercancel', pointerUp);
+      canvas.removeEventListener('lostpointercapture', pointerUp);
+      const textures = new Set<THREE.Texture>(), materials = new Set<THREE.Material>(), geometries = new Set<THREE.BufferGeometry>();
+      world.traverse(object => {
+        if (object instanceof THREE.Mesh) {
+          geometries.add(object.geometry);
+          for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+            materials.add(material);
+            for (const value of Object.values(material)) if (value instanceof THREE.Texture) textures.add(value);
+          }
+        }
+      });
+      textures.forEach(texture => texture.dispose()); materials.forEach(material => material.dispose()); geometries.forEach(geometry => geometry.dispose());
+      quad.geometry.dispose(); postMaterial.dispose(); target.dispose(); renderer.dispose(); canvas.remove();
+    };
+  }, []);
+
+  return <div ref={host} className="room-art three-scene">{unavailable && <div className="renderer-warning" role="alert">This room needs WebGL.<br/>Enable hardware acceleration in Chrome, then reload.</div>}</div>;
 }
