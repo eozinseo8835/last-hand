@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { CONFIG, type Card, type GamePhase, type Round } from '../game';
 import { mergeStaticMeshes } from './merge';
+import { eventDoorPulse, type OpponentTell, type RoundEvent, type Side } from '../tension';
 
 export type ActorState = {
   phase: GamePhase;
@@ -11,6 +12,16 @@ export type ActorState = {
   revealed: boolean;
   voiceLevel?: number;
   reducedMotion?: boolean;
+  chambersFired?: number;
+  tell?: OpponentTell | null;
+  triggerHeld?: boolean;
+  triggerProgress?: number;
+  spinning?: Side | null;
+  spinSerial?: number;
+  peekActor?: Side | null;
+  peekSerial?: number;
+  peekedCard?: Card | null;
+  event?: RoundEvent | null;
 };
 
 type CardSlot = {
@@ -173,11 +184,14 @@ function makeRevolver() {
   barrelOpening.rotation.z = Math.PI / 2;
   box(gun, [.31, .018, .047], [.15, .119, 0], edge);
   box(gun, [.028, .027, .025], [.28, .142, 0], dark);
-  const chamber = cylinder(gun, .073, .115, [-.018, .072, 0], steel, 10);
+  const revolverCylinder = new THREE.Group();
+  revolverCylinder.name = 'Revolver cylinder';
+  revolverCylinder.position.set(-.018, .072, 0); gun.add(revolverCylinder);
+  const chamber = cylinder(revolverCylinder, .073, .115, [0, 0, 0], steel, 10);
   chamber.rotation.z = Math.PI / 2;
   for (let i = 0; i < 6; i++) {
     const a = i * Math.PI / 3;
-    const groove = cylinder(gun, .010, .082, [-.014, .072 + Math.cos(a) * .068, Math.sin(a) * .068], dark, 5);
+    const groove = cylinder(revolverCylinder, .010, .082, [.004, Math.cos(a) * .068, Math.sin(a) * .068], dark, 5);
     groove.rotation.z = Math.PI / 2;
   }
   const grip = box(gun, [.088, .18, .081], [-.133, -.102, 0], wood);
@@ -200,9 +214,11 @@ function makeRevolver() {
   const trigger = box(gun, [.013, .053, .012], [-.005, -.063, 0], dark);
   trigger.rotation.z = -.25;
   const hammer = box(gun, [.035, .065, .025], [-.15, .126, 0], steel);
+  hammer.name = 'Revolver hammer';
   hammer.rotation.z = -.6;
-  mergeStaticMeshes(gun);
-  return gun;
+  mergeStaticMeshes(revolverCylinder);
+  mergeStaticMeshes(gun, mesh => mesh.parent === gun && mesh !== hammer);
+  return { gun, hammer, revolverCylinder };
 }
 
 export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
@@ -314,6 +330,7 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     heldRig.rotation.x = -.173;
     scene.add(heldRig);
   }
+  const heldRigRestPosition = heldRig.position.clone();
   const playerLeft = makeHand(skinShadow), playerRight = makeHand(skinShadow);
   heldRig.add(playerLeft.group);
   playerHands.add(playerRight.group);
@@ -329,7 +346,7 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
   segment(leftSleeve, playerLeftStart, playerLeft.group.position);
   segment(rightSleeve, playerRightStart, playerRight.group.position);
 
-  const gun = makeRevolver();
+  const { gun, hammer, revolverCylinder } = makeRevolver();
   gun.position.set(.12, .962, .02);
   gun.rotation.set(-Math.PI / 2, 0, -.13);
   scene.add(gun);
@@ -360,6 +377,22 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
   }
   const deckStart = new THREE.Vector3(-.94, TABLE_Y + .102, -.56);
   const pickup = new THREE.Vector3(-.20, TABLE_Y + .02, .78);
+  // The lifted top card remains back-up. Only the camera's private inset gets its face.
+  const deckCorner = new THREE.Group(); deckCorner.name = 'Lifted deck corner';
+  deckCorner.position.set(deckStart.x - .227, deckStart.y + .003, deckStart.z - .297);
+  const cornerBack = new THREE.Mesh(new THREE.PlaneGeometry(.454, .594), backMaterial);
+  cornerBack.rotation.x = -Math.PI / 2; cornerBack.position.set(.227, 0, .297);
+  deckCorner.add(cornerBack); deckCorner.visible = false; scene.add(deckCorner);
+  const peekCard = new THREE.Group(); peekCard.name = 'Private next card'; peekCard.visible = false;
+  peekCard.position.set(.58, -.12, -1.16); peekCard.scale.setScalar(.34); heldRig.add(peekCard);
+  const peekMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, emissive: 0xffffff, emissiveIntensity: .65 });
+  const peekFront = new THREE.Mesh(new THREE.PlaneGeometry(.47, .66), peekMaterial);
+  const peekBack = new THREE.Mesh(new THREE.PlaneGeometry(.47, .66), backMaterial);
+  peekFront.position.z = .0045; peekBack.position.z = -.0045; peekBack.rotation.y = Math.PI;
+  box(peekCard, [.473, .663, .008], [0, 0, 0], edgeMaterial);
+  peekCard.add(peekFront, peekBack);
+  let peekIdentity = '', lastPeekSerial = 0, peekStartedAt = -1;
+  let lastSpinSerial = 0, spinStartedAt = -1, spinFrom = 0;
   const targetPosition = new THREE.Vector3(), targetScale = new THREE.Vector3();
   const targetQuaternion = new THREE.Quaternion(), rigQuaternion = new THREE.Quaternion();
   const backQuaternion = new THREE.Quaternion();
@@ -468,7 +501,7 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     for (const slot of cardSlots) {
       if (!slot.active) { slot.group.visible = false; continue; }
       const group = slot.group;
-      if (slot.owner === 'player') (slot.front.material as THREE.MeshStandardMaterial).emissiveIntensity = cardRevealed ? THREE.MathUtils.lerp(.70, .12, layProgress) : .70;
+      if (slot.owner === 'player') (slot.front.material as THREE.MeshStandardMaterial).emissiveIntensity = (cardRevealed ? THREE.MathUtils.lerp(.70, .12, layProgress) : .70) * (state.event?.kind === 'blackout' && state.phase === 'PLAYER_DECISION' ? .055 : 1);
       slot.age = Math.max(0, time - slot.born);
       group.visible = true;
       if (state.phase === 'SWEEPING') {
@@ -549,6 +582,14 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
   function update(time: number, delta: number, state: ActorState) {
     const dt = Math.min(delta, .05);
     const smoothing = 1 - Math.exp(-dt * 8);
+    const motion = state.reducedMotion ? .25 : 1;
+    const fired = Math.max(0, Math.min(6, state.chambersFired ?? 0));
+    const alive = state.dead !== 'ai';
+    const fear = alive ? fired * motion : 0;
+    const tell = state.phase === 'PLAYER_DECISION' && alive ? state.tell : null;
+    const calm = tell?.disposition === 'calm';
+    const doorFlinch = alive && state.phase === 'PLAYER_DECISION' ? eventDoorPulse(state.event, Date.now()) * motion : 0;
+    const playerPull = state.phase === 'PLAYER_SHOOTING' ? THREE.MathUtils.clamp(state.triggerProgress ?? (state.suspense ? 1 : 0), 0, 1) : 0;
     actorTime = time;
     const enteringRound = state.roundNumber !== lastRound;
     const replay = state.roundNumber === 1 && state.phase === 'SHUFFLING' && lastPhase !== 'SHUFFLING';
@@ -563,6 +604,10 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
         playerRight.group.position.set(.95, .925, 1.12);
         playerRight.group.rotation.set(0, Math.PI + .17, 0);
         slump = 0; gunBlend = 0; gun.position.copy(gunRest); gun.rotation.set(-Math.PI / 2, 0, -.13);
+        hammer.rotation.z = -.6; revolverCylinder.rotation.x = 0;
+        lastSpinSerial = 0; spinStartedAt = -1; spinFrom = 0;
+        lastPeekSerial = 0; peekStartedAt = -1; peekCard.visible = deckCorner.visible = false;
+        heldRig.position.copy(heldRigRestPosition); playerHands.position.set(0, 0, 0);
         upperPack.position.set(0, .045, 0); upperPack.rotation.set(0, 0, 0);
       }
     }
@@ -580,41 +625,93 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     upperPack.position.set(shuffle * .14, .045 + Math.abs(shuffle) * .045, 0);
     upperPack.rotation.y = shuffle * .22;
     const dealing = state.phase === 'DEALING' || state.phase === 'HITTING' || state.phase === 'DEALER_TURN';
-    const dealerAction = dealing || shuffling || state.phase === 'PEEKING' || state.phase === 'SWEEPING';
+    const dealerAction = dealing || shuffling || state.phase === 'PEEKING' || state.phase === 'DEALER_PEEKING' || state.phase === 'SWEEPING';
     const aiShoots = state.phase === 'AI_SHOOTING';
-    const playerShoots = state.phase === 'PLAYER_SHOOTING' && state.suspense;
+    const playerPose = Math.max(playerPull, state.spinning === 'player' ? .55 : 0);
+    const playerShoots = playerPose > 0;
     const lifting = aiShoots || playerShoots;
     gunBlend += ((lifting ? 1 : 0) - gunBlend) * smoothing;
-    gunTarget.copy(aiShoots ? gunAI : playerShoots ? gunPlayer : gunRest);
+    if (aiShoots) gunTarget.copy(gunAI);
+    else gunTarget.lerpVectors(gunRest, gunPlayer, playerPose);
     gun.position.lerp(gunTarget, smoothing);
-    const targetX = lifting ? 0 : -Math.PI / 2;
-    const targetY = aiShoots ? Math.PI - .3 : playerShoots ? -2.08 : 0;
-    const targetZ = aiShoots ? -.03 : playerShoots ? .17 : -.13;
+    const targetX = aiShoots ? 0 : THREE.MathUtils.lerp(-Math.PI / 2, 0, playerPose);
+    const targetY = aiShoots ? Math.PI - .3 : -2.08 * playerPose;
+    const targetZ = aiShoots ? -.03 : THREE.MathUtils.lerp(-.13, .17, playerPose);
     gun.rotation.x += (targetX - gun.rotation.x) * smoothing;
     gun.rotation.y += (targetY - gun.rotation.y) * smoothing;
     gun.rotation.z += (targetZ - gun.rotation.z) * smoothing;
     if (lifting) gun.position.y += Math.sin(time * 8) * .00045;
+    const tensionActive = state.chambersFired !== undefined && state.phase !== 'START' && state.phase !== 'GAME_OVER';
+    const handTremble = tensionActive ? (.00035 + fired * .00055 + playerPull * .0035) * motion : 0;
+    heldRig.position.set(heldRigRestPosition.x + Math.sin(time * 29) * handTremble, heldRigRestPosition.y + Math.sin(time * 23 + 1) * handTremble * .8, heldRigRestPosition.z);
+    playerHands.position.set(Math.sin(time * 27 + 1) * handTremble, Math.sin(time * 31) * handTremble * .8, 0);
+    if (lifting && tensionActive) {
+      gun.position.x += Math.sin(time * 29) * handTremble;
+      gun.position.y += Math.sin(time * 23 + 1) * handTremble;
+    }
+    const cock = aiShoots ? .75 : THREE.MathUtils.smoothstep(playerPull, .33, .72);
+    hammer.rotation.z += ((-.6 - cock * .55) - hammer.rotation.z) * smoothing;
+    if ((state.spinSerial ?? 0) !== lastSpinSerial) {
+      lastSpinSerial = state.spinSerial ?? 0; spinStartedAt = time; spinFrom = revolverCylinder.rotation.x;
+    }
+    if (state.spinning && spinStartedAt >= 0) {
+      const progress = THREE.MathUtils.clamp((time - spinStartedAt) / .8, 0, 1);
+      revolverCylinder.rotation.x = spinFrom + Math.PI * 6 * (1 - Math.pow(1 - progress, 3));
+    } else {
+      if (spinStartedAt >= 0) revolverCylinder.rotation.x = 0;
+      spinStartedAt = -1;
+      const notch = THREE.MathUtils.smoothstep(playerPull, .66, .84) * Math.PI / 3;
+      revolverCylinder.rotation.x += (notch - revolverCylinder.rotation.x) * smoothing;
+    }
+    gun.userData.holdProgress = playerPull;
+    gun.userData.tremble = handTremble;
+    const peekSerial = state.peekSerial ?? 0;
+    if (peekSerial !== lastPeekSerial) { lastPeekSerial = peekSerial; peekStartedAt = time; }
+    const abilityPeek = !!state.peekActor && peekStartedAt >= 0;
+    const peekAge = Math.max(0, time - peekStartedAt);
+    const cornerLift = abilityPeek ? Math.sin(THREE.MathUtils.clamp(peekAge / .7, 0, 1) * Math.PI) : 0;
+    deckCorner.visible = abilityPeek && cornerLift > .001;
+    deckCorner.rotation.x = -.28 * cornerLift;
+    const privateCard = state.phase === 'PLAYER_DECISION' ? state.peekedCard : null;
+    peekCard.visible = !!privateCard;
+    if (privateCard && peekIdentity !== privateCard.id) {
+      peekIdentity = privateCard.id;
+      peekMaterial.map?.dispose(); peekMaterial.map = cardTexture(privateCard);
+      peekMaterial.emissiveMap = peekMaterial.map; peekMaterial.needsUpdate = true;
+    } else if (!privateCard && peekIdentity) {
+      peekIdentity = ''; peekMaterial.map?.dispose(); peekMaterial.map = peekMaterial.emissiveMap = null; peekMaterial.needsUpdate = true;
+    }
+    peekCard.userData.identity = privateCard?.id ?? null;
+    peekMaterial.emissiveIntensity = state.event?.kind === 'blackout' ? .035 : .65;
 
     slump += ((state.dead === 'ai' ? 1 : 0) - slump) * (1 - Math.exp(-dt * (state.dead ? 2.5 : 12)));
     stranger.rotation.x = slump * 1.43;
     stranger.rotation.z = slump * -.13;
     stranger.position.y = .86 - slump * .045;
-    torso.scale.y = 1 + Math.sin(time * 1.3) * .008 * (1 - slump);
-    shoulders.position.y = .82 + Math.sin(time * 1.3) * .004 * (1 - slump);
-    head.rotation.z = Math.sin(time * .37) * .043 * (1 - slump);
-    head.rotation.y = Math.sin(time * .23) * .055 * (1 - slump);
+    const breathRate = (calm ? 1.02 : 1.3) + fear * .42;
+    const breathAmplitude = (calm ? (tell?.kind === 'breathing' ? .013 : .006) : .008) * (1 + fear * .45);
+    torso.scale.y = 1 + Math.sin(time * breathRate) * breathAmplitude * (1 - slump);
+    const twitch = tell?.kind === 'twitch' ? Math.max(0, Math.sin(time * 2.9)) ** 20 * .024 * motion : 0;
+    shoulders.position.y = .82 + Math.sin(time * breathRate) * breathAmplitude * .5 * (1 - slump) + twitch - doorFlinch * .022;
+    head.rotation.z = (calm ? 0 : Math.sin(time * .37) * .043 * (1 - slump)) + Math.sin(time * 18) * fear * .002;
+    head.rotation.y = (calm ? 0 : Math.sin(time * .23) * .055 * (1 - slump)) + (tell?.kind === 'avert' ? (.15 + Math.sin(time * .85) * .045) * motion : 0);
     const peekMotion = state.phase === 'PEEKING' ? Math.sin(Math.min(1, elapsedShoot / .60) * Math.PI) : 0;
     // The audio envelope supplies the rhythm; no independent mouth or speech loop.
     const voiceBob = state.dead === 'ai' ? 0 : THREE.MathUtils.clamp(state.voiceLevel ?? 0, 0, 1) * (state.reducedMotion ? .25 : 1);
     head.position.y = 1.19 + voiceBob * .0025;
-    head.rotation.x = Math.sin(time * .61) * .018 + peekMotion * .19 + voiceBob * .010;
-    if (state.phase === 'PEEKING') handTarget.set(.45, .055 + peekMotion * .11, 1.30);
+    head.rotation.x = (calm ? 0 : Math.sin(time * .61) * .018) + peekMotion * .19 + voiceBob * .010 + Math.sin(time * 13) * fear * .0025 - doorFlinch * .09;
+    stranger.position.z = -1.65 - doorFlinch * .025;
+    const touch = tell?.kind === 'touch' ? Math.max(0, Math.sin(time * 1.6)) ** 4 * motion : 0;
+    if (state.peekActor === 'ai' || state.phase === 'DEALER_PEEKING') handTarget.set(deckStart.x + .02, .13 + cornerLift * .09, deckStart.z + 1.65);
+    else if (touch > .001) handTarget.set(THREE.MathUtils.lerp(-.74, .45, touch), .055 + touch * .065, THREE.MathUtils.lerp(.72, 1.30, touch));
+    else if (state.phase === 'PEEKING') handTarget.set(.45, .055 + peekMotion * .11, 1.30);
     else if (dealerAction) handTarget.set(deckStart.x - .04 + shuffle * .05, .10 + Math.abs(shuffle) * .025, deckStart.z + 1.65);
-    else handTarget.set(-.74, .055 + Math.sin(time * 1.2) * .001, .72);
+    else handTarget.set(-.74, .055 + (calm ? 0 : Math.sin(time * 1.2) * .001), .72);
+    handTarget.x += Math.sin(time * 19) * fear * .0017; handTarget.y += Math.sin(time * 23) * fear * .0015;
     leftHand.position.lerp(handTarget, smoothing);
     for (let i = 0; i < left.fingers.length; i++) {
-      const tap = Math.max(0, Math.sin(time * 3.2 + i * .5)) ** 10;
-      left.fingers[i].rotation.x = -.07 - tap * .22 * (1 - slump);
+      const tap = calm ? 0 : Math.max(0, Math.sin(time * (tell?.kind === 'tap' ? 10 : 3.2) + i * .5)) ** 10;
+      left.fingers[i].rotation.x = -.07 - tap * (tell?.kind === 'tap' ? .36 : .22) * (1 - slump) * motion - Math.max(0, Math.sin(time * 12 + i)) * fear * .012;
       right.fingers[i].rotation.x = aiShoots ? -.65 : -.06;
     }
     if (aiShoots) {
@@ -632,7 +729,7 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
       rightHand.rotation.x += (.08 - rightHand.rotation.x) * smoothing;
       rightHand.rotation.z += (-.12 - rightHand.rotation.z) * smoothing;
     } else {
-      handTarget.set(.74, .055, .72);
+      handTarget.set(.74 + Math.sin(time * 17) * fear * .0017, .055 + Math.sin(time * 21) * fear * .0015, .72);
       rightHand.position.lerp(handTarget, smoothing);
       rightHand.rotation.x += (0 - rightHand.rotation.x) * smoothing;
       rightHand.rotation.z += (0 - rightHand.rotation.z) * smoothing;
@@ -670,5 +767,5 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
 
     animateCards(time, dt, state);
   }
-  return { stranger, head, leftHand, rightHand, playerHands, heldRig, deck, gun, cardSlots, setCards, update };
+  return { stranger, head, leftHand, rightHand, playerHands, heldRig, deck, gun, hammer, cylinder: revolverCylinder, peekCard, peekFront, deckCorner, cardSlots, setCards, update };
 }

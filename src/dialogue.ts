@@ -107,6 +107,49 @@ export const DIALOGUE = {
     'Two equal hands still leave one bullet.',
     'Enjoy the silence while it belongs to us both.',
   ],
+  impatient: [
+    'The cylinder will not wait with you.',
+    'Your hand has been hovering long enough.',
+    'There is no safer way to hold it.',
+    'The room can hear you putting this off.',
+  ],
+  opp_spins: [
+    'Let the chamber forget where we were.',
+    'I would prefer a different kind of silence.',
+    'One turn, and the room must guess again.',
+    'There is still one thing I can move.',
+  ],
+  opp_peeks: [
+    'I need to see what waits beneath that edge.',
+    'The deck has not earned my trust.',
+    'One quiet look before I commit.',
+    'I would rather know what I am refusing.',
+  ],
+  player_spins: [
+    'You can move the bullet, but it stays here.',
+    'A fresh beginning in the same small circle.',
+    'Remember that sound. You only get it once.',
+    'The cylinder forgets; I do not.',
+  ],
+  player_peeks: [
+    'One look. The deck will remember it.',
+    'You have bought knowledge, not another chance.',
+    'Careful with that corner; paper keeps secrets.',
+    'Now you must decide what knowing is worth.',
+  ],
+  short: [
+    'Keep it still.',
+    'Not another sound.',
+    'Your hands. Now.',
+    'Let it pass.',
+    'Enough of this.',
+  ],
+  broken: [
+    '...',
+    '…',
+    '[A shallow breath]',
+    '[Breathing, unsteady]',
+  ],
 
 } as const;
 

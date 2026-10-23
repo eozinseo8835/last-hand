@@ -4,10 +4,10 @@ import type { DialogueCategory } from './dialogue';
 import { createVoicePlan } from './voice';
 
 /** One timeline drives both subtitle letters and the mask's unintelligible voice. */
-export default function Typewriter({ text, category = 'player_hits', danger = false }: {
-  text: string; category?: DialogueCategory; danger?: boolean;
+export default function Typewriter({ text, category = 'player_hits', danger = false, chambersFired = 0 }: {
+  text: string; category?: DialogueCategory; danger?: boolean; chambersFired?: number;
 }) {
-  const plan = useMemo(() => createVoicePlan(text, category, danger), [text, category, danger]);
+  const plan = useMemo(() => createVoicePlan(text, category, danger, chambersFired), [text, category, danger, chambersFired]);
   const [visible, setVisible] = useState({ text, count: 0 });
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const count = visible.text === text ? visible.count : 0;
