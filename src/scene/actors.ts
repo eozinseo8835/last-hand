@@ -9,6 +9,8 @@ export type ActorState = {
   shotEffect: 'click' | 'shot' | null;
   roundNumber: number;
   revealed: boolean;
+  voiceLevel?: number;
+  reducedMotion?: boolean;
 };
 
 type CardSlot = {
@@ -602,7 +604,10 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     head.rotation.z = Math.sin(time * .37) * .043 * (1 - slump);
     head.rotation.y = Math.sin(time * .23) * .055 * (1 - slump);
     const peekMotion = state.phase === 'PEEKING' ? Math.sin(Math.min(1, elapsedShoot / .60) * Math.PI) : 0;
-    head.rotation.x = Math.sin(time * .61) * .018 + peekMotion * .19;
+    // The audio envelope supplies the rhythm; no independent mouth or speech loop.
+    const voiceBob = state.dead === 'ai' ? 0 : THREE.MathUtils.clamp(state.voiceLevel ?? 0, 0, 1) * (state.reducedMotion ? .25 : 1);
+    head.position.y = 1.19 + voiceBob * .0025;
+    head.rotation.x = Math.sin(time * .61) * .018 + peekMotion * .19 + voiceBob * .010;
     if (state.phase === 'PEEKING') handTarget.set(.45, .055 + peekMotion * .11, 1.30);
     else if (dealerAction) handTarget.set(deckStart.x - .04 + shuffle * .05, .10 + Math.abs(shuffle) * .025, deckStart.z + 1.65);
     else handTarget.set(-.74, .055 + Math.sin(time * 1.2) * .001, .72);

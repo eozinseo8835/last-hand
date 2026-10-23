@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { CONFIG, type GamePhase, type Round } from './game';
 import { createRoom } from './scene/room';
+import { tableAudio } from './audio';
 import { createActors } from './scene/actors';
 import { createLookKeys, createLookState, dragLook, shouldRecenter, updateKeyboardLook, updateLook } from './scene/camera';
 
@@ -101,6 +102,7 @@ export default function Scene(props: SceneProps) {
     const room = createRoom(world);
     world.add(camera);
     const actors = createActors(world, camera);
+    const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
     const blood = new THREE.Group();
     const bloodMap = splatterTexture();
     const bloodMaterial = new THREE.MeshBasicMaterial({ map: bloodMap, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
@@ -223,7 +225,9 @@ export default function Scene(props: SceneProps) {
       camera.rotation.set(-.173 + look.pitch + sway + Math.sin(time * 73) * impulse * .025, look.yaw + Math.sin(time * 61) * impulse * .018, -deathProgress * .62 + Math.cos(time * 82) * impulse * .012);
       camera.updateMatrixWorld(true);
       room.update(time, dt, state.danger, state.suspense, impulse);
-      actors.update(time, dt, state);
+      const voiceLevel = tableAudio.getVoiceLevel();
+      actors.update(time, dt, { ...state, voiceLevel, reducedMotion: motionPreference.matches });
+      canvas.dataset.voiceLevel = voiceLevel.toFixed(4);
       actors.gun.getWorldPosition(gunPosition);
       muzzle.position.copy(gunPosition); muzzle.intensity = flash * 22;
       canvas.dataset.yaw = look.yaw.toFixed(5); canvas.dataset.pitch = look.pitch.toFixed(5);

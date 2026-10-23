@@ -4,6 +4,7 @@ import Scene from './Scene';
 import { CONFIG, handScore, type Card } from './game';
 import { useGame } from './useGame';
 import { tableAudio } from './audio';
+import Typewriter from './Typewriter';
 
 const SUIT = { spades: '♠', hearts: '♥', diamonds: '♦', clubs: '♣' };
 /** Accessible equivalents of the physical cards, without exposing a hidden face. */
@@ -11,17 +12,6 @@ function CardDescription({ card, hidden = false }: { card: Card; hidden?: boolea
   return <div className={hidden ? 'card-hidden' : ''} aria-label={hidden ? 'Face-down card' : `${card.rank} of ${card.suit}`}>
     <span className="card-front">{!hidden && `${card.rank} ${SUIT[card.suit]}`}</span>
   </div>;
-}
-function Typewriter({ text }: { text: string }) {
-  const [count, setCount] = useState(0);
-  useEffect(() => {
-    setCount(0);
-    const timer = setInterval(() => setCount(n => Math.min(n + 1, text.length)), 30);
-    return () => clearInterval(timer);
-  }, [text]);
-  return <button className="dialogue" onClick={() => setCount(text.length)} aria-label={`${text} Click to finish dialogue.`}>
-    <span className="dialogue-quote">“</span><span>{text.slice(0, count)}<i className={count < text.length ? 'typing' : ''}/></span><span className="dialogue-skip">···</span>
-  </button>;
 }
 function Cylinder({ chamber }: { chamber: number }) {
   return <svg viewBox="0 0 68 68" className="cylinder" role="img" aria-label={`${Math.min(chamber - 1, 6)} trigger pulls used. Current chamber ${Math.min(chamber, 6)}. Bullet position unknown.`}>
@@ -48,6 +38,7 @@ export default function App() {
     resize(); window.addEventListener('resize', resize); return () => window.removeEventListener('resize', resize);
   }, []);
   useEffect(() => { if (rulesOpen) closeButton.current?.focus(); }, [rulesOpen]);
+  useEffect(() => { if (game.dead) tableAudio.stopVoice(); }, [game.dead]);
   function closeRules() { setRulesOpen(false); rulesButton.current?.focus(); }
   function toggleMute() { setMuted(value => { tableAudio.mute(!value); return !value; }); }
   return <div className="app-shell">
@@ -79,7 +70,7 @@ export default function App() {
               <div className="game-hud hud-left"><span className="small-label">FOLDS LEFT</span><div className="fold-indicators">{Array.from({ length: 3 }, (_, i) => <span key={i} className={i < game.folds ? 'full' : ''}/>)}<b>{game.folds} / 3</b></div></div>
               <div className="round-hud"><span className="live-dot"/> AT THE TABLE <i/><b>ROUND {String(game.roundNumber).padStart(2, '0')}</b></div>
               <div className={`game-hud hud-right ${danger ? 'danger-hud' : ''}`}><div><span className="small-label">SHARED CYLINDER</span><b>CHAMBER {Math.min(game.revolver.currentChamber, 6)} <span>/ 6</span></b></div><Cylinder chamber={game.revolver.currentChamber}/></div>
-              <div className="stranger-transmission"><div className="opponent-caption"><span className="small-label">THE STRANGER</span><span className="transmission-line"/><b>{game.revealed && game.round ? <>{dealerScore.soft && <small className="soft-prefix">Soft </small>}{dealerScore.total}</> : '??'}<small> POINTS</small></b></div><Typewriter text={game.dialogue}/><span className="transmission-hint">CLICK TO SKIP TRANSMISSION</span></div>
+              <div className="stranger-transmission"><div className="opponent-caption"><span className="small-label">THE STRANGER</span><span className="transmission-line"/><b>{game.revealed && game.round ? <>{dealerScore.soft && <small className="soft-prefix">Soft </small>}{dealerScore.total}</> : '??'}<small> POINTS</small></b></div><Typewriter text={game.dialogue} category={game.dialogueCategory} danger={game.dialogueDanger}/><span className="transmission-hint">CLICK TO SKIP TRANSMISSION</span></div>
               <div className={`result-line ${game.result ? `result-${game.result}` : ''}`} role="status">{game.message}</div>
               <div className="player-readout"><span className="small-label">YOUR HAND</span><div className="player-total" aria-label={`Your total: ${playerScore.soft ? 'Soft ' : ''}${playerScore.total}`}><b>{playerScore.soft && <small className="soft-prefix">Soft </small>}{game.round?.player.length ? playerScore.total : '—'}</b><span>YOUR TOTAL<br/><small>{playerScore.bust ? 'BUST' : 'CLOSEST TO 21 WINS'}</small></span></div></div>
               <div className="game-actions">{game.phase === 'PLAYER_SHOOTING' ? <button className="primary-button trigger-button" disabled={!game.awaitingTrigger} onClick={pullTrigger}><Crosshair size={17}/>{game.awaitingTrigger ? 'PULL THE TRIGGER' : 'HOLD YOUR BREATH…'}</button> : <><button className="secondary-button fold-button" disabled={!ready || game.hasHit || game.folds === 0} onClick={fold} title={game.hasHit ? 'Folding is only available before your first hit.' : `${game.folds} folds remaining`}><span>FOLD</span><small>{game.folds} LEFT</small></button><button className="secondary-button hit-button" disabled={!ready} onClick={hit}>HIT<span>+</span></button><button className="primary-button stand-button" disabled={!ready} onClick={stand}><span>STAND</span><ArrowRight size={20}/></button></>}</div>

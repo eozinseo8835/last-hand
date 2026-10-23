@@ -11,7 +11,7 @@ npm ci --cache /tmp/last-hand-npm-cache
 npm run dev
 ```
 
-Open the development server in a desktop browser and click **Sit down**. **How to play** explains the rules. Sound begins with your first interaction and can be muted at any time.
+Open the development server in a desktop browser and click **Sit down**. **How to play** explains the rules. Sound starts after **Sit down** unlocks the browser's AudioContext and can be muted at any time.
 
 ```sh
 npm test
@@ -49,8 +49,18 @@ The `pixel-3d` branch retains its existing Three.js bunker, lighting, Stranger d
 
 Geometry and textures are code-generated, and fonts are bundled. No external model/image/audio assets, backend, accounts, credentials, or runtime API services are required. Static geometry batching and one 512px shadow light reduce rendering cost. Physical MacBook Air 60fps performance has not been measured in this cloud environment.
 
+## Stranger voice
+
+The Stranger's unintelligible murmur is synthesized with low sawtooth/pulse oscillators, vowel formants, breath noise, mild distortion, a muffled mask filter, and a short generated room response. Text-seeded syllables share the subtitle's typewriter timeline, including punctuation pauses. Click the dialogue to finish the text and fade the voice within 100ms. The mask bobs very slightly with each syllable; reduced motion makes this smaller.
+
+Confident and bluff lines use identical voice settings. Nervous lines are slightly faster and less steady; the opening and danger lines are slower and deeper. The existing suspense tone ducks slightly under speech. The sound toggle mutes the voice alongside the existing effects. No audio files or speech service are used.
+
+Tune `CONFIG.VOICE_ENABLED` (default `true`), `VOICE_PITCH` (96 Hz), `VOICE_SPEED` (1), and `VOICE_VOLUME` (0.28) in `src/game.ts`.
+
 ## Validation
 
-`npm test` runs 79 engine, React integration, camera, and geometry tests. These cover soft/hard Aces, exact deal order and sounds, same-deck hits without duplicates, bust paths, dealer 17 / soft 17, push safety, fold restrictions, the existing shared revolver, guarded animations, explicit trigger, dialogue, mute, sweep/replay, keyboard bounds and auto-recenter, and actual card mesh orientations before and after showdown.
+`npm test` covers soft/hard Aces, exact deal order and sounds, same-deck hits without duplicates, bust paths, dealer 17 / soft 17, push safety, fold restrictions, the existing shared revolver, guarded animations, explicit trigger, dialogue, mute, sweep/replay, keyboard bounds and auto-recenter, and actual card mesh orientations before and after showdown. Voice tests also cover deterministic syllables, confident/bluff parity, punctuation sync, skip/cleanup, mute/disable behavior, user-click activation, ducking, and subtle head motion.
 
 The interface is also checked in Chromium for held-card readability, dealer animations, keyboard and mouse controls, bust / push / dealer draws, and safe HUD bounds at 1280×720, 1440×900, and 1920×1080. Cloud browser checks use software WebGL rather than a physical Mac GPU.
+
+Chromium voice checks confirm no AudioContext before Sit down, a generated audio signal afterward, silence within 100ms of stopping (including the room tail), mute/disabled behavior, seeded patterns, and no console errors.

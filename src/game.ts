@@ -14,6 +14,10 @@ export const CONFIG = {
   LOOK_KEY_SPEED: 1.25,
   DEAL_SPEED: 650,
   DEALER_STANDS_ON: 17,
+  VOICE_ENABLED: true,
+  VOICE_PITCH: 96,
+  VOICE_SPEED: 1,
+  VOICE_VOLUME: .28,
 };
 
 export type GamePhase =

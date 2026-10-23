@@ -7,13 +7,15 @@ import { tableAudio } from './audio';
 
 export type Session = {
   phase: GamePhase; round: Round | null; roundNumber: number; folds: number;
-  revolver: Revolver; dialogue: string; revealed: boolean; result: HandWinner | null;
+  revolver: Revolver; dialogue: string; dialogueCategory: DialogueCategory; dialogueDanger: boolean;
+  revealed: boolean; result: HandWinner | null;
   message: string; suspense: boolean; awaitingTrigger: boolean; hasHit: boolean;
   dead: 'player' | 'ai' | null; shotEffect: 'click' | 'shot' | null;
 };
 const initial = (): Session => ({
   phase: 'START', round: null, roundNumber: 0, folds: CONFIG.MAX_FOLDS,
-  revolver: createRevolver(), dialogue: chooseDialogue('intro'), revealed: false, result: null,
+  revolver: createRevolver(), dialogue: chooseDialogue('intro'), dialogueCategory: 'intro', dialogueDanger: false,
+  revealed: false, result: null,
   message: '', suspense: false, awaitingTrigger: false, hasHit: false, dead: null, shotEffect: null,
 });
 
@@ -31,7 +33,10 @@ export function useGame() {
   }
   function clearTimers() { timers.current.forEach(clearTimeout); timers.current.clear(); }
   useEffect(() => () => clearTimers(), []);
-  function say(category: DialogueCategory) { update({ dialogue: chooseDialogue(category, current.current.dialogue) }); }
+  function say(category: DialogueCategory) {
+    update({ dialogue: chooseDialogue(category, current.current.dialogue), dialogueCategory: category,
+      dialogueDanger: current.current.revolver.currentChamber >= CONFIG.DANGER_CHAMBER });
+  }
 
   function nextRound() {
     const opening = dealRound();

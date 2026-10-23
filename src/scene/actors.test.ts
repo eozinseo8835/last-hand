@@ -69,6 +69,36 @@ afterEach(() => {
 });
 
 describe('physical blackjack cards and dealer scene', () => {
+  it('adds only a slight syllable-envelope head bob and returns exactly to the idle pose', () => {
+    settleOpening();
+    const time = now;
+    actors.update(time, 0, { ...state, voiceLevel: 0 });
+    const idlePosition = actors.head.position.clone(), idleRotation = actors.head.rotation.clone();
+    actors.update(time, 0, { ...state, voiceLevel: 1 });
+    expect(actors.head.position.y - idlePosition.y).toBeCloseTo(.0025);
+    expect(actors.head.rotation.x - idleRotation.x).toBeCloseTo(.010);
+    expect(actors.head.rotation.y).toBe(idleRotation.y);
+    expect(actors.head.rotation.z).toBe(idleRotation.z);
+    actors.update(time, 0, { ...state, voiceLevel: .5 });
+    expect(actors.head.position.y - idlePosition.y).toBeCloseTo(.00125);
+    actors.update(time, 0, { ...state, voiceLevel: 0 });
+    expect(actors.head.position.equals(idlePosition)).toBe(true);
+    expect(actors.head.rotation.equals(idleRotation)).toBe(true);
+  });
+
+  it('reduces the voice bob for reduced motion and suppresses it on the dead Stranger', () => {
+    settleOpening();
+    const time = now;
+    actors.update(time, 0, { ...state, voiceLevel: 0 });
+    const idleY = actors.head.position.y, idleX = actors.head.rotation.x;
+    actors.update(time, 0, { ...state, voiceLevel: 1, reducedMotion: true });
+    expect(actors.head.position.y - idleY).toBeCloseTo(.0025 * .25);
+    expect(actors.head.rotation.x - idleX).toBeCloseTo(.010 * .25);
+    actors.update(time, 0, { ...state, voiceLevel: 1, dead: 'ai' });
+    expect(actors.head.position.y).toBe(idleY);
+    expect(actors.head.rotation.x).toBe(idleX);
+  });
+
   it('keeps every player face off the felt during the opening deliveries, pickup, and later hits', () => {
     const live = empty(), round = opening();
     const deliveries: Array<['player' | 'ai', Card]> = [

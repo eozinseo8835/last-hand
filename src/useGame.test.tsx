@@ -8,7 +8,7 @@ import { CONFIG, createDeck, createRevolver, dealRound, handTotal, type Card, ty
 import { DIALOGUE } from './dialogue';
 import { tableAudio } from './audio';
 
-vi.mock('./audio', () => ({ tableAudio: { init: vi.fn(), play: vi.fn(), mute: vi.fn() } }));
+vi.mock('./audio', () => ({ tableAudio: { init: vi.fn(), play: vi.fn(), mute: vi.fn(), startVoice: vi.fn(), stopVoice: vi.fn(), getVoiceLevel: vi.fn(() => 0) } }));
 vi.mock('./game', async importOriginal => {
   const actual = await importOriginal<typeof import('./game')>();
   return { ...actual, createRevolver: vi.fn(), dealRound: vi.fn() };
@@ -278,5 +278,23 @@ describe('rendered blackjack controls and hidden information', () => {
     const mute = container.querySelector<HTMLButtonElement>('[aria-label="Mute sound"]'); act(() => mute?.click());
     expect(tableAudio.mute).toHaveBeenLastCalledWith(true); expect(container.querySelector('[aria-label="Unmute sound"]')?.getAttribute('aria-pressed')).toBe('true');
     const unmute = container.querySelector<HTMLButtonElement>('[aria-label="Unmute sound"]'); act(() => unmute?.click()); expect(tableAudio.mute).toHaveBeenLastCalledWith(false);
+  });
+
+  it('waits for Sit down before starting audio, then voices the intro and opening subtitle', () => {
+    mount(<App/>); advance(1000);
+    expect(tableAudio.init).not.toHaveBeenCalled();
+    expect(tableAudio.startVoice).not.toHaveBeenCalled();
+    click('Sit down');
+    expect(tableAudio.init).toHaveBeenCalledTimes(1);
+    expect(tableAudio.startVoice).toHaveBeenCalledTimes(1);
+    const introVoice = vi.mocked(tableAudio.startVoice).mock.calls[0][0];
+    advance(DEAL_COMPLETE);
+    expect(tableAudio.startVoice).toHaveBeenCalledTimes(2);
+    const openingVoice = vi.mocked(tableAudio.startVoice).mock.calls[1][0];
+    expect(introVoice.parameters.pitch).toBeLessThan(openingVoice.parameters.pitch);
+    const beforeSkip = vi.mocked(tableAudio.stopVoice).mock.calls.length;
+    act(() => container.querySelector<HTMLButtonElement>('.dialogue')!.click());
+    expect(tableAudio.stopVoice).toHaveBeenCalledTimes(beforeSkip + 1);
+    expect(container.querySelector('.dialogue .typing')).toBeNull();
   });
 });
