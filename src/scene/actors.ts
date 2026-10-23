@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { Card, GamePhase, Round } from '../game';
+import { CONFIG, type Card, type GamePhase, type Round } from '../game';
 import { mergeStaticMeshes } from './merge';
 
 export type ActorState = {
@@ -9,14 +9,22 @@ export type ActorState = {
   shotEffect: 'click' | 'shot' | null;
   roundNumber: number;
   revealed: boolean;
+  voiceLevel?: number;
+  reducedMotion?: boolean;
 };
 
-type CardSlot = { group: THREE.Group; front: THREE.Mesh; back: THREE.Mesh };
+type CardSlot = {
+  group: THREE.Group; front: THREE.Mesh; back: THREE.Mesh;
+  owner: 'player' | 'ai'; index: number; active: boolean; age: number;
+  born: number; serial: number; identity: string; flip: number;
+  fromPosition: THREE.Vector3; fromQuaternion: THREE.Quaternion; fromScale: number;
+};
 const SUITS = { spades: '♠', clubs: '♣', hearts: '♥', diamonds: '♦' };
 const TABLE_Y = .8865;
 const demo: Round = {
   player: [{ suit: 'spades', rank: '8', id: 'demo-spade' }, { suit: 'hearts', rank: 'K', id: 'demo-king' }],
   ai: [{ suit: 'clubs', rank: 'A', id: 'demo-ace' }, { suit: 'diamonds', rank: '7', id: 'demo-hidden' }],
+  deck: [],
 };
 
 function surface(color: number, metalness = 0, roughness = .9) {
@@ -197,7 +205,7 @@ function makeRevolver() {
   return gun;
 }
 
-export function createActors(scene: THREE.Scene) {
+export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
   const suit = surface(0x202622);
   const lapel = surface(0x343a31);
   const shirt = surface(0x706d58);
@@ -298,16 +306,25 @@ export function createActors(scene: THREE.Scene) {
   const playerHands = new THREE.Group();
   playerHands.name = 'First-person hands and sleeves';
   scene.add(playerHands);
+  const heldRig = new THREE.Group();
+  heldRig.name = 'Player left hand and held fan';
+  if (camera) camera.add(heldRig);
+  else {
+    heldRig.position.set(0, 1.85, 2.65);
+    heldRig.rotation.x = -.173;
+    scene.add(heldRig);
+  }
   const playerLeft = makeHand(skinShadow), playerRight = makeHand(skinShadow);
-  playerHands.add(playerLeft.group, playerRight.group);
-  playerLeft.group.position.set(-.95, .925, 1.12);
+  heldRig.add(playerLeft.group);
+  playerHands.add(playerRight.group);
+  playerLeft.group.position.set(-.10, -.40, -.88);
+  playerLeft.group.rotation.set(-Math.PI / 2 + .20, 0, -.24);
   playerRight.group.position.set(.95, .925, 1.12);
-  playerLeft.group.rotation.y = Math.PI - .17;
   playerRight.group.rotation.y = Math.PI + .17;
   playerRight.group.scale.x = -1;
-  const leftSleeve = cylinder(playerHands, .115, 1, [0, 0, 0], suit, 6);
+  const leftSleeve = cylinder(heldRig, .115, 1, [0, 0, 0], suit, 6);
   const rightSleeve = cylinder(playerHands, .115, 1, [0, 0, 0], suit, 6);
-  const playerLeftStart = new THREE.Vector3(-1.08, .72, 1.95);
+  const playerLeftStart = new THREE.Vector3(-.48, -.77, -.20);
   const playerRightStart = new THREE.Vector3(1.08, .72, 1.95);
   segment(leftSleeve, playerLeftStart, playerLeft.group.position);
   segment(rightSleeve, playerRightStart, playerRight.group.position);
@@ -325,84 +342,245 @@ export function createActors(scene: THREE.Scene) {
 
   const cardSlots: CardSlot[] = [];
   const backTexture = cardBackTexture();
-  const cardHomes = [
-    new THREE.Vector3(-.28, TABLE_Y + .005, .73),
-    new THREE.Vector3(.28, TABLE_Y + .008, .73),
-    new THREE.Vector3(-.25, TABLE_Y + .005, -.72),
-    new THREE.Vector3(.25, TABLE_Y + .008, -.72),
-  ];
-  for (let i = 0; i < 4; i++) {
-    const group = new THREE.Group();
-    group.name = i < 2 ? `Player card ${i + 1}` : `Stranger card ${i - 1}`;
-    group.rotation.x = -Math.PI / 2;
-    const frontMaterial = new THREE.MeshStandardMaterial({color:0xffffff, roughness:1, emissive:0x655e41, emissiveIntensity:.22});
-    const backMaterial = new THREE.MeshStandardMaterial({map:backTexture, roughness:1, emissive:0x253a2a, emissiveIntensity:.12});
-    const geometry = new THREE.PlaneGeometry(.47, .66);
-    const front = new THREE.Mesh(geometry, frontMaterial);
-    const back = new THREE.Mesh(geometry, backMaterial);
-    front.position.z = .0045;
-    back.position.z = -.0045;
-    back.rotation.y = Math.PI;
-    front.receiveShadow = true;
-    back.receiveShadow = true;
-    box(group, [.473, .663, .008], [0, 0, 0], surface(0xa5a68c));
-    group.add(front, back);
-    group.position.copy(cardHomes[i]);
-    scene.add(group);
-    cardSlots.push({group, front, back});
+  const backMaterial = new THREE.MeshStandardMaterial({ map: backTexture, roughness: 1, emissive: 0x253a2a, emissiveIntensity: .12 });
+  const edgeMaterial = surface(0xa5a68c);
+  const deck = new THREE.Group();
+  deck.name = 'The Stranger’s deck';
+  deck.position.set(-.94, TABLE_Y + .035, -.56);
+  scene.add(deck);
+  const lowerPack = new THREE.Group(), upperPack = new THREE.Group();
+  deck.add(lowerPack, upperPack);
+  upperPack.position.y = .045;
+  for (const pack of [lowerPack, upperPack]) {
+    box(pack, [.46, .043, .60], [0, 0, 0], edgeMaterial);
+    for (let i = 0; i < 3; i++) box(pack, [.463, .002, .603], [0, -.015 + i * .012, 0], surface(0x656e57));
+    const top = new THREE.Mesh(new THREE.PlaneGeometry(.454, .594), backMaterial);
+    top.rotation.x = -Math.PI / 2; top.position.y = .023;
+    top.receiveShadow = true; pack.add(top); mergeStaticMeshes(pack);
   }
-  let currentRound: Round | null = null;
-  let cardRevealed = false;
+  const deckStart = new THREE.Vector3(-.94, TABLE_Y + .102, -.56);
+  const pickup = new THREE.Vector3(-.20, TABLE_Y + .02, .78);
+  const targetPosition = new THREE.Vector3(), targetScale = new THREE.Vector3();
+  const targetQuaternion = new THREE.Quaternion(), rigQuaternion = new THREE.Quaternion();
+  const backQuaternion = new THREE.Quaternion();
+  const angle = new THREE.Euler();
+  let currentRound: Round | null = null, cardRevealed = false;
+  let actorTime = 0, lastRound = 0, lastPhase: GamePhase = 'START';
+  let elapsedShoot = 0, phaseStartedAt = 0, showdownStartedAt = -1, sweepStartedAt = -1;
+  let serial = 0, newest: CardSlot | null = null, slump = 0;
+
+  function makeSlot(owner: 'player' | 'ai', index: number): CardSlot {
+    const group = new THREE.Group();
+    group.name = `${owner === 'player' ? 'Player' : 'Stranger'} card ${index + 1}`;
+    group.userData = { owner, index, held: false, tableFaceUp: false };
+    const frontMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, emissive: owner === 'player' ? 0xffffff : 0x655e41, emissiveIntensity: owner === 'player' ? .70 : .22 });
+    const geometry = new THREE.PlaneGeometry(.47, .66);
+    const front = new THREE.Mesh(geometry, frontMaterial), back = new THREE.Mesh(geometry, backMaterial);
+    front.position.z = .0045; back.position.z = -.0045; back.rotation.y = Math.PI;
+    front.receiveShadow = back.receiveShadow = true;
+    box(group, [.473, .663, .008], [0, 0, 0], edgeMaterial);
+    group.add(front, back); scene.add(group); group.visible = false;
+    const slot: CardSlot = { group, front, back, owner, index, active: false, age: 0, born: 0, serial: 0, identity: '', flip: owner === 'ai' && index === 1 ? Math.PI : 0, fromPosition: new THREE.Vector3(), fromQuaternion: new THREE.Quaternion(), fromScale: 1 };
+    cardSlots.push(slot); return slot;
+  }
+  // Retain the original four-slot order for scene inspection, then grow per hand.
+  makeSlot('player', 0); makeSlot('player', 1); makeSlot('ai', 0); makeSlot('ai', 1);
+  function slotFor(owner: 'player' | 'ai', index: number) {
+    return cardSlots.find(slot => slot.owner === owner && slot.index === index) ?? makeSlot(owner, index);
+  }
+  function frontMap(slot: CardSlot, card: Card | null) {
+    const identity = card?.id ?? 'unrevealed';
+    if (slot.identity === identity) return;
+    slot.identity = identity;
+    slot.front.userData.identity = identity;
+    const material = slot.front.material as THREE.MeshStandardMaterial;
+    material.map?.dispose(); material.map = card ? cardTexture(card) : null;
+    material.emissiveMap = slot.owner === 'player' ? material.map : null;
+    material.color.setHex(card ? 0xffffff : 0xa8aa91); material.needsUpdate = true;
+  }
+  function rememberWorld(slot: CardSlot) {
+    scene.attach(slot.group);
+    slot.fromPosition.copy(slot.group.position);
+    slot.fromQuaternion.copy(slot.group.quaternion);
+    slot.fromScale = slot.group.scale.x;
+  }
   function setCards(round: Round | null, revealed: boolean) {
-    currentRound = round;
-    cardRevealed = revealed;
+    const previousReveal = cardRevealed;
+    currentRound = round; cardRevealed = revealed;
     const dealt = round ?? demo;
-    const cards = [...dealt.player, ...dealt.ai];
-    cardSlots.forEach((slot, i) => {
-      const secret = i === 3 && !revealed;
-      const identity = secret ? 'unrevealed' : cards[i].id;
-      if (slot.front.userData.identity === identity) return;
-      slot.front.userData.identity = identity;
-      const material = slot.front.material as THREE.MeshStandardMaterial;
-      material.map?.dispose();
-      material.map = secret ? null : cardTexture(cards[i]);
-      material.color.setHex(secret ? 0xa8aa91 : 0xffffff);
-      material.needsUpdate = true;
-    });
+    for (const slot of cardSlots) {
+      const cards = slot.owner === 'player' ? dealt.player : dealt.ai;
+      if (!cards[slot.index]) {
+        slot.active = false; slot.group.visible = false;
+        slot.group.userData.held = false; slot.group.userData.tableFaceUp = false;
+        if (slot.owner === 'ai' && slot.index === 1 && !revealed) frontMap(slot, null);
+      }
+    }
+    for (const owner of ['player', 'ai'] as const) {
+      dealt[owner].forEach((card, index) => {
+        const slot = slotFor(owner, index);
+        const isNew = !slot.active;
+        if (isNew) {
+          slot.active = true; slot.born = round ? actorTime : actorTime - CONFIG.DEAL_SPEED / 1000 - 1;
+          slot.age = 0; slot.serial = ++serial; newest = slot;
+          scene.attach(slot.group); slot.group.position.copy(deckStart); slot.group.scale.setScalar(1);
+          slot.flip = owner === 'ai' && index === 1 && !revealed ? Math.PI : 0;
+          slot.group.rotation.set(-Math.PI / 2, owner === 'player' || slot.flip ? Math.PI : 0, 0);
+          slot.group.userData.held = false; slot.group.userData.tableFaceUp = false;
+        }
+        const secret = owner === 'ai' && index === 1 && !revealed;
+        frontMap(slot, secret ? null : card);
+        slot.group.visible = true;
+      });
+    }
+    if (revealed && !previousReveal) {
+      showdownStartedAt = actorTime;
+      cardSlots.filter(slot => slot.active && slot.owner === 'player').forEach(rememberWorld);
+    }
+    if (!revealed) showdownStartedAt = -1;
   }
   setCards(null, false);
-  cardSlots[3].group.rotation.y = Math.PI;
-  let lastRound = 0, dealTime = 10, lastPhase: GamePhase = 'START';
-  let elapsedShoot = 0;
-  let slump = 0;
+
+  function tableHome(slot: CardSlot, out: THREE.Vector3) {
+    const count = (currentRound ?? demo)[slot.owner].length;
+    if (slot.owner === 'ai') {
+      // Keep the public up-card clear of the player's foreground fan.
+      const spacing = Math.min(.50, 1.30 / Math.max(1, count - 1));
+      out.set(.95 - slot.index * spacing, TABLE_Y + .006 + slot.index * .0007, -.35);
+    } else {
+      const spacing = Math.min(.50, 1.9 / Math.max(1, count - 1));
+      out.set((slot.index - (count - 1) / 2) * spacing, TABLE_Y + .006 + slot.index * .0007, .64);
+    }
+  }
+  function fanHome(slot: CardSlot, out: THREE.Vector3) {
+    const count = (currentRound ?? demo).player.length;
+    const offset = slot.index - (count - 1) / 2;
+    const spacing = Math.min(.13, .56 / Math.max(1, count - 1));
+    const fanY = count < 4 ? -.22 - Math.abs(offset) * .008 : -.19 + Math.min(count - 4, 7) * .005 - Math.abs(offset) * .0025;
+    out.set(offset * spacing, fanY, -1.04 + slot.index * .006);
+    return offset;
+  }
+  function animateCards(time: number, dt: number, state: ActorState) {
+    heldRig.updateWorldMatrix(true, false);
+    heldRig.getWorldQuaternion(rigQuaternion);
+    const sweepProgress = sweepStartedAt < 0 ? 0 : THREE.MathUtils.clamp((time - sweepStartedAt) / .60, 0, 1);
+    const layProgress = showdownStartedAt < 0 ? 0 : THREE.MathUtils.clamp((time - showdownStartedAt) / .80, 0, 1);
+    for (const slot of cardSlots) {
+      if (!slot.active) { slot.group.visible = false; continue; }
+      const group = slot.group;
+      if (slot.owner === 'player') (slot.front.material as THREE.MeshStandardMaterial).emissiveIntensity = cardRevealed ? THREE.MathUtils.lerp(.70, .12, layProgress) : .70;
+      slot.age = Math.max(0, time - slot.born);
+      group.visible = true;
+      if (state.phase === 'SWEEPING') {
+        const eased = 1 - Math.pow(1 - sweepProgress, 3);
+        group.position.lerpVectors(slot.fromPosition, deckStart, eased);
+        group.position.y += Math.sin(eased * Math.PI) * .12;
+        backQuaternion.setFromEuler(angle.set(-Math.PI / 2, Math.PI, -.1));
+        group.quaternion.slerpQuaternions(slot.fromQuaternion, backQuaternion, eased);
+        group.scale.setScalar(THREE.MathUtils.lerp(slot.fromScale, 1, eased));
+        group.visible = sweepProgress < .99;
+        group.userData.held = false; group.userData.tableFaceUp = false;
+        continue;
+      }
+      if (slot.owner === 'player' && cardRevealed) {
+        tableHome(slot, targetPosition);
+        const eased = 1 - Math.pow(1 - layProgress, 3);
+        group.position.lerpVectors(slot.fromPosition, targetPosition, eased);
+        group.position.y += Math.sin(layProgress * Math.PI) * .13;
+        targetQuaternion.setFromEuler(angle.set(-Math.PI / 2, 0, slot.index % 2 ? -.035 : .035));
+        group.quaternion.slerpQuaternions(slot.fromQuaternion, targetQuaternion, eased);
+        group.scale.setScalar(THREE.MathUtils.lerp(slot.fromScale, 1, eased));
+        group.userData.held = false; group.userData.tableFaceUp = layProgress >= .98;
+        continue;
+      }
+      if (slot.owner === 'player') {
+        const progress = THREE.MathUtils.clamp(slot.age / (CONFIG.DEAL_SPEED / 1000), 0, 1);
+        const offset = fanHome(slot, targetPosition);
+        targetQuaternion.setFromEuler(angle.set(-.08, offset * .018, THREE.MathUtils.clamp(-offset * .13, -.24, .24)));
+        if (progress >= 1) {
+          if (group.parent !== heldRig) {
+            // Respect the deal deadline even if a slow frame skipped the pickup arc.
+            heldRig.attach(group); group.position.copy(targetPosition);
+            group.quaternion.copy(targetQuaternion); group.scale.setScalar(.54);
+          } else {
+            const amount = 1 - Math.exp(-dt * 18);
+            group.position.lerp(targetPosition, amount); group.quaternion.slerp(targetQuaternion, amount);
+            group.scale.lerp(targetScale.setScalar(.54), amount);
+          }
+          group.userData.held = true;
+        } else {
+          if (group.parent !== scene) scene.attach(group);
+          const slide = THREE.MathUtils.clamp(progress / .55, 0, 1);
+          const pick = THREE.MathUtils.clamp((progress - .55) / .45, 0, 1);
+          backQuaternion.setFromEuler(angle.set(-Math.PI / 2, Math.PI, 0));
+          if (pick === 0) {
+            group.position.lerpVectors(deckStart, pickup, 1 - Math.pow(1 - slide, 3));
+            group.position.y += Math.sin(slide * Math.PI) * .014;
+            group.quaternion.copy(backQuaternion); group.scale.setScalar(1);
+          } else {
+            targetPosition.applyMatrix4(heldRig.matrixWorld);
+            targetQuaternion.premultiply(rigQuaternion);
+            const eased = pick * pick * (3 - 2 * pick);
+            group.position.lerpVectors(pickup, targetPosition, eased);
+            group.position.y += Math.sin(pick * Math.PI) * .13;
+            group.quaternion.slerpQuaternions(backQuaternion, targetQuaternion, eased);
+            group.scale.setScalar(THREE.MathUtils.lerp(1, .54, eased));
+          }
+          group.userData.held = false;
+        }
+        // Delivery stays back-up on the felt. A face appears only as it is lifted.
+        group.userData.tableFaceUp = false;
+      } else {
+        const progress = THREE.MathUtils.clamp(slot.age / (CONFIG.DEAL_SPEED / 1000), 0, 1);
+        tableHome(slot, targetPosition);
+        group.position.lerpVectors(deckStart, targetPosition, 1 - Math.pow(1 - progress, 3));
+        group.position.y += Math.sin(progress * Math.PI) * .025;
+        const hidden = slot.index === 1 && !cardRevealed;
+        const flipProgress = showdownStartedAt < 0 ? 0 : THREE.MathUtils.clamp((time - showdownStartedAt) / .65, 0, 1);
+        slot.flip = hidden ? Math.PI : slot.index === 1 ? Math.PI * Math.pow(1 - flipProgress, 3) : 0;
+        const peek = state.phase === 'PEEKING' && hidden ? Math.sin(Math.min(1, elapsedShoot / .60) * Math.PI) : 0;
+        group.rotation.set(-Math.PI / 2 + peek * .13, slot.flip, (slot.index % 2 ? -.035 : .035) + peek * .08);
+        group.position.y += Math.abs(Math.sin(slot.flip)) * .235 + peek * .045;
+        group.userData.held = false; group.userData.tableFaceUp = !hidden && progress >= .98;
+      }
+    }
+  }
 
   function update(time: number, delta: number, state: ActorState) {
     const dt = Math.min(delta, .05);
     const smoothing = 1 - Math.exp(-dt * 8);
-    // A fatal first hand can replay directly from round 1 back to round 1.
-    // Detect the new DEALING phase as well as a changed round number.
-    const replay = state.phase === 'DEALING' && state.roundNumber === 1 && lastPhase !== 'DEALING';
-    if (state.roundNumber !== lastRound || replay) {
+    actorTime = time;
+    const enteringRound = state.roundNumber !== lastRound;
+    const replay = state.roundNumber === 1 && state.phase === 'SHUFFLING' && lastPhase !== 'SHUFFLING';
+    if (enteringRound || replay) {
       lastRound = state.roundNumber;
-      dealTime = 0;
+      sweepStartedAt = -1;
+      showdownStartedAt = state.revealed ? time : -1;
       if (state.roundNumber === 1) {
-        stranger.rotation.set(0, 0, 0);
-        stranger.position.y = .86;
-        head.rotation.set(0, 0, 0);
-        rightHand.position.set(.74, .055, .72);
-        rightHand.rotation.set(0, .14, 0);
+        stranger.rotation.set(0, 0, 0); stranger.position.y = .86; head.rotation.set(0, 0, 0);
+        rightHand.position.set(.74, .055, .72); rightHand.rotation.set(0, .14, 0);
+        leftHand.position.set(-.74, .055, .72);
         playerRight.group.position.set(.95, .925, 1.12);
         playerRight.group.rotation.set(0, Math.PI + .17, 0);
-        slump = 0;
-        gunBlend = 0;
-        gun.position.copy(gunRest);
-        gun.rotation.set(-Math.PI / 2, 0, -.13);
-        cardSlots.forEach((slot, index) => { slot.group.rotation.y = index === 3 && !state.revealed ? Math.PI : 0; });
+        slump = 0; gunBlend = 0; gun.position.copy(gunRest); gun.rotation.set(-Math.PI / 2, 0, -.13);
+        upperPack.position.set(0, .045, 0); upperPack.rotation.set(0, 0, 0);
       }
     }
-    if (state.phase !== lastPhase) { elapsedShoot = 0; lastPhase = state.phase; }
-    elapsedShoot += dt;
-    dealTime += dt;
+    if (state.phase !== lastPhase) {
+      elapsedShoot = 0; phaseStartedAt = time;
+      if (state.phase === 'SWEEPING') {
+        sweepStartedAt = time;
+        cardSlots.filter(slot => slot.active).forEach(rememberWorld);
+      }
+      lastPhase = state.phase;
+    }
+    elapsedShoot = time - phaseStartedAt;
+    const shuffling = state.phase === 'SHUFFLING';
+    const shuffle = shuffling ? Math.sin(Math.min(1, elapsedShoot / .50) * Math.PI * 2) : 0;
+    upperPack.position.set(shuffle * .14, .045 + Math.abs(shuffle) * .045, 0);
+    upperPack.rotation.y = shuffle * .22;
+    const dealing = state.phase === 'DEALING' || state.phase === 'HITTING' || state.phase === 'DEALER_TURN';
+    const dealerAction = dealing || shuffling || state.phase === 'PEEKING' || state.phase === 'SWEEPING';
     const aiShoots = state.phase === 'AI_SHOOTING';
     const playerShoots = state.phase === 'PLAYER_SHOOTING' && state.suspense;
     const lifting = aiShoots || playerShoots;
@@ -425,8 +603,15 @@ export function createActors(scene: THREE.Scene) {
     shoulders.position.y = .82 + Math.sin(time * 1.3) * .004 * (1 - slump);
     head.rotation.z = Math.sin(time * .37) * .043 * (1 - slump);
     head.rotation.y = Math.sin(time * .23) * .055 * (1 - slump);
-    head.rotation.x = Math.sin(time * .61) * .018;
-    leftHand.position.y = .055 + Math.sin(time * 1.2) * .001;
+    const peekMotion = state.phase === 'PEEKING' ? Math.sin(Math.min(1, elapsedShoot / .60) * Math.PI) : 0;
+    // The audio envelope supplies the rhythm; no independent mouth or speech loop.
+    const voiceBob = state.dead === 'ai' ? 0 : THREE.MathUtils.clamp(state.voiceLevel ?? 0, 0, 1) * (state.reducedMotion ? .25 : 1);
+    head.position.y = 1.19 + voiceBob * .0025;
+    head.rotation.x = Math.sin(time * .61) * .018 + peekMotion * .19 + voiceBob * .010;
+    if (state.phase === 'PEEKING') handTarget.set(.45, .055 + peekMotion * .11, 1.30);
+    else if (dealerAction) handTarget.set(deckStart.x - .04 + shuffle * .05, .10 + Math.abs(shuffle) * .025, deckStart.z + 1.65);
+    else handTarget.set(-.74, .055 + Math.sin(time * 1.2) * .001, .72);
+    leftHand.position.lerp(handTarget, smoothing);
     for (let i = 0; i < left.fingers.length; i++) {
       const tap = Math.max(0, Math.sin(time * 3.2 + i * .5)) ** 10;
       left.fingers[i].rotation.x = -.07 - tap * .22 * (1 - slump);
@@ -439,6 +624,13 @@ export function createActors(scene: THREE.Scene) {
       rightHand.position.lerp(handTarget, smoothing);
       rightHand.rotation.x += (-1.0 - rightHand.rotation.x) * smoothing;
       rightHand.rotation.z += (-.9 - rightHand.rotation.z) * smoothing;
+    } else if (dealerAction && state.phase !== 'PEEKING') {
+      const stroke = dealing && newest ? Math.sin(Math.min(1, newest.age / (CONFIG.DEAL_SPEED / 1000) / .65) * Math.PI) : 0;
+      handTarget.set(deckStart.x + .18 + stroke * .30 + shuffle * .08, .14 + stroke * .06, deckStart.z + 1.70 + stroke * (newest?.owner === 'player' ? .38 : .15));
+      if (state.phase === 'SWEEPING') handTarget.set(Math.sin(Math.min(1, elapsedShoot / .60) * Math.PI) * .50, .14, 1.08);
+      rightHand.position.lerp(handTarget, smoothing);
+      rightHand.rotation.x += (.08 - rightHand.rotation.x) * smoothing;
+      rightHand.rotation.z += (-.12 - rightHand.rotation.z) * smoothing;
     } else {
       handTarget.set(.74, .055, .72);
       rightHand.position.lerp(handTarget, smoothing);
@@ -448,9 +640,19 @@ export function createActors(scene: THREE.Scene) {
     animatedElbow.copy(rightElbow);
     animatedElbow.y += gunBlend * .28 * (aiShoots ? 1 : 0);
     animatedElbow.z -= gunBlend * .2 * (aiShoots ? 1 : 0);
+    if (dealerAction) { animatedElbow.y += .12; animatedElbow.x -= .20; }
     segment(rightUpper, rightShoulder, animatedElbow);
     segment(rightLower, animatedElbow, rightHand.position);
     segment(leftLower, leftElbow, leftHand.position);
+    const heldCount = (currentRound ?? demo).player.length;
+    const collecting = !!newest && newest.owner === 'player' && newest.age < CONFIG.DEAL_SPEED / 1000;
+    const dip = collecting ? Math.sin(Math.min(1, newest!.age / (CONFIG.DEAL_SPEED / 1000)) * Math.PI) : 0;
+    if (cardRevealed || !heldCount || state.phase === 'SWEEPING') handTarget.set(-.42, -.48, -1.12);
+    else handTarget.set(-.10, -.45 - dip * .045, -.88 - dip * .10);
+    playerLeft.group.position.lerp(handTarget, smoothing);
+    playerLeft.group.rotation.x += ((cardRevealed ? -1.2 : -Math.PI / 2 + .20) - playerLeft.group.rotation.x) * smoothing;
+    for (const finger of playerLeft.fingers) finger.rotation.x = heldCount && !cardRevealed ? -.95 : -.08;
+    segment(leftSleeve, playerLeftStart, playerLeft.group.position);
     if (playerShoots) {
       handTarget.copy(gun.position);
       handTarget.y -= .14;
@@ -466,20 +668,7 @@ export function createActors(scene: THREE.Scene) {
     }
     segment(rightSleeve, playerRightStart, playerRight.group.position);
 
-    cardSlots.forEach((slot, i) => {
-      const home = cardHomes[i];
-      const progress = THREE.MathUtils.clamp((dealTime - i * .085) / .58, 0, 1);
-      const eased = 1 - Math.pow(1 - progress, 3);
-      slot.group.position.x = THREE.MathUtils.lerp(.34 + i * .025, home.x, eased);
-      slot.group.position.z = THREE.MathUtils.lerp(-1.0, home.z, eased);
-      const hidden = i === 3 && !cardRevealed;
-      const target = hidden ? Math.PI : 0;
-      slot.group.rotation.y += (target - slot.group.rotation.y) * (1 - Math.exp(-dt * 8));
-      const flipLift = Math.abs(Math.sin(slot.group.rotation.y)) * .235;
-      slot.group.position.y = home.y + Math.sin(progress * Math.PI) * .09 + flipLift;
-      slot.group.rotation.z = (i % 2 ? -.045 : .045) + (1 - eased) * .17;
-      slot.group.visible = currentRound !== null || state.phase === 'START';
-    });
+    animateCards(time, dt, state);
   }
-  return { stranger, head, leftHand, rightHand, playerHands, gun, cardSlots, setCards, update };
+  return { stranger, head, leftHand, rightHand, playerHands, heldRig, deck, gun, cardSlots, setCards, update };
 }
