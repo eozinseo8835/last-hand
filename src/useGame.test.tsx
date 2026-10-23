@@ -389,7 +389,7 @@ describe('rendered blackjack controls and hidden information', () => {
 
 describe('trigger commitment and hesitation', () => {
   it('loses all accumulated hold time on release and drains the visible progress over 600ms', () => {
-    startPlayerShot(); act(() => latest.beginTriggerHold()); advance(1800);
+    startPlayerShot(); act(() => latest.beginTriggerHold()); advance(CONFIG.TRIGGER_HOLD_MS * .72);
     const progress = latest.game.triggerProgress;
     expect(progress).toBeGreaterThan(.6); expect(progress).toBeLessThan(1);
     act(() => latest.endTriggerHold());

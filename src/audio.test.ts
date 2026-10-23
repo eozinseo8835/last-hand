@@ -254,3 +254,63 @@ describe('heartbeat, trigger mechanics and room events', () => {
     audio.play('hammer'); audio.play('clack'); random.mockRestore();
   });
 });
+
+describe('physical revolver reports', () => {
+  const sounds = ['hammer', 'clack', 'spin', 'click', 'shot'] as const;
+
+  it('never unlocks audio for a mechanism or shot and allocates no effects while muted', () => {
+    for (const sound of sounds) audio.play(sound);
+    expect(Context.instances).toHaveLength(0);
+    audio.init(); audio.mute(true);
+    const nodes = context().nodes.length;
+    for (const sound of sounds) audio.play(sound);
+    expect(context().nodes).toHaveLength(nodes);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('uses isolated synthesized noise for every report without changing gameplay randomness', () => {
+    audio.init();
+    const random = vi.spyOn(Math, 'random').mockImplementation(() => { throw Error('Revolver audio consumed gameplay RNG'); });
+    for (const sound of [...sounds, 'card'] as const) expect(() => audio.play(sound)).not.toThrow();
+    expect(random).not.toHaveBeenCalled();
+    for (const node of context().nodes.filter(node => node.kind === 'source' && node.buffer)) {
+      const samples = node.buffer!.getChannelData(0);
+      expect(samples.length).toBeLessThanOrEqual(context().sampleRate * .53);
+      if (samples.length > 1) expect(samples.some(sample => sample !== 0)).toBe(true);
+    }
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('separates a dry empty hammer strike from the shot crack, pressure body and concrete reflections', () => {
+    audio.init(); const ctx = context();
+    audio.play('click');
+    expect(ctx.nodes.filter(node => node.kind === 'reverb')).toHaveLength(0);
+    const drySources = ctx.nodes.filter(node => node.kind === 'source');
+    expect(drySources).toHaveLength(1);
+    expect(drySources[0].stop.mock.calls[0][0]! - drySources[0].start.mock.calls[0][0]!).toBeCloseTo(.031);
+
+    const before = ctx.nodes.length; audio.play('shot');
+    const shot = ctx.nodes.slice(before), start = ctx.currentTime + .002;
+    const starts = shot.filter(node => node.kind === 'source').map(node => node.start.mock.calls[0][0]!);
+    for (const delay of [.037, .081, .129]) expect(starts.some(at => Math.abs(at - start - delay) < .00001)).toBe(true);
+    expect(shot.some(node => node.type === 'highpass' && node.frequency.value === 1900)).toBe(true);
+    expect(shot.some(node => node.type === 'lowpass' && node.frequency.value === 1350)).toBe(true);
+    expect(shot.some(node => node.kind === 'oscillator' && node.frequency.setValueAtTime.mock.calls[0][0] === 170)).toBe(true);
+    const room = shot.find(node => node.kind === 'reverb')!;
+    expect(room.buffer!.getChannelData(0)).not.toEqual(room.buffer!.getChannelData(1));
+    expect(starts.at(-1)).toBeCloseTo(start + .52);
+  });
+
+  it('slows the cylinder detents and disconnects every one-shot graph after its final source ends', () => {
+    audio.init(); const ctx = context(); audio.play('spin');
+    const detents = ctx.nodes.filter(node => node.kind === 'source').map(node => node.start.mock.calls[0][0]!);
+    expect(detents).toHaveLength(12);
+    expect(detents[11] - detents[10]).toBeGreaterThan(detents[1] - detents[0]);
+    expect(detents[11] - ctx.currentTime).toBeLessThan(.8);
+    audio.play('click'); audio.play('shot'); audio.play('card');
+    for (const source of ctx.nodes.filter(node => node.kind === 'source' || node.kind === 'oscillator')) source.onended?.();
+    for (const node of ctx.nodes.slice(2)) expect(node.disconnect).toHaveBeenCalled();
+    expect(ctx.nodes[0].disconnect).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});

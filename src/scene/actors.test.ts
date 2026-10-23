@@ -132,6 +132,55 @@ describe('physical blackjack cards and dealer scene', () => {
     expect(actors.cylinder.rotation.x).toBeCloseTo(0, 2);
   });
 
+  it('aims the raised player barrel directly at the eye through the center of every desktop view', () => {
+    settleOpening();
+    advance(2, { phase: 'PLAYER_SHOOTING', triggerHeld: true, triggerProgress: 1, chambersFired: 3 });
+    for (const [width, height] of [[1280, 720], [1440, 900], [1920, 1080]]) {
+      camera.aspect = width / height; camera.updateProjectionMatrix();
+      scene.updateMatrixWorld(true);
+      const muzzle = actors.gun.localToWorld(new THREE.Vector3(.315, .09, 0));
+      const screen = muzzle.clone().project(camera);
+      const barrelDirection = new THREE.Vector3(1, 0, 0).transformDirection(actors.gun.matrixWorld);
+      const towardEye = camera.getWorldPosition(new THREE.Vector3()).sub(muzzle).normalize();
+      expect(Math.abs(screen.x), `${width} muzzle x`).toBeLessThan(.02);
+      expect(Math.abs(screen.y), `${height} muzzle y`).toBeLessThan(.02);
+      expect(barrelDirection.dot(towardEye)).toBeGreaterThan(.9999);
+      expect(screen.z).toBeGreaterThan(-1); expect(screen.z).toBeLessThan(1);
+    }
+  });
+
+  it('uses the actual camera pose for centered aim while leaving the opponent shooting pose intact', () => {
+    settleOpening();
+    camera.position.set(.04, 1.88, 2.67); camera.rotation.set(-.12, .08, .01);
+    advance(2, { phase: 'PLAYER_SHOOTING', triggerHeld: true, triggerProgress: 1 });
+    const muzzle = actors.gun.localToWorld(new THREE.Vector3(.315, .09, 0));
+    const screen = muzzle.clone().project(camera);
+    expect(Math.abs(screen.x)).toBeLessThan(.002); expect(Math.abs(screen.y)).toBeLessThan(.002);
+    advance(2, { phase: 'AI_SHOOTING', triggerHeld: false, triggerProgress: 0 });
+    expect(actors.gun.position.x).toBeCloseTo(.47, 3);
+    expect(actors.gun.position.y).toBeCloseTo(2, 3);
+    expect(actors.gun.position.z).toBeCloseTo(-1.48, 3);
+    const expected = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.PI - .3, -.03));
+    expect(actors.gun.quaternion.angleTo(expected)).toBeLessThan(.001);
+  });
+
+  it('finishes centering before the continuous hold fires, rather than only at completed progress', () => {
+    settleOpening();
+    const holdSeconds = CONFIG.TRIGGER_HOLD_MS / 1000;
+    const frames = Math.floor(holdSeconds * .95 / .01);
+    for (let frame = 1; frame <= frames; frame++) {
+      tick(.01, { phase: 'PLAYER_SHOOTING', triggerHeld: true,
+        triggerProgress: frame * .01 / holdSeconds, chambersFired: 3 });
+    }
+    expect(state.triggerProgress).toBeLessThan(1); expect(state.triggerProgress).toBeGreaterThan(.94);
+    const muzzle = actors.gun.localToWorld(new THREE.Vector3(.315, .09, 0));
+    const screen = muzzle.clone().project(camera);
+    const barrelDirection = new THREE.Vector3(1, 0, 0).transformDirection(actors.gun.matrixWorld);
+    const towardEye = camera.getWorldPosition(new THREE.Vector3()).sub(muzzle).normalize();
+    expect(Math.abs(screen.x)).toBeLessThan(.02); expect(Math.abs(screen.y)).toBeLessThan(.02);
+    expect(barrelDirection.dot(towardEye)).toBeGreaterThan(.9999);
+  });
+
   it('spins the actual cylinder and finishes without an unwanted reverse spin', () => {
     settleOpening();
     tick(.01, { phase: 'PLAYER_SHOOTING', spinning: 'player', spinSerial: 1, triggerProgress: 0 });

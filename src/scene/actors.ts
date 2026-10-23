@@ -352,8 +352,16 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
   scene.add(gun);
   const gunRest = new THREE.Vector3(.12, .962, .02);
   const gunAI = new THREE.Vector3(.47, 2.00, -1.48);
-  const gunPlayer = new THREE.Vector3(.58, 1.50, 1.65);
+  const gunPlayer = new THREE.Vector3();
   const gunTarget = new THREE.Vector3();
+  const gunMotionOffset = new THREE.Vector3();
+  const gunRestQuaternion = gun.quaternion.clone();
+  const gunAimQuaternion = new THREE.Quaternion(), gunPoseQuaternion = new THREE.Quaternion();
+  const barrelToViewer = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI / 2);
+  const aimOrigin = new THREE.Vector3(), aimCameraQuaternion = new THREE.Quaternion();
+  const aimOffset = new THREE.Vector3(0, -.09, -1.165);
+  const fallbackView = new THREE.Object3D();
+  fallbackView.position.set(0, 1.85, 2.65); fallbackView.rotation.x = -.173;
   const handTarget = new THREE.Vector3();
   let gunBlend = 0;
 
@@ -603,7 +611,7 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
         leftHand.position.set(-.74, .055, .72);
         playerRight.group.position.set(.95, .925, 1.12);
         playerRight.group.rotation.set(0, Math.PI + .17, 0);
-        slump = 0; gunBlend = 0; gun.position.copy(gunRest); gun.rotation.set(-Math.PI / 2, 0, -.13);
+        slump = 0; gunBlend = 0; gun.position.copy(gunRest); gunMotionOffset.set(0, 0, 0); gun.rotation.set(-Math.PI / 2, 0, -.13);
         hammer.rotation.z = -.6; revolverCylinder.rotation.x = 0;
         lastSpinSerial = 0; spinStartedAt = -1; spinFrom = 0;
         lastPeekSerial = 0; peekStartedAt = -1; peekCard.visible = deckCorner.visible = false;
@@ -627,28 +635,39 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     const dealing = state.phase === 'DEALING' || state.phase === 'HITTING' || state.phase === 'DEALER_TURN';
     const dealerAction = dealing || shuffling || state.phase === 'PEEKING' || state.phase === 'DEALER_PEEKING' || state.phase === 'SWEEPING';
     const aiShoots = state.phase === 'AI_SHOOTING';
-    const playerPose = Math.max(playerPull, state.spinning === 'player' ? .55 : 0);
+    // Finish raising before the hold completes, leaving a steady, centered aim
+    // through the last second rather than reaching it only after the shot.
+    const playerPose = Math.max(THREE.MathUtils.smoothstep(playerPull, 0, .65), state.spinning === 'player' ? .55 : 0);
     const playerShoots = playerPose > 0;
     const lifting = aiShoots || playerShoots;
     gunBlend += ((lifting ? 1 : 0) - gunBlend) * smoothing;
-    if (aiShoots) gunTarget.copy(gunAI);
-    else gunTarget.lerpVectors(gunRest, gunPlayer, playerPose);
-    gun.position.lerp(gunTarget, smoothing);
-    const targetX = aiShoots ? 0 : THREE.MathUtils.lerp(-Math.PI / 2, 0, playerPose);
-    const targetY = aiShoots ? Math.PI - .3 : -2.08 * playerPose;
-    const targetZ = aiShoots ? -.03 : THREE.MathUtils.lerp(-.13, .17, playerPose);
-    gun.rotation.x += (targetX - gun.rotation.x) * smoothing;
-    gun.rotation.y += (targetY - gun.rotation.y) * smoothing;
-    gun.rotation.z += (targetZ - gun.rotation.z) * smoothing;
-    if (lifting) gun.position.y += Math.sin(time * 8) * .00045;
+    if (aiShoots) {
+      gunTarget.copy(gunAI);
+      gunPoseQuaternion.setFromEuler(new THREE.Euler(0, Math.PI - .3, -.03));
+    } else {
+      const view = camera ?? fallbackView;
+      view.getWorldPosition(aimOrigin); view.getWorldQuaternion(aimCameraQuaternion);
+      // The barrel runs along local +X. Put its mouth on the view's center ray,
+      // pointing back toward the eye, rather than presenting the gun side-on.
+      gunPlayer.copy(aimOffset).applyQuaternion(aimCameraQuaternion).add(aimOrigin);
+      gunAimQuaternion.copy(aimCameraQuaternion).multiply(barrelToViewer);
+      gunTarget.lerpVectors(gunRest, gunPlayer, playerPose);
+      gunPoseQuaternion.slerpQuaternions(gunRestQuaternion, gunAimQuaternion, playerPose);
+    }
+    // Sway is a presentation offset, never an accumulated shift of the aim pose.
+    gun.position.sub(gunMotionOffset).lerp(gunTarget, smoothing);
+    gunMotionOffset.set(0, 0, 0);
+    gun.quaternion.slerp(gunPoseQuaternion, smoothing);
+    if (lifting) gunMotionOffset.y = Math.sin(time * 8) * .00045;
     const tensionActive = state.chambersFired !== undefined && state.phase !== 'START' && state.phase !== 'GAME_OVER';
     const handTremble = tensionActive ? (.00035 + fired * .00055 + playerPull * .0035) * motion : 0;
     heldRig.position.set(heldRigRestPosition.x + Math.sin(time * 29) * handTremble, heldRigRestPosition.y + Math.sin(time * 23 + 1) * handTremble * .8, heldRigRestPosition.z);
     playerHands.position.set(Math.sin(time * 27 + 1) * handTremble, Math.sin(time * 31) * handTremble * .8, 0);
     if (lifting && tensionActive) {
-      gun.position.x += Math.sin(time * 29) * handTremble;
-      gun.position.y += Math.sin(time * 23 + 1) * handTremble;
+      gunMotionOffset.x += Math.sin(time * 29) * handTremble;
+      gunMotionOffset.y += Math.sin(time * 23 + 1) * handTremble;
     }
+    gun.position.add(gunMotionOffset);
     const cock = aiShoots ? .75 : THREE.MathUtils.smoothstep(playerPull, .33, .72);
     hammer.rotation.z += ((-.6 - cock * .55) - hammer.rotation.z) * smoothing;
     if ((state.spinSerial ?? 0) !== lastSpinSerial) {

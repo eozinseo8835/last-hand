@@ -39,7 +39,8 @@ For a ZIP download, use the [pixel-3d branch archive](https://github.com/eozinse
 - Face cards count as 10. An Ace counts as 11 unless it must count as 1 to avoid busting. The HUD labels soft totals.
 - A player bust loses immediately, with no dealer draws. A dealer bust loses to the player. Equal totals are a **PUSH**: neither a shot nor a fold is used.
 - **FOLD** is available only before the first HIT of a round, up to three times per game.
-- The loser shoots. Hold **HOLD TO PULL** continuously for 2.5 seconds; a click never fires. Releasing cancels the pull and drains progress over 0.6 seconds. The hammer cocks at one third, the cylinder turns at two thirds, and the existing click/bang resolves at completion. Losing focus or opening the rules cancels the hold too.
+- The loser shoots. Hold **HOLD TO PULL** continuously for 3 seconds; a click never fires. Releasing cancels the pull and drains progress over 0.6 seconds. The hammer cocks at one third, the cylinder turns at two thirds, and the existing click/bang resolves at completion. Losing focus or opening the rules cancels the hold too.
+- During the hold, the revolver rises until its barrel points straight at the player's eye through the center of the view. The final part of the hold keeps that aim, with the existing hand tremble.
 - The Stranger hesitates for 1.5–4 seconds before its own shot, longer as the current cylinder empties. Waiting more than ten seconds for the player's hold prompts impatient dialogue, without firing automatically.
 - Empty shots advance the shared cylinder. SPIN resets its pointer and bullet; after the final SPIN, the game ends within six further trigger pulls.
 - Hold the left mouse button and drag, or hold **A / D** to look left/right and **W / S** to look up/down. Looking turns the seated head without walking, within ±100° yaw and ±35° pitch. Key motion accelerates and releases smoothly.
@@ -62,7 +63,7 @@ Each round has a 35% chance of one decision-phase event: a 3–5 second blackout
 
 Breakdown depends only on fired chambers in the current cylinder. From chamber three, dialogue becomes short; from chamber five, it becomes mostly silence or breath. Breathing, fidgeting, and voice wobble increase with that same chamber count. SPIN resets the cylinder's danger count along with its pointer.
 
-`CONFIG.TELL_ACCURACY`, `HEARTBEAT_BASE_BPM`, `TRIGGER_HOLD_MS`, and `RANDOM_EVENT_CHANCE` tune these systems. Defaults are `0.7`, `60`, `2500` milliseconds, and `0.35`.
+`CONFIG.TELL_ACCURACY`, `HEARTBEAT_BASE_BPM`, `TRIGGER_HOLD_MS`, and `RANDOM_EVENT_CHANCE` tune these systems. Defaults are `0.7`, `60`, `3000` milliseconds, and `0.35`.
 
 ## Scene and implementation
 
@@ -83,6 +84,8 @@ The `pixel-3d` branch retains its existing Three.js bunker, baseline lighting, S
 `CONFIG.LOOK_KEY_SPEED` is keyboard angular speed in radians per second; `DEAL_SPEED` is milliseconds per dealt card; `DEALER_STANDS_ON` defaults to 17. `LOOK_SENSITIVITY`, `PIXEL_HEIGHT`, and `GORE_LEVEL` retain their existing defaults. Set `GORE_LEVEL` to `"low"` to remove blood effects.
 
 Geometry and textures are code-generated, and fonts are bundled. No external model/image/audio assets, backend, accounts, credentials, or runtime API services are required. Static geometry batching and one 512px shadow light reduce rendering cost. Physical MacBook Air 60fps performance has not been measured in this cloud environment.
+
+Revolver audio is generated locally: steel hammer and cylinder impacts, a slowing ratchet, a dry empty strike, and a layered gunshot with a sharp pressure crack, low body, and short concrete-room reflections. Sound randomness is independent of the deck and bullet position. No audio files are needed.
 
 ## Stranger voice
 
