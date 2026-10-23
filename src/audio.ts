@@ -1,4 +1,5 @@
 import { CONFIG } from './game';
+import type { Speaker } from './campaign';
 import { voiceRandom, type VoicePlan } from './voice';
 import { eventBangOffsets, heartbeatSettings, type RoundEvent } from './tension';
 
@@ -6,7 +7,7 @@ type Sound = 'card' | 'click' | 'shot' | 'tension' | 'hammer' | 'clack' | 'spin'
 export type HeartbeatState = { active: boolean; chambersFired: number; pulling: boolean };
 type AudioLayer = { gain: GainNode; sources: Set<AudioScheduledSourceNode>; nodes: Set<AudioNode>; closed: boolean };
 type SpeakingVoice = {
-  plan: VoicePlan; start: number; end: number; gain: GainNode;
+  plan: VoicePlan; speaker: Speaker; start: number; end: number; gain: GainNode;
   nodes: AudioNode[]; sources: AudioScheduledSourceNode[]; stopped: boolean;
 };
 
@@ -28,6 +29,7 @@ export class TableAudio {
   private event: RoundEvent | null = null;
   private eventLayer: AudioLayer | null = null;
   private eventRequest = 0;
+  private revolverSerial = 0;
   init() {
     // Only the Sit Down / Play Again click calls init. Constructing this object is silent.
     if (typeof AudioContext === 'undefined') return;
@@ -57,20 +59,20 @@ export class TableAudio {
       }
     }
   }
-  startVoice(plan: VoicePlan) {
+  startVoice(plan: VoicePlan, speaker: Speaker = 'captive', behind = false) {
     this.stopVoice();
     if (!this.context || !this.master || this.muted || !CONFIG.VOICE_ENABLED || plan.parameters.volume <= 0 || !plan.steps.some(step => step.syllable)) return;
     const request = this.voiceRequest;
     if (this.context.state !== 'running') {
       // The first click may still be completing resume(); never resume from a dialogue effect.
       void this.unlock?.then(() => {
-        if (this.voiceRequest === request && this.context?.state === 'running' && !this.muted && CONFIG.VOICE_ENABLED) this.scheduleVoice(plan);
+        if (this.voiceRequest === request && this.context?.state === 'running' && !this.muted && CONFIG.VOICE_ENABLED) this.scheduleVoice(plan, speaker, behind);
       });
       return;
     }
-    this.scheduleVoice(plan);
+    this.scheduleVoice(plan, speaker, behind);
   }
-  private scheduleVoice(plan: VoicePlan) {
+  private scheduleVoice(plan: VoicePlan, speaker: Speaker, behind = false) {
     const ctx = this.context!, now = ctx.currentTime;
     const line = ctx.createGain(), drive = ctx.createGain(), distortion = ctx.createWaveShaper();
     const mask = ctx.createBiquadFilter(), room = ctx.createConvolver(), wet = ctx.createGain();
@@ -83,7 +85,8 @@ export class TableAudio {
     echo.delayTime.value = .085; echoGain.gain.value = .11;
     drive.connect(distortion); distortion.connect(mask); mask.connect(line);
     mask.connect(room); room.connect(wet); wet.connect(line);
-    mask.connect(echo); echo.connect(echoGain); echoGain.connect(line); line.connect(this.master!);
+    mask.connect(echo); echo.connect(echoGain); echoGain.connect(line);
+    const position = this.positionVoice(line, speaker, behind);
     const impulse = ctx.createBuffer(2, Math.ceil(ctx.sampleRate * .27), ctx.sampleRate);
     const roomRandom = voiceRandom(plan.seed ^ 0x811c9dc5);
     for (let channel = 0; channel < 2; channel++) {
@@ -95,8 +98,8 @@ export class TableAudio {
     }
     room.buffer = impulse;
     const voice: SpeakingVoice = {
-      plan, start: now, end: now, gain: line, stopped: false,
-      nodes: [line, drive, distortion, mask, room, wet, echo, echoGain], sources: [],
+      plan, speaker, start: now, end: now, gain: line, stopped: false,
+      nodes: [line, drive, distortion, mask, room, wet, echo, echoGain, ...(position ? [position] : [])], sources: [],
     };
     this.voice = voice;
     for (const step of plan.steps) {
@@ -151,6 +154,31 @@ export class TableAudio {
     gain.cancelScheduledValues(now); gain.setValueAtTime(gain.value, now);
     gain.linearRampToValueAtTime(value, now + .06);
   }
+  private positionVoice(line: GainNode, speaker: Speaker, behind = false): AudioNode | null {
+    const ctx = this.context!, pan = behind ? 0 : speaker === 'host' ? -.7 : 0;
+    try {
+      if (behind && typeof ctx.createPanner === 'function') {
+        const position = ctx.createPanner(); position.panningModel = 'HRTF';
+        // The listener faces -Z by default, so +Z places the final line behind it.
+        if (position.positionX) {
+          position.positionX.value = 0; position.positionY.value = 0; position.positionZ.value = 1;
+        } else position.setPosition(0, 0, 1);
+        line.connect(position); position.connect(this.master!); return position;
+      }
+      if (typeof ctx.createStereoPanner === 'function') {
+        const position = ctx.createStereoPanner(); position.pan.value = pan;
+        line.connect(position); position.connect(this.master!); return position;
+      }
+      if (typeof ctx.createPanner === 'function') {
+        const position = ctx.createPanner(); position.panningModel = 'equalpower';
+        if (position.positionX) {
+          position.positionX.value = pan * 1.5; position.positionY.value = 0; position.positionZ.value = -1;
+        } else position.setPosition(pan * 1.5, 0, -1);
+        line.connect(position); position.connect(this.master!); return position;
+      }
+    } catch { /* Older audio devices retain the murmur even without stereo positioning. */ }
+    line.connect(this.master!); return null;
+  }
   stopVoice() {
     this.voiceRequest++;
     const voice = this.voice, ctx = this.context;
@@ -164,9 +192,13 @@ export class TableAudio {
     for (const source of voice.sources) source.stop(now + .08);
     this.duckTension(1, now);
   }
-  getVoiceLevel() {
+  getVoiceSpeaker(): Speaker | null {
+    const ctx = this.context, voice = this.voice;
+    return ctx?.state === 'running' && !this.muted && CONFIG.VOICE_ENABLED && voice && voice.plan.parameters.volume > 0 ? voice.speaker : null;
+  }
+  getVoiceLevel(speaker?: Speaker) {
     const voice = this.voice, ctx = this.context;
-    if (!voice || !ctx || ctx.state !== 'running' || this.muted || !CONFIG.VOICE_ENABLED || voice.plan.parameters.volume <= 0) return 0;
+    if (!voice || (speaker !== undefined && voice.speaker !== speaker) || !ctx || ctx.state !== 'running' || this.muted || !CONFIG.VOICE_ENABLED || voice.plan.parameters.volume <= 0) return 0;
     const elapsed = (ctx.currentTime - voice.start) * 1000;
     let level = 0;
     for (const step of voice.plan.steps) {
@@ -175,6 +207,60 @@ export class TableAudio {
       if (progress >= 0 && progress <= 1) level = Math.max(level, Math.sin(progress * Math.PI));
     }
     return level;
+  }
+  /** Story cues share the existing click-unlocked master and never touch gameplay RNG. */
+  playStory(kind: 'hood' | 'drag' | 'door' | 'feed-shot' | 'escape') {
+    if (!this.context || !this.master || this.muted) return;
+    const layer = this.makeLayer(this.master), now = this.context.currentTime + .005;
+    const seeds = { hood: 0x400d, drag: 0xd4a6, door: 0xd004, 'feed-shot': 0xfead, escape: 0xe5ca9e };
+    const random = voiceRandom(seeds[kind]);
+    if (kind === 'hood') {
+      this.noise(layer, now, .62, .07, 360, random, 'lowpass', true);
+      this.resonance(layer, now + .05, .38, .018, 80, 45);
+      this.hoodBreath(layer, now, random);
+    } else if (kind === 'drag') {
+      this.noise(layer, now, 1.9, .045, 480, random, 'lowpass', true);
+      for (let step = 0; step < 6; step++) {
+        const start = now + .12 + step * .28;
+        this.noise(layer, start, .16, .09, 650, random, 'lowpass');
+        this.resonance(layer, start, .16, .045, 90, 42);
+      }
+    } else if (kind === 'door') {
+      this.noise(layer, now, .48, .19, 720, random, 'lowpass');
+      this.resonance(layer, now, .62, .09, 145, 38);
+      this.noise(layer, now + .1, .12, .07, 1850, random, 'bandpass');
+    } else if (kind === 'feed-shot') {
+      this.noise(layer, now, .34, .18, 390, random, 'lowpass');
+      this.resonance(layer, now, .42, .1, 85, 27);
+    } else {
+      this.noise(layer, now, 1.5, .035, 900, random, 'lowpass', true);
+      for (let step = 0; step < 4; step++) {
+        const start = now + .16 + step * .3;
+        this.noise(layer, start, .15, .06, 950, random, 'lowpass');
+        this.resonance(layer, start, .13, .025, 100, 58);
+      }
+    }
+    layer.closed = true;
+  }
+  /** A cloth-muffled inhale, pause, and longer exhale under the opening hood. */
+  private hoodBreath(layer: AudioLayer, start: number, random: () => number) {
+    const ctx = this.context!, duration = 1.18;
+    const buffer = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * duration), ctx.sampleRate);
+    const samples = buffer.getChannelData(0);
+    for (let index = 0; index < samples.length; index++) samples[index] = random() * 2 - 1;
+    const source = ctx.createBufferSource(), body = ctx.createBiquadFilter(), cloth = ctx.createBiquadFilter(), breath = ctx.createGain();
+    source.buffer = buffer;
+    body.type = 'highpass'; body.frequency.value = 140; body.Q.value = .65;
+    cloth.type = 'lowpass'; cloth.frequency.value = 650; cloth.Q.value = .65;
+    breath.gain.setValueAtTime(0, start);
+    breath.gain.linearRampToValueAtTime(.085, start + .26);
+    breath.gain.linearRampToValueAtTime(0, start + .44);
+    breath.gain.setValueAtTime(0, start + .54);
+    breath.gain.linearRampToValueAtTime(.065, start + .82);
+    breath.gain.linearRampToValueAtTime(0, start + duration);
+    source.connect(body); body.connect(cloth); cloth.connect(breath); breath.connect(layer.gain);
+    this.ownSource(layer, source, [body, cloth, breath]);
+    source.start(start); source.stop(start + duration);
   }
   /** Callers describe the current phase; this method never unlocks browser audio. */
   setHeartbeat(state: HeartbeatState) {
@@ -293,12 +379,70 @@ export class TableAudio {
   }
   private playMechanism(sound: 'hammer' | 'clack' | 'spin') {
     const ctx = this.context!, layer = this.makeLayer(this.master!), now = ctx.currentTime;
-    const random = voiceRandom(sound === 'spin' ? 0x51a7 : sound === 'hammer' ? 0xc0c4 : 0xc1ac);
+    const random = voiceRandom((sound === 'spin' ? 0x51a7 : sound === 'hammer' ? 0xc0c4 : 0xc1ac) ^ ++this.revolverSerial);
     const clicks = sound === 'spin' ? 12 : 1;
+    let offset = .005;
     for (let index = 0; index < clicks; index++) {
-      const start = now + .005 + index * .058;
-      this.noise(layer, start, sound === 'clack' ? .13 : .045, sound === 'spin' ? .075 : .18, sound === 'clack' ? 1150 : 2200, random, 'bandpass');
-      this.resonance(layer, start, sound === 'clack' ? .14 : .065, sound === 'spin' ? .018 : .035, sound === 'clack' ? 220 : 480, sound === 'clack' ? 95 : 230);
+      const start = now + offset;
+      const volume = sound === 'spin' ? .10 + (index === clicks - 1 ? .05 : 0) : sound === 'hammer' ? .22 : .25;
+      // The ratchet slows into its last detent. Short, fixed inharmonic modes
+      // sound like steel contact rather than an oscillator sweeping in pitch.
+      this.impact(layer, start, sound === 'clack' ? .055 : .025, volume, sound === 'clack' ? 1500 : 2800, random, 'bandpass');
+      this.resonance(layer, start, .032, volume * .13, 1327, 1327);
+      this.resonance(layer, start + .001, .047, volume * .08, 2789, 2789);
+      this.resonance(layer, start + (sound === 'hammer' ? .020 : .008), .027, volume * .15, 613, 613);
+      offset += .029 + index * .0044;
+    }
+    layer.closed = true;
+  }
+  /** A fast physical impact: sub-millisecond attack and a decaying noise body. */
+  private impact(layer: AudioLayer, start: number, duration: number, volume: number, cutoff: number, random: () => number, type: BiquadFilterType) {
+    const ctx = this.context!, buffer = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * duration), ctx.sampleRate);
+    const samples = buffer.getChannelData(0);
+    for (let index = 0; index < samples.length; index++) samples[index] = (random() * 2 - 1) * Math.exp(-index / samples.length * 5);
+    const source = ctx.createBufferSource(), filter = ctx.createBiquadFilter(), envelope = ctx.createGain();
+    source.buffer = buffer; filter.type = type; filter.frequency.value = cutoff; filter.Q.value = type === 'bandpass' ? .8 : .65;
+    envelope.gain.setValueAtTime(0, start); envelope.gain.linearRampToValueAtTime(volume, start + .0005);
+    envelope.gain.exponentialRampToValueAtTime(.0001, start + duration);
+    source.connect(filter); filter.connect(envelope); envelope.connect(layer.gain);
+    this.ownSource(layer, source, [filter, envelope]); source.start(start); source.stop(start + duration);
+  }
+  private playRevolver(sound: 'click' | 'shot') {
+    const ctx = this.context!, now = ctx.currentTime + .002, layer = this.makeLayer(this.master!);
+    const random = voiceRandom((sound === 'shot' ? 0x5a07 : 0xc11c) ^ ++this.revolverSerial);
+    if (sound === 'click') {
+      // Hammer against an empty chamber: a hard pin strike and brief frame ring.
+      this.impact(layer, now, .031, .38, 3300, random, 'highpass');
+      for (const [frequency, volume, duration] of [[1469, .050, .028], [2953, .027, .040], [4313, .012, .019]]) {
+        this.resonance(layer, now + .001, duration, volume, frequency, frequency);
+      }
+    } else {
+      layer.gain.gain.value = .8;
+      // Separate the high pressure front, low report, and barrel/body vibration.
+      // None of these random samples consume the deck/cylinder's RNG stream.
+      this.impact(layer, now, .046, .92, 1900, random, 'highpass');
+      this.impact(layer, now + .002, .13, .62, 1350, random, 'lowpass');
+      this.resonance(layer, now, .12, .42, 170, 48);
+      this.resonance(layer, now + .002, .035, .055, 2471, 2471);
+      // Concrete early reflections lose high frequencies with every bounce.
+      for (const [delay, volume, cutoff] of [[.037, .17, 2400], [.081, .105, 1700], [.129, .060, 1100]]) {
+        this.impact(layer, now + delay, .085, volume, cutoff, random, 'lowpass');
+      }
+      const room = ctx.createConvolver(), wet = ctx.createGain();
+      const impulse = ctx.createBuffer(2, Math.ceil(ctx.sampleRate * .30), ctx.sampleRate);
+      for (let channel = 0; channel < 2; channel++) {
+        const samples = impulse.getChannelData(channel);
+        for (let index = 0; index < samples.length; index++) {
+          const age = index / ctx.sampleRate;
+          samples[index] = age < .014 ? 0 : (random() * 2 - 1) * Math.exp(-age * 22) * .45;
+        }
+      }
+      room.buffer = impulse; wet.gain.value = .14;
+      layer.gain.connect(room); room.connect(wet); wet.connect(this.master!);
+      layer.nodes.add(room); layer.nodes.add(wet);
+      // Keep the graph alive for its bounded room tail, then disconnect it all.
+      const finish = ctx.createBufferSource(); finish.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+      this.ownSource(layer, finish, []); finish.connect(layer.gain); finish.start(now + .52);
     }
     layer.closed = true;
   }
@@ -345,7 +489,7 @@ export class TableAudio {
     this.ownSource(layer, source, [envelope]); source.start(start); source.stop(start + duration);
   }
   play(sound: Sound) {
-    if (!this.context || !this.master) return;
+    if (!this.context || !this.master || this.muted) return;
     if (sound === 'hammer' || sound === 'clack' || sound === 'spin') {
       if (!this.muted) this.playMechanism(sound);
       return;
@@ -353,6 +497,7 @@ export class TableAudio {
     const ctx = this.context, now = ctx.currentTime;
     // End the suspense tone at the trigger pull so the click is followed by silence.
     if (this.tension) { this.tension.stop(); this.tension = null; }
+    if (sound === 'click' || sound === 'shot') { this.playRevolver(sound); return; }
     if (sound === 'tension') {
       const oscillator = ctx.createOscillator(), gain = ctx.createGain();
       oscillator.frequency.setValueAtTime(48, now); oscillator.frequency.linearRampToValueAtTime(58, now + 2.5);
@@ -362,19 +507,14 @@ export class TableAudio {
       oscillator.onended = () => { if (this.tension === oscillator) this.tension = null; };
       oscillator.start(); oscillator.stop(now + 2.5); return;
     }
-    const duration = sound === 'shot' ? .6 : sound === 'click' ? .06 : .08;
+    const duration = .08, random = voiceRandom(0xca4d);
     const buffer = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * duration), ctx.sampleRate), samples = buffer.getChannelData(0);
-    for (let i = 0; i < samples.length; i++) samples[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / samples.length, sound === 'shot' ? 4 : 2);
+    for (let i = 0; i < samples.length; i++) samples[i] = (random() * 2 - 1) * Math.pow(1 - i / samples.length, 2);
     const source = ctx.createBufferSource(), gain = ctx.createGain(), filter = ctx.createBiquadFilter();
-    source.buffer = buffer; filter.type = sound === 'shot' ? 'lowpass' : 'highpass'; filter.frequency.value = sound === 'shot' ? 4200 : sound === 'click' ? 2400 : 900;
-    gain.gain.value = sound === 'shot' ? 1 : sound === 'click' ? .45 : .11;
+    source.buffer = buffer; filter.type = 'highpass'; filter.frequency.value = 900;
+    gain.gain.value = .11;
     source.connect(filter); filter.connect(gain); gain.connect(this.master); source.start();
-    if (sound === 'shot') {
-      const thump = ctx.createOscillator(), envelope = ctx.createGain();
-      thump.frequency.setValueAtTime(120, now); thump.frequency.exponentialRampToValueAtTime(30, now + .25);
-      envelope.gain.setValueAtTime(.65, now); envelope.gain.exponentialRampToValueAtTime(.001, now + .4);
-      thump.connect(envelope); envelope.connect(this.master); thump.start(); thump.stop(now + .4);
-    }
+    source.onended = () => { source.disconnect(); filter.disconnect(); gain.disconnect(); };
   }
 }
 export const tableAudio = new TableAudio();

@@ -1,20 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { tableAudio } from './audio';
-import type { DialogueCategory } from './dialogue';
+import type { Speaker, VoiceProfile } from './campaign';
 import { createVoicePlan } from './voice';
 
 /** One timeline drives both subtitle letters and the mask's unintelligible voice. */
-export default function Typewriter({ text, category = 'player_hits', danger = false, chambersFired = 0 }: {
-  text: string; category?: DialogueCategory; danger?: boolean; chambersFired?: number;
+export default function Typewriter({ text, category = 'player_hits', danger = false, chambersFired = 0, speaker, profile, onFinish, behind = false }: {
+  text: string; category?: string; danger?: boolean; chambersFired?: number;
+  speaker?: Speaker; profile?: VoiceProfile; onFinish?: () => void; behind?: boolean;
 }) {
-  const plan = useMemo(() => createVoicePlan(text, category, danger, chambersFired), [text, category, danger, chambersFired]);
+  const plan = useMemo(() => createVoicePlan(text, category, danger, chambersFired, profile),
+    [text, category, danger, chambersFired, profile?.pitch, profile?.speed, profile?.wobble, profile?.calm]);
+  const finishCallback = useRef(onFinish); finishCallback.current = onFinish;
+  const skipped = useRef(false);
   const [visible, setVisible] = useState({ text, count: 0 });
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const count = visible.text === text ? visible.count : 0;
 
   useEffect(() => {
     setVisible({ text, count: 0 });
-    tableAudio.startVoice(plan);
+    skipped.current = false;
+    if (behind) tableAudio.startVoice(plan, speaker ?? 'captive', true);
+    else if (speaker === undefined) tableAudio.startVoice(plan);
+    else tableAudio.startVoice(plan, speaker);
     const started = performance.now();
     let index = 0;
     function schedule() {
@@ -32,13 +39,16 @@ export default function Typewriter({ text, category = 'player_hits', danger = fa
       timer.current = null;
       tableAudio.stopVoice();
     };
-  }, [text, plan]);
+    // Position belongs to the start of this line; a story-stage change must not
+    // restart its words or voice. New speech IDs remount the component in App.
+  }, [text, plan, speaker]);
 
   function skip() {
     if (timer.current !== null) clearTimeout(timer.current);
     timer.current = null;
     tableAudio.stopVoice();
     setVisible({ text, count: text.length });
+    if (!skipped.current) { skipped.current = true; finishCallback.current?.(); }
   }
 
   return <button className="dialogue" onClick={skip} aria-label={`${text} Click to finish dialogue.`}>

@@ -12,7 +12,7 @@ class Parameter {
   cancelScheduledValues = vi.fn((_time: number) => this);
 }
 class Node {
-  gain = new Parameter(); frequency = new Parameter(); detune = new Parameter(); Q = new Parameter(); delayTime = new Parameter();
+  gain = new Parameter(); frequency = new Parameter(); detune = new Parameter(); Q = new Parameter(); delayTime = new Parameter(); pan = new Parameter();
   type = ''; buffer: ReturnType<Context['createBuffer']> | null = null; curve: Float32Array | null = null; oversample = '';
   onended: (() => void) | null = null;
   connect = vi.fn((_target: Node) => _target); disconnect = vi.fn();
@@ -49,6 +49,67 @@ afterEach(() => {
 function context() { return Context.instances[0]; }
 
 describe('Web Audio Stranger voice', () => {
+  it('places the final Host line behind the listener after click-authorized resume and cleans up its HRTF panner', async () => {
+    const score = plan();
+    audio.startVoice(score, 'host', true); expect(Context.instances).toHaveLength(0);
+    audio.init(); const ctx = context(); let resumed!: () => void;
+    const panners: Array<Node & { panningModel: string; positionX: Parameter; positionY: Parameter; positionZ: Parameter }> = [];
+    Object.assign(ctx, {
+      createStereoPanner: () => ctx.make('stereo'),
+      createPanner: () => {
+        const panner = Object.assign(ctx.make('panner'), { panningModel: '', positionX: new Parameter(), positionY: new Parameter(), positionZ: new Parameter() });
+        panners.push(panner); return panner;
+      },
+    });
+    ctx.state = 'suspended';
+    ctx.resume.mockImplementation(() => new Promise<void>(resolve => { resumed = () => { ctx.state = 'running'; resolve(); }; }));
+    audio.init(); audio.startVoice(score, 'host', true);
+    expect(panners).toHaveLength(0);
+    resumed(); await Promise.resolve(); await Promise.resolve();
+    const rear = panners[0]; expect(rear).toBeDefined();
+    expect(rear.panningModel).toBe('HRTF');
+    expect([rear.positionX.value, rear.positionY.value, rear.positionZ.value]).toEqual([0, 0, 1]);
+    expect(ctx.nodes.some(node => node.kind === 'stereo')).toBe(false);
+    expect(audio.getVoiceSpeaker()).toBe('host');
+    const finish = ctx.nodes.at(-1)!; audio.stopVoice();
+    expect(finish.stop).toHaveBeenCalledWith(ctx.currentTime + .08);
+    finish.onended?.(); expect(rear.disconnect).toHaveBeenCalled();
+  });
+
+  it('uses a centered stereo fallback for the rear line while preserving left positioning at the table', () => {
+    audio.init(); const ctx = context();
+    Object.assign(ctx, { createStereoPanner: () => ctx.make('stereo') });
+    audio.startVoice(plan(), 'host', true);
+    expect(ctx.nodes.find(node => node.kind === 'stereo')!.pan.value).toBe(0);
+    const previous = ctx.nodes.length; audio.startVoice(plan(), 'host');
+    expect(ctx.nodes.slice(previous).find(node => node.kind === 'stereo')!.pan.value).toBe(-.7);
+  });
+
+  it('positions Host speech left and captive speech in front, exposing only the active speaker envelope', () => {
+    audio.init(); const ctx = context();
+    Object.assign(ctx, { createStereoPanner: () => ctx.make('stereo') });
+    const score = plan(), syllable = score.steps.find(step => step.syllable)!;
+    audio.startVoice(score, 'host');
+    const firstPosition = ctx.nodes.find(node => node.kind === 'stereo')!;
+    expect(firstPosition.pan.value).toBe(-.7);
+    ctx.currentTime += (syllable.at + syllable.syllable!.duration / 2) / 1000;
+    expect(audio.getVoiceSpeaker()).toBe('host'); expect(audio.getVoiceLevel('host')).toBeCloseTo(1); expect(audio.getVoiceLevel('captive')).toBe(0);
+    const previous = ctx.nodes.length;
+    audio.startVoice(score, 'captive');
+    const secondPosition = ctx.nodes.slice(previous).find(node => node.kind === 'stereo')!;
+    expect(secondPosition.pan.value).toBe(0); expect(audio.getVoiceSpeaker()).toBe('captive'); expect(audio.getVoiceLevel('host')).toBe(0);
+    audio.stopVoice(); expect(audio.getVoiceSpeaker()).toBeNull();
+    ctx.nodes.at(-1)!.onended?.(); expect(secondPosition.disconnect).toHaveBeenCalled();
+  });
+
+  it('keeps speech usable when spatial audio is unsupported and never reports a muted speaker', () => {
+    audio.init(); const ctx = context();
+    Object.assign(ctx, { createStereoPanner: () => { throw Error('Unsupported device'); } });
+    expect(() => audio.startVoice(plan(), 'host')).not.toThrow();
+    expect(audio.getVoiceSpeaker()).toBe('host');
+    audio.mute(true); expect(audio.getVoiceSpeaker()).toBeNull(); expect(audio.getVoiceLevel('host')).toBe(0);
+    audio.mute(false); expect(audio.getVoiceSpeaker()).toBe('host');
+  });
   it('does not construct or resume an AudioContext before the Sit Down click', () => {
     audio.startVoice(plan()); audio.stopVoice(); audio.mute(true); audio.play('card');
     expect(audio.getVoiceLevel()).toBe(0); expect(Context.instances).toHaveLength(0);
@@ -140,6 +201,49 @@ describe('Web Audio Stranger voice', () => {
 });
 
 describe('heartbeat, trigger mechanics and room events', () => {
+  it('shapes a muffled inhale and exhale beneath the hood instead of a continuous hiss', () => {
+    audio.init(); const ctx = context(); audio.playStory('hood');
+    const breathing = ctx.nodes.find(node => node.kind === 'source' && node.buffer!.getChannelData(0).length > ctx.sampleRate)!;
+    expect(breathing).toBeDefined();
+    const body = breathing.connect.mock.calls[0][0];
+    const cloth = body.connect.mock.calls[0][0];
+    const envelope = cloth.connect.mock.calls[0][0];
+    expect(body.type).toBe('highpass'); expect(body.frequency.value).toBeGreaterThan(0);
+    expect(cloth.type).toBe('lowpass'); expect(cloth.frequency.value).toBeLessThan(1000);
+    const contours = envelope.gain.linearRampToValueAtTime.mock.calls;
+    expect(contours).toHaveLength(4);
+    expect(contours[0][0]).toBeGreaterThan(0); expect(contours[1][0]).toBe(0);
+    expect(contours[2][0]).toBeGreaterThan(0); expect(contours[3][0]).toBe(0);
+    expect(contours.every((contour, index) => index === 0 || contour[1] > contours[index - 1][1])).toBe(true);
+    expect(envelope.gain.setValueAtTime.mock.calls.some(([volume, at]) => volume === 0 && at > contours[1][1] && at < contours[2][1])).toBe(true);
+    const duration = breathing.stop.mock.calls[0][0]! - breathing.start.mock.calls[0][0]!;
+    expect(duration).toBeGreaterThan(1); expect(duration).toBeLessThan(1.3);
+    const nodes = ctx.nodes.slice(2);
+    for (const source of nodes.filter(node => node.kind === 'source' || node.kind === 'oscillator')) source.onended?.();
+    for (const node of nodes) expect(node.disconnect).toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('keeps story cues click-gated and muted, then synthesizes them without files or gameplay randomness', () => {
+    const kinds = ['hood', 'drag', 'door', 'feed-shot', 'escape'] as const;
+    for (const kind of kinds) audio.playStory(kind);
+    expect(Context.instances).toHaveLength(0);
+    audio.init(); audio.mute(true); const ctx = context();
+    for (const kind of kinds) audio.playStory(kind);
+    expect(ctx.nodes).toHaveLength(2);
+    audio.mute(false);
+    const random = vi.spyOn(Math, 'random').mockImplementation(() => { throw Error('Story cue changed gameplay randomness'); });
+    for (const kind of kinds) {
+      const previous = ctx.nodes.length;
+      audio.playStory(kind);
+      const nodes = ctx.nodes.slice(previous), sources = nodes.filter(node => node.kind === 'oscillator' || node.kind === 'source');
+      expect(sources.length).toBeGreaterThan(0);
+      expect(sources.every(node => node.start.mock.calls[0][0]! >= ctx.currentTime)).toBe(true);
+      sources.forEach(source => source.onended?.());
+      expect(nodes[0].disconnect).toHaveBeenCalled();
+    }
+    random.mockRestore(); expect(vi.getTimerCount()).toBe(0);
+  });
   it('does not unlock audio for heartbeat or events and starts a requested beat only after init', async () => {
     audio.setHeartbeat({ active: true, chambersFired: 0, pulling: false });
     audio.setEvent({ kind: 'door', startedAt: Date.now(), duration: 4000, seed: 43 });
@@ -252,5 +356,65 @@ describe('heartbeat, trigger mechanics and room events', () => {
     audio.setEvent({ ...event, kind: 'blackout' });
     expect(ctx.nodes.filter(node => node.kind === 'oscillator')).toHaveLength(4);
     audio.play('hammer'); audio.play('clack'); random.mockRestore();
+  });
+});
+
+describe('physical revolver reports', () => {
+  const sounds = ['hammer', 'clack', 'spin', 'click', 'shot'] as const;
+
+  it('never unlocks audio for a mechanism or shot and allocates no effects while muted', () => {
+    for (const sound of sounds) audio.play(sound);
+    expect(Context.instances).toHaveLength(0);
+    audio.init(); audio.mute(true);
+    const nodes = context().nodes.length;
+    for (const sound of sounds) audio.play(sound);
+    expect(context().nodes).toHaveLength(nodes);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('uses isolated synthesized noise for every report without changing gameplay randomness', () => {
+    audio.init();
+    const random = vi.spyOn(Math, 'random').mockImplementation(() => { throw Error('Revolver audio consumed gameplay RNG'); });
+    for (const sound of [...sounds, 'card'] as const) expect(() => audio.play(sound)).not.toThrow();
+    expect(random).not.toHaveBeenCalled();
+    for (const node of context().nodes.filter(node => node.kind === 'source' && node.buffer)) {
+      const samples = node.buffer!.getChannelData(0);
+      expect(samples.length).toBeLessThanOrEqual(context().sampleRate * .53);
+      if (samples.length > 1) expect(samples.some(sample => sample !== 0)).toBe(true);
+    }
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('separates a dry empty hammer strike from the shot crack, pressure body and concrete reflections', () => {
+    audio.init(); const ctx = context();
+    audio.play('click');
+    expect(ctx.nodes.filter(node => node.kind === 'reverb')).toHaveLength(0);
+    const drySources = ctx.nodes.filter(node => node.kind === 'source');
+    expect(drySources).toHaveLength(1);
+    expect(drySources[0].stop.mock.calls[0][0]! - drySources[0].start.mock.calls[0][0]!).toBeCloseTo(.031);
+
+    const before = ctx.nodes.length; audio.play('shot');
+    const shot = ctx.nodes.slice(before), start = ctx.currentTime + .002;
+    const starts = shot.filter(node => node.kind === 'source').map(node => node.start.mock.calls[0][0]!);
+    for (const delay of [.037, .081, .129]) expect(starts.some(at => Math.abs(at - start - delay) < .00001)).toBe(true);
+    expect(shot.some(node => node.type === 'highpass' && node.frequency.value === 1900)).toBe(true);
+    expect(shot.some(node => node.type === 'lowpass' && node.frequency.value === 1350)).toBe(true);
+    expect(shot.some(node => node.kind === 'oscillator' && node.frequency.setValueAtTime.mock.calls[0][0] === 170)).toBe(true);
+    const room = shot.find(node => node.kind === 'reverb')!;
+    expect(room.buffer!.getChannelData(0)).not.toEqual(room.buffer!.getChannelData(1));
+    expect(starts.at(-1)).toBeCloseTo(start + .52);
+  });
+
+  it('slows the cylinder detents and disconnects every one-shot graph after its final source ends', () => {
+    audio.init(); const ctx = context(); audio.play('spin');
+    const detents = ctx.nodes.filter(node => node.kind === 'source').map(node => node.start.mock.calls[0][0]!);
+    expect(detents).toHaveLength(12);
+    expect(detents[11] - detents[10]).toBeGreaterThan(detents[1] - detents[0]);
+    expect(detents[11] - ctx.currentTime).toBeLessThan(.8);
+    audio.play('click'); audio.play('shot'); audio.play('card');
+    for (const source of ctx.nodes.filter(node => node.kind === 'source' || node.kind === 'oscillator')) source.onended?.();
+    for (const node of ctx.nodes.slice(2)) expect(node.disconnect).toHaveBeenCalled();
+    expect(ctx.nodes[0].disconnect).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

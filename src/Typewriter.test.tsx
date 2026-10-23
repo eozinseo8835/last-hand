@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Typewriter from './Typewriter';
 import { tableAudio } from './audio';
 import { createVoicePlan } from './voice';
+import { HOST, OPPONENTS } from './campaign';
 
 vi.mock('./audio', () => ({ tableAudio: { startVoice: vi.fn(), stopVoice: vi.fn() } }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -24,6 +25,51 @@ afterEach(() => {
 });
 
 describe('spoken subtitle timing', () => {
+  it('starts the final line behind the player without restarting it when the story advances', () => {
+    const text = 'See you next season.';
+    const score = createVoicePlan(text, 'ending_win', false, 0, HOST.voice);
+    act(() => root.render(<Typewriter text={text} category="ending_win" speaker="host" profile={HOST.voice} behind/>));
+    expect(tableAudio.startVoice).toHaveBeenLastCalledWith(score, 'host', true);
+    advance(100);
+    act(() => root.render(<Typewriter text={text} category="ending_win" speaker="host" profile={HOST.voice} behind={false}/>));
+    expect(tableAudio.startVoice).toHaveBeenCalledTimes(1);
+    act(() => root.render(<Typewriter text="Your seat is ready." category="intro_rules" speaker="host" profile={HOST.voice}/>));
+    expect(tableAudio.startVoice).toHaveBeenLastCalledWith(createVoicePlan('Your seat is ready.', 'intro_rules', false, 0, HOST.voice), 'host');
+  });
+
+  it('starts the selected character voice and stops the previous speaker when the queue changes', () => {
+    const text = 'The room is patient.';
+    act(() => root.render(<Typewriter text={text} category="intro_rules" speaker="host" profile={HOST.voice}/>));
+    expect(tableAudio.startVoice).toHaveBeenLastCalledWith(createVoicePlan(text, 'intro_rules', false, 0, HOST.voice), 'host');
+    advance(200);
+    const stops = vi.mocked(tableAudio.stopVoice).mock.calls.length;
+    act(() => root.render(<Typewriter text={text} category="nervous" speaker="captive" profile={OPPONENTS[1].voice}/>));
+    expect(tableAudio.stopVoice).toHaveBeenCalledTimes(stops + 1);
+    expect(tableAudio.startVoice).toHaveBeenLastCalledWith(createVoicePlan(text, 'nervous', false, 0, OPPONENTS[1].voice), 'captive');
+    expect(displayed()).toBe('');
+  });
+
+  it('fades on a skip and notifies the queue once, while natural completion leaves queue timing to the engine', () => {
+    const text = 'You know the rules.', onFinish = vi.fn();
+    act(() => root.render(<Typewriter text={text} category="intro_rules" speaker="host" profile={HOST.voice} onFinish={onFinish}/>));
+    advance(100); act(() => container.querySelector<HTMLButtonElement>('.dialogue')!.click());
+    expect(displayed()).toBe(text); expect(onFinish).toHaveBeenCalledTimes(1); expect(tableAudio.stopVoice).toHaveBeenCalled();
+    act(() => container.querySelector<HTMLButtonElement>('.dialogue')!.click()); expect(onFinish).toHaveBeenCalledTimes(1);
+    const next = 'Then take your seat.';
+    act(() => root.render(<Typewriter text={next} category="intro_rules" speaker="host" profile={HOST.voice} onFinish={onFinish}/>));
+    advance(Math.ceil(createVoicePlan(next, 'intro_rules', false, 0, HOST.voice).duration) + 100);
+    expect(displayed()).toBe(next); expect(onFinish).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not restart a line for equivalent profile values or a changed queue callback', () => {
+    const text = 'Eight guests.', oldFinish = vi.fn(), nextFinish = vi.fn();
+    act(() => root.render(<Typewriter text={text} category="intro_rules" speaker="host" profile={{ ...HOST.voice }} onFinish={oldFinish}/>));
+    advance(100);
+    act(() => root.render(<Typewriter text={text} category="intro_rules" speaker="host" profile={{ ...HOST.voice }} onFinish={nextFinish}/>));
+    expect(tableAudio.startVoice).toHaveBeenCalledTimes(1);
+    act(() => container.querySelector<HTMLButtonElement>('.dialogue')!.click());
+    expect(oldFinish).not.toHaveBeenCalled(); expect(nextFinish).toHaveBeenCalledTimes(1);
+  });
   it('starts one murmur plan and reveals subtitles on that same clock', () => {
     const text = 'The room is patient.';
     const plan = createVoicePlan(text, 'nervous');

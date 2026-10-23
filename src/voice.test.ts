@@ -1,7 +1,34 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createVoicePlan, voiceParameters } from './voice';
+import { HOST, OPPONENTS } from './campaign';
 
 describe('Stranger murmur pattern', () => {
+  it('gives each captive a distinct configured voice without revealing a bluff', () => {
+    const text = 'Keep your hands where I can see them.';
+    const profiles = Object.values(OPPONENTS).map(opponent => opponent.voice);
+    expect(new Set(profiles.map(profile => voiceParameters('confident', false, 0, profile).pitch)).size).toBe(3);
+    for (const profile of profiles) {
+      for (const fired of [0, 1, 4, 5]) {
+        expect(createVoicePlan(text, 'confident', false, fired, profile)).toEqual(createVoicePlan(text, 'bluff', false, fired, profile));
+      }
+      expect(voiceParameters('player_hits', false, 0, profile)).toMatchObject(profile);
+    }
+    expect(voiceParameters('confident', false, 0, profiles[0]).pitch).toBeGreaterThan(voiceParameters('confident', false, 0, profiles[1]).pitch);
+    expect(voiceParameters('confident', false, 0, profiles[1]).pitch).toBeGreaterThan(voiceParameters('confident', false, 0, profiles[2]).pitch);
+  });
+
+  it('keeps the Host deepest, slowest and calm regardless of cards, pressure or category', () => {
+    const calm = voiceParameters('intro_rules', false, 0, HOST.voice);
+    for (const category of ['deal', 'round_result', 'nervous', 'confident', 'bluff', 'danger', 'broken']) {
+      expect(voiceParameters(category, true, 6, HOST.voice)).toEqual(calm);
+    }
+    for (const opponent of Object.values(OPPONENTS)) for (const danger of [false, true]) {
+      const captive = voiceParameters('player_hits', danger, 0, opponent.voice);
+      expect(calm.pitch).toBeLessThan(captive.pitch);
+      expect(calm.speed).toBeLessThan(captive.speed);
+      expect(calm.wobble).toBeLessThan(captive.wobble);
+    }
+  });
   it('uses the same text-seeded syllables regardless of unrelated game randomness', () => {
     const first = createVoicePlan('The room has been patient.', 'confident');
     const random = vi.spyOn(Math, 'random').mockImplementation(() => { throw new Error('Voice must not consume gameplay randomness'); });

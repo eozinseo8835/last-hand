@@ -20,12 +20,16 @@ export const CONFIG = {
   VOICE_VOLUME: .28,
   TELL_ACCURACY: .7,
   HEARTBEAT_BASE_BPM: 60,
-  TRIGGER_HOLD_MS: 2500,
+  TRIGGER_HOLD_MS: 3000,
   RANDOM_EVENT_CHANCE: .35,
 };
 
 export type GamePhase =
   | 'START'
+  | 'OPENING'
+  | 'TRANSITION'
+  | 'ENDING_WIN'
+  | 'ENDING_DEATH'
   | 'SHUFFLING'
   | 'DEALING'
   | 'PEEKING'
