@@ -99,6 +99,96 @@ describe('physical blackjack cards and dealer scene', () => {
     expect(actors.head.rotation.x).toBe(idleX);
   });
 
+  it('plays tells only during decisions and gives calm tells steady hands and a facing head', () => {
+    settleOpening();
+    const time = now;
+    actors.update(time, 0, { ...state, tell: null });
+    const baseYaw = actors.head.rotation.y;
+    actors.update(time, 0, { ...state, tell: { kind: 'avert', disposition: 'nervous' } });
+    expect(actors.head.rotation.y - baseYaw).toBeGreaterThan(.1);
+    actors.update(time, 0, { ...state, phase: 'REVEAL', tell: { kind: 'avert', disposition: 'nervous' } });
+    expect(actors.head.rotation.y).toBe(baseYaw);
+    const fingers = actors.leftHand.children.filter(child => child instanceof THREE.Group);
+    for (const sample of [.3, .7, 1.1]) {
+      actors.update(sample, 0, { ...state, tell: { kind: 'still', disposition: 'calm' } });
+      expect(actors.head.rotation.y).toBe(0); expect(actors.head.rotation.z).toBe(0);
+      for (const finger of fingers) expect(finger.rotation.x).toBeCloseTo(-.07);
+    }
+    actors.update(.15, 0, { ...state, tell: { kind: 'tap', disposition: 'nervous' } });
+    expect(fingers.some(finger => finger.rotation.x < -.25)).toBe(true);
+  });
+
+  it('raises and cocks progressively, advances the visible cylinder, and eases down after release', () => {
+    settleOpening();
+    advance(.7, { phase: 'PLAYER_SHOOTING', triggerHeld: true, triggerProgress: .2, chambersFired: 2 });
+    const low = actors.gun.position.y, lowHammer = actors.hammer.rotation.z;
+    advance(.5, { triggerProgress: .85 });
+    expect(actors.gun.position.y).toBeGreaterThan(low + .2);
+    expect(actors.hammer.rotation.z).toBeLessThan(lowHammer - .3);
+    expect(actors.cylinder.rotation.x).toBeGreaterThan(.8);
+    advance(.8, { triggerHeld: false, triggerProgress: 0 });
+    expect(actors.gun.position.y).toBeCloseTo(.962, 2);
+    expect(actors.hammer.rotation.z).toBeCloseTo(-.6, 2);
+    expect(actors.cylinder.rotation.x).toBeCloseTo(0, 2);
+  });
+
+  it('spins the actual cylinder and finishes without an unwanted reverse spin', () => {
+    settleOpening();
+    tick(.01, { phase: 'PLAYER_SHOOTING', spinning: 'player', spinSerial: 1, triggerProgress: 0 });
+    advance(.4); expect(actors.cylinder.rotation.x).toBeGreaterThan(Math.PI * 4);
+    advance(.4); expect(actors.cylinder.rotation.x).toBeCloseTo(Math.PI * 6);
+    tick(.01, { spinning: null }); expect(actors.cylinder.rotation.x).toBe(0);
+    advance(.3); expect(actors.cylinder.rotation.x).toBe(0);
+  });
+
+  it('shows a private peek face to the camera, lifts only a card back on the deck, and removes the secret on the next action', () => {
+    settleOpening(); const next = card('Q', 'hearts');
+    tick(.01, { peekActor: 'player', peekSerial: 1, peekedCard: next }); advance(.3);
+    expect(actors.peekCard.visible).toBe(true); expect(actors.deckCorner.visible).toBe(true);
+    expect(actors.deckCorner.rotation.x).toBeLessThan(-.2);
+    expect(actors.peekCard.userData.identity).toBe(next.id);
+    expect((actors.peekFront.material as THREE.MeshStandardMaterial).map).not.toBeNull();
+    scene.updateMatrixWorld(true);
+    const center = actors.peekFront.getWorldPosition(new THREE.Vector3());
+    const normal = new THREE.Vector3(0, 0, 1).transformDirection(actors.peekFront.matrixWorld);
+    expect(normal.dot(camera.getWorldPosition(new THREE.Vector3()).sub(center).normalize())).toBeGreaterThan(.8);
+    expect(normal.dot(actors.head.getWorldPosition(new THREE.Vector3()).sub(center).normalize())).toBeLessThan(0);
+    tick(.01, { phase: 'DEALER_PEEKING', peekActor: 'ai', peekSerial: 2, peekedCard: null }); advance(.3);
+    expect(actors.peekCard.visible).toBe(false);
+    expect((actors.peekFront.material as THREE.MeshStandardMaterial).map).toBeNull();
+    expect(actors.cardSlots.find(slot => slot.owner === 'ai' && slot.index === 1)!.front.userData.identity).toBe('unrevealed');
+  });
+
+  it('bases fear and hand tremble on fired chambers, reduces it for motion preferences, and amplifies it while pulling', () => {
+    const round = settleOpening(); const time = now;
+    actors.update(time, 0, { ...state, chambersFired: 0 }); const calm = actors.heldRig.position.length();
+    actors.update(time, 0, { ...state, chambersFired: 5 }); const scared = actors.heldRig.position.length(), fearPitch = actors.head.rotation.x;
+    expect(scared).toBeGreaterThan(calm * 5);
+    actors.setCards({ ...round, ai: [card('2', 'clubs'), card('3', 'diamonds')] }, false);
+    actors.update(time, 0, { ...state, chambersFired: 5 });
+    expect(actors.heldRig.position.length()).toBe(scared); expect(actors.head.rotation.x).toBe(fearPitch);
+    actors.update(time, 0, { ...state, chambersFired: 5, reducedMotion: true });
+    expect(actors.heldRig.position.length()).toBeCloseTo(scared * .25);
+    actors.update(time, 0, { ...state, phase: 'PLAYER_SHOOTING', chambersFired: 5, triggerProgress: 1, triggerHeld: true });
+    expect(actors.heldRig.position.length()).toBeGreaterThan(scared * 1.5);
+  });
+
+  it('dims the self-lit held faces during blackout and flinches on the same door pulse only during decisions', () => {
+    settleOpening();
+    const material = activePlayerCards()[0].front.material as THREE.MeshStandardMaterial;
+    const event = { kind: 'blackout' as const, startedAt: Date.now(), duration: 4000, seed: 1 };
+    tick(.01, { event }); expect(material.emissiveIntensity).toBeCloseTo(.70 * .055);
+    tick(.01, { phase: 'HITTING' }); expect(material.emissiveIntensity).toBe(.70);
+    const time = now;
+    actors.update(time, 0, { ...state, phase: 'PLAYER_DECISION', event: null }); const quietPitch = actors.head.rotation.x;
+    const door = { ...event, kind: 'door' as const, startedAt: Date.now() - 120 };
+    actors.update(time, 0, { ...state, phase: 'PLAYER_DECISION', event: door });
+    expect(actors.head.rotation.x).toBeLessThan(quietPitch - .07);
+    expect(actors.stranger.position.z).toBeLessThan(-1.67);
+    actors.update(time, 0, { ...state, phase: 'HITTING', event: door });
+    expect(actors.head.rotation.x).toBe(quietPitch); expect(actors.stranger.position.z).toBe(-1.65);
+  });
+
   it('keeps every player face off the felt during the opening deliveries, pickup, and later hits', () => {
     const live = empty(), round = opening();
     const deliveries: Array<['player' | 'ai', Card]> = [

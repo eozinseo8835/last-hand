@@ -1,5 +1,13 @@
 import * as THREE from 'three';
 import { mergeStaticMeshes } from './merge';
+import type { GamePhase } from '../game';
+import { createTensionRandom, type RoundEvent } from '../tension';
+
+/** Presentation rejects a stale event as soon as play leaves the decision phase. */
+export function decisionEvent(phase: GamePhase, event: RoundEvent | null | undefined, now = Date.now()): RoundEvent | null {
+  if (phase !== 'PLAYER_DECISION' || !event || now < event.startedAt || now >= event.startedAt + event.duration) return null;
+  return event;
+}
 
 /** Deterministic texture noise never consumes the game's random source. */
 function randomGenerator(seed: number) {
@@ -74,8 +82,9 @@ function texture(kind: 'concrete' | 'floor' | 'wood' | 'felt' | 'cardboard'): TH
 export type BunkerRoom = {
   lamp: THREE.Group;
   bulbLight: THREE.PointLight;
-  update: (time: number, delta: number, danger: boolean, suspense: boolean, impulse: number) => void;
+  update: (time: number, delta: number, danger: boolean, suspense: boolean, impulse: number, event?: RoundEvent | null, now?: number) => void;
   reset: () => void;
+  dispose: () => void;
 };
 
 export function createRoom(scene: THREE.Scene): BunkerRoom {
@@ -177,7 +186,7 @@ export function createRoom(scene: THREE.Scene): BunkerRoom {
   for (const y of [.35, 1.3, 2.2]) box(.13, .15, .08, metal, .59, y, .14, door);
   box(.56, .14, .1, darkMetal, 0, 2.89, .08, door);
   box(.44, .085, .06, new THREE.MeshBasicMaterial({ color: 0x9c2920 }), 0, 2.89, .145, door);
-  const emergency = new THREE.PointLight(0xd53d22, 1.35, 3.1, 2); emergency.position.set(2.7, 2.9, -3.8); root.add(emergency);
+  const emergency = new THREE.PointLight(0xd53d22, 1.35, 3.1, 2); emergency.name = 'emergency-light'; emergency.position.set(2.7, 2.9, -3.8); root.add(emergency);
 
   // Exposed oxidized pipe runs and loose electrical cables sag beneath the ceiling.
   between(new THREE.Vector3(-4.08, 2.98, -3.9), new THREE.Vector3(3.9, 2.98, -3.9), .066, rust);
@@ -212,20 +221,30 @@ export function createRoom(scene: THREE.Scene): BunkerRoom {
   const staticContext = staticCanvas.getContext('2d')!, staticPixels = staticContext.createImageData(64, 48);
   const staticTexture = new THREE.CanvasTexture(staticCanvas); staticTexture.magFilter = THREE.NearestFilter; staticTexture.minFilter = THREE.NearestFilter; staticTexture.colorSpace = THREE.SRGBColorSpace;
   const staticMaterial = new THREE.MeshBasicMaterial({ map: staticTexture, color: 0x7c9990, toneMapped: false });
+  const tvScreens: THREE.Mesh[] = [], tvGlows: THREE.PointLight[] = [];
   const createTV = (x: number, y: number, z: number, yaw: number, scale: number) => {
     const tv = new THREE.Group(); tv.position.set(x, y, z); tv.rotation.y = yaw; tv.scale.setScalar(scale); root.add(tv);
     box(.83, .67, .68, mat(0x525445, { metalness: .05 }), 0, .34, 0, tv, true);
     box(.89, .59, .085, mat(0x1b251f), 0, .36, .36, tv);
-    const screen = new THREE.Mesh(new THREE.PlaneGeometry(.64, .43), staticMaterial); screen.position.set(-.045, .38, .408); tv.add(screen);
+    const screen = new THREE.Mesh(new THREE.PlaneGeometry(.64, .43), staticMaterial); screen.position.set(-.045, .38, .408); tv.add(screen); tvScreens.push(screen);
     box(.035, .19, .019, metal, .37, .36, .42, tv);
     for (const dy of [.12, .23]) { const knob = new THREE.Mesh(new THREE.CylinderGeometry(.026, .026, .024, 6), darkMetal); knob.rotation.x = Math.PI / 2; knob.position.set(.37, dy, .427); tv.add(knob); }
     box(.57, .036, .5, darkMetal, 0, -.02, 0, tv);
-    const glow = new THREE.PointLight(0x87b0a7, 1.45 * scale, 3.2, 2); glow.position.set(0, .4, .65); tv.add(glow);
+    const glow = new THREE.PointLight(0x87b0a7, 1.45 * scale, 3.2, 2); glow.position.set(0, .4, .65); tv.add(glow); tvGlows.push(glow);
     between(new THREE.Vector3(-.16, .68, -.06), new THREE.Vector3(-.38, 1.04, -.2), .006, metal, tv);
     between(new THREE.Vector3(.16, .68, -.06), new THREE.Vector3(.37, .99, -.1), .006, metal, tv);
   };
   createTV(-3.03, 1.3, -2.25, .2, 1);
   createTV(3.18, .22, -.36, -.55, .8);
+  // Use the existing CRT visible from the seated view so the event can be read.
+  const watchedScreen = tvScreens[0], watchedGlow = tvGlows[0];
+  watchedScreen.name = 'watched-crt-screen'; watchedGlow.name = 'watched-crt-glow';
+  const watchedGlowRest = watchedGlow.intensity;
+  const eventCanvas = document.createElement('canvas'); eventCanvas.width = 64; eventCanvas.height = 48;
+  const eventContext = eventCanvas.getContext('2d')!, eventPixels = eventContext.createImageData(64, 48);
+  const eventTexture = new THREE.CanvasTexture(eventCanvas);
+  eventTexture.magFilter = eventTexture.minFilter = THREE.NearestFilter; eventTexture.colorSpace = THREE.SRGBColorSpace;
+  const eventMaterial = new THREE.MeshBasicMaterial({ map: eventTexture, color: 0xb4d5ba, toneMapped: false });
 
   const shelves = new THREE.Group(); shelves.position.set(3.62, 0, -2.25); shelves.rotation.y = -.16; root.add(shelves);
   for (const x of [-.58, .58]) for (const z of [-.32, .32]) box(.045, 2.27, .045, metal, x, 1.13, z, shelves);
@@ -255,33 +274,41 @@ export function createRoom(scene: THREE.Scene): BunkerRoom {
   const socket = new THREE.Mesh(new THREE.CylinderGeometry(.063, .057, .12, 8), metal); socket.position.y = -.99; lamp.add(socket);
   const shade = new THREE.Mesh(new THREE.ConeGeometry(.245, .19, 8, 1, true), new THREE.MeshStandardMaterial({ color: 0x30372b, side: THREE.DoubleSide, roughness: .7, metalness: .45, flatShading: true })); shade.position.y = -.98; lamp.add(shade);
   const bulbMaterial = new THREE.MeshBasicMaterial({ color: 0xffdfb0, toneMapped: false });
-  const bulb = new THREE.Mesh(new THREE.SphereGeometry(.085, 8, 5), bulbMaterial); bulb.position.y = -1.13; bulb.scale.y = 1.35; lamp.add(bulb);
-  const filament = new THREE.Mesh(new THREE.CylinderGeometry(.012, .012, .085, 4), new THREE.MeshBasicMaterial({ color: 0xfff5c5, toneMapped: false })); filament.position.y = -1.11; lamp.add(filament);
+  const bulb = new THREE.Mesh(new THREE.SphereGeometry(.085, 8, 5), bulbMaterial); bulb.name = 'lamp-bulb'; bulb.position.y = -1.13; bulb.scale.y = 1.35; lamp.add(bulb);
+  const filament = new THREE.Mesh(new THREE.CylinderGeometry(.012, .012, .085, 4), new THREE.MeshBasicMaterial({ color: 0xfff5c5, toneMapped: false })); filament.name = 'lamp-filament'; filament.position.y = -1.11; lamp.add(filament);
   const bulbLight = new THREE.PointLight(0xffdfb0, 20, 8.5, 2); bulbLight.position.set(0, -1.19, .025); bulbLight.castShadow = true;
   bulbLight.shadow.mapSize.set(512, 512); bulbLight.shadow.bias = -.002; bulbLight.shadow.normalBias = .025; bulbLight.shadow.camera.near = .12; bulbLight.shadow.camera.far = 9; lamp.add(bulbLight);
-  const ambient = new THREE.HemisphereLight(0x7d8c72, 0x151d18, .32); root.add(ambient);
+  const ambient = new THREE.HemisphereLight(0x7d8c72, 0x151d18, .32); ambient.name = 'ambient-room-light'; root.add(ambient);
   // Faint additive cone suggests airborne dust without an expensive postprocessing pass.
   const hazeMaterial = new THREE.MeshBasicMaterial({ color: 0xd4bc82, transparent: true, opacity: .003, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending });
-  const haze = new THREE.Mesh(new THREE.ConeGeometry(1.5, 1.85, 16, 1, true), hazeMaterial); haze.position.set(0, 1.725, .02); root.add(haze);
+  const haze = new THREE.Mesh(new THREE.ConeGeometry(1.5, 1.85, 16, 1, true), hazeMaterial); haze.name = 'lamp-haze'; haze.position.set(0, 1.725, .02); root.add(haze);
 
   // Only rigid room geometry is batched. Lamp descendants must retain their
   // local transforms for swinging, and the transparent haze keeps its own pass.
   mergeStaticMeshes(root, mesh => {
-    if (mesh === haze) return false;
+    if (mesh === haze || mesh === watchedScreen) return false;
     for (let parent = mesh.parent; parent; parent = parent.parent) if (parent === lamp) return false;
     return true;
   });
 
   const staticRandom = randomGenerator(1553);
-  let nextStatic = 0, nextFlicker = 1.7, flickerUntil = 0, swing = 0, lastImpulse = 0;
+  let nextStatic = 0, nextFlicker = 1.7, flickerUntil = 0, swing = 0, lastImpulse = 0, nextEventStatic = 0;
+  function restoreEvent() {
+    watchedScreen.material = staticMaterial; watchedGlow.intensity = watchedGlowRest;
+  }
   return {
     lamp,
     bulbLight,
     reset() {
       swing = 0; lastImpulse = 0;
       lamp.rotation.set(0, 0, 0);
+      bulbLight.intensity = 20; bulbMaterial.color.setHex(0xffdfb0); filament.visible = true;
+      ambient.intensity = .32; hazeMaterial.opacity = .003; restoreEvent(); root.userData.event = null;
     },
-    update(time, delta, danger, suspense, impulse) {
+    dispose() { eventMaterial.dispose(); eventTexture.dispose(); },
+    update(time, delta, danger, suspense, impulse, event = null, now = Date.now()) {
+      const active = event && now >= event.startedAt && now < event.startedAt + event.duration ? event : null;
+      root.userData.event = active?.kind ?? null;
       if (time >= nextStatic) {
         for (let i = 0; i < staticPixels.data.length; i += 4) {
           const row = Math.floor(i / (64 * 4));
@@ -301,10 +328,40 @@ export function createRoom(scene: THREE.Scene): BunkerRoom {
       lamp.rotation.x = Math.cos(time * 2.1) * swing * .45;
       const flicker = time < flickerUntil ? .4 + staticRandom() * .14 : 1;
       const dim = suspense ? .65 : 1;
-      bulbLight.intensity = 20 * flicker * dim;
-      bulbMaterial.color.setHex(0xffdfb0).multiplyScalar(flicker);
+      let power = 1;
+      if (active?.kind === 'blackout') {
+        const remaining = active.startedAt + active.duration - now;
+        // A few brief returning flashes close the outage without changing normal flicker.
+        const returning = createTensionRandom(active.seed ^ Math.floor((now - active.startedAt) / 43));
+        power = remaining < 280 && returning() > .58 ? .15 + returning() * .6 : 0;
+      }
+      bulbLight.intensity = 20 * flicker * dim * power;
+      bulbMaterial.color.setHex(0xffdfb0).multiplyScalar(flicker * power);
+      filament.visible = power > .1;
+      ambient.intensity = .32 * power;
       emergency.intensity = 1.2 + Math.sin(time * 1.4) * .12;
-      hazeMaterial.opacity = .003 * flicker * dim;
+      hazeMaterial.opacity = .003 * flicker * dim * power;
+      if (active?.kind === 'tv') {
+        watchedScreen.material = eventMaterial;
+        const elapsed = now - active.startedAt;
+        const random = createTensionRandom(active.seed ^ Math.floor(elapsed / 75));
+        const screenPower = elapsed < 220 || active.duration - elapsed < 200 ? (random() > .5 ? .3 : 1) : 1;
+        watchedGlow.intensity = watchedGlowRest * (1.2 + screenPower);
+        eventMaterial.color.setHex(0xb4d5ba).multiplyScalar(screenPower);
+        if (now >= nextEventStatic) {
+          for (let i = 0; i < eventPixels.data.length; i += 4) {
+            const value = 15 + random() * 65;
+            eventPixels.data[i] = value * .65; eventPixels.data[i + 1] = value; eventPixels.data[i + 2] = value * .75; eventPixels.data[i + 3] = 255;
+          }
+          eventContext.putImageData(eventPixels, 0, 0);
+          if (elapsed > 220 && elapsed < active.duration - 200) {
+            eventContext.fillStyle = '#111c15dc'; eventContext.fillRect(0, 10, 64, 27);
+            eventContext.fillStyle = '#cedfc8'; eventContext.font = 'bold 9px monospace'; eventContext.textAlign = 'center'; eventContext.textBaseline = 'middle';
+            eventContext.fillText('WE ARE', 32, 18); eventContext.fillText('WATCHING', 32, 30);
+          }
+          eventTexture.needsUpdate = true; nextEventStatic = now + 75;
+        }
+      } else restoreEvent();
     },
   };
 }

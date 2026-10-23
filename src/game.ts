@@ -18,6 +18,10 @@ export const CONFIG = {
   VOICE_PITCH: 96,
   VOICE_SPEED: 1,
   VOICE_VOLUME: .28,
+  TELL_ACCURACY: .7,
+  HEARTBEAT_BASE_BPM: 60,
+  TRIGGER_HOLD_MS: 2500,
+  RANDOM_EVENT_CHANCE: .35,
 };
 
 export type GamePhase =
@@ -27,6 +31,7 @@ export type GamePhase =
   | 'PEEKING'
   | 'HITTING'
   | 'DEALER_TURN'
+  | 'DEALER_PEEKING'
   | 'SWEEPING'
   | 'PLAYER_DECISION'
   | 'REVEAL'

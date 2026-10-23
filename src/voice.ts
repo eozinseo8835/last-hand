@@ -27,13 +27,14 @@ function textSeed(text: string) {
 }
 
 /** Confident and bluff deliberately share exactly the same acoustic parameters. */
-export function voiceParameters(category: DialogueCategory, danger = false): VoiceParameters {
+export function voiceParameters(category: DialogueCategory, danger = false, chambersFired = 0): VoiceParameters {
   const slow = danger || category === 'danger' || category === 'intro';
   const nervous = !slow && category === 'nervous';
+  const breakdown = Number.isFinite(chambersFired) ? Math.max(0, Math.min(6, Math.floor(chambersFired))) : 0;
   return {
     pitch: Math.max(40, CONFIG.VOICE_PITCH) * (slow ? .89 : 1),
-    speed: Math.max(.25, CONFIG.VOICE_SPEED) * (slow ? .78 : nervous ? 1.16 : 1),
-    wobble: nervous ? 3.4 : 1.4,
+    speed: Math.max(.25, CONFIG.VOICE_SPEED) * (slow ? .78 : nervous ? 1.16 : 1) * (1 + breakdown * .035),
+    wobble: (nervous ? 3.4 : 1.4) + breakdown * .5,
     volume: Math.max(0, Math.min(1, CONFIG.VOICE_VOLUME)),
   };
 }
@@ -41,8 +42,8 @@ export function voiceParameters(category: DialogueCategory, danger = false): Voi
 const VOWELS: readonly [number, number][] = [[350, 900], [420, 780], [620, 1150], [250, 650]];
 
 /** One clock drives both visible letters and nonverbal syllables; all times are milliseconds. */
-export function createVoicePlan(text: string, category: DialogueCategory, danger = false): VoicePlan {
-  const seed = textSeed(text), random = voiceRandom(seed), parameters = voiceParameters(category, danger);
+export function createVoicePlan(text: string, category: DialogueCategory, danger = false, chambersFired = 0): VoicePlan {
+  const seed = textSeed(text), random = voiceRandom(seed), parameters = voiceParameters(category, danger, chambersFired);
   const steps: VoiceStep[] = [];
   let at = 30 / parameters.speed, count = 0, letters = 0, group = 2 + Math.floor(random() * 2);
   let pitch = parameters.pitch;

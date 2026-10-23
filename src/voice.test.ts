@@ -14,6 +14,23 @@ describe('Stranger murmur pattern', () => {
     expect(voiceParameters('confident')).toEqual(voiceParameters('bluff'));
     expect(voiceParameters('confident', true)).toEqual(voiceParameters('bluff', true));
     expect(createVoicePlan('You can fold, but you cannot hide.', 'confident')).toEqual(createVoicePlan('You can fold, but you cannot hide.', 'bluff'));
+    for (const fired of [1, 2, 4, 5]) {
+      expect(voiceParameters('confident', true, fired)).toEqual(voiceParameters('bluff', true, fired));
+    }
+  });
+
+  it('adds breakdown speed and wobble from fired chambers without changing the calm base voice', () => {
+    const baseline = voiceParameters('player_hits');
+    expect(voiceParameters('player_hits', false, 0)).toEqual(baseline);
+    for (let fired = 1; fired <= 5; fired++) {
+      const previous = voiceParameters('player_hits', false, fired - 1), current = voiceParameters('player_hits', false, fired);
+      expect(current.pitch).toBe(baseline.pitch);
+      expect(current.speed).toBeGreaterThan(previous.speed);
+      expect(current.wobble).toBeGreaterThan(previous.wobble);
+    }
+    const line = 'Keep it still.';
+    expect(createVoicePlan(line, 'short', true, 4)).toEqual(createVoicePlan(line, 'short', true, 4));
+    expect(createVoicePlan(line, 'short', true, 4).duration).toBeLessThan(createVoicePlan(line, 'short', true, 0).duration);
   });
 
   it('uses a faster wobblier nervous voice and a deeper slower danger or opening voice', () => {

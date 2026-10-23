@@ -116,3 +116,15 @@ h1 > span { color: #aeb99b; }h1 > i { font-family: Georgia, serif; font-size: 23
   .app-header, .app-footer { padding-left: 24px; padding-right: 24px; }
 }
 .game-actions { left: var(--hud-safe); right: var(--hud-safe); }
+/* Abilities share the existing readouts and action row without moving the HUD. */
+.ability-summary { display: block; margin-top: 11px; color: #a5b28f; font-size: 8px; letter-spacing: 1.2px; white-space: nowrap; }
+.hud-right .ability-summary { margin-top: 0; }
+.peek-button { min-width: 114px; }
+.spin-button { min-width: 194px; }
+.hold-trigger { min-width: 244px; gap: 16px; touch-action: none; user-select: none; -webkit-user-select: none; }
+.hold-trigger.is-holding { background: #d5ab75; }
+.trigger-ring { position: relative; display: inline-flex; width: 34px; height: 34px; align-items: center; justify-content: center; flex: none; }
+.trigger-ring > svg:first-child { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); fill: none; stroke-width: 2.5; }
+.ring-track { stroke: #26342350; }
+.ring-progress { stroke: #253020; stroke-linecap: round; }
+.trigger-ring > svg:last-child { position: relative; }

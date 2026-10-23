@@ -1,7 +1,10 @@
 import { CONFIG } from './game';
 import { voiceRandom, type VoicePlan } from './voice';
+import { eventBangOffsets, heartbeatSettings, type RoundEvent } from './tension';
 
-type Sound = 'card' | 'click' | 'shot' | 'tension';
+type Sound = 'card' | 'click' | 'shot' | 'tension' | 'hammer' | 'clack' | 'spin';
+export type HeartbeatState = { active: boolean; chambersFired: number; pulling: boolean };
+type AudioLayer = { gain: GainNode; sources: Set<AudioScheduledSourceNode>; nodes: Set<AudioNode>; closed: boolean };
 type SpeakingVoice = {
   plan: VoicePlan; start: number; end: number; gain: GainNode;
   nodes: AudioNode[]; sources: AudioScheduledSourceNode[]; stopped: boolean;
@@ -16,6 +19,15 @@ export class TableAudio {
   private voice: SpeakingVoice | null = null;
   private voiceRequest = 0;
   private unlock: Promise<void> | null = null;
+  private heartbeatState: HeartbeatState = { active: false, chambersFired: 0, pulling: false };
+  private heartbeatLayer: AudioLayer | null = null;
+  private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+  private heartbeatGeneration = 0;
+  private heartbeatNextBeat = 0;
+  private heartbeatBeats: number[] = [];
+  private event: RoundEvent | null = null;
+  private eventLayer: AudioLayer | null = null;
+  private eventRequest = 0;
   init() {
     // Only the Sit Down / Play Again click calls init. Constructing this object is silent.
     if (typeof AudioContext === 'undefined') return;
@@ -26,10 +38,16 @@ export class TableAudio {
     }
     this.master.gain.value = this.muted ? 0 : .6;
     this.unlock = this.context.resume().catch(() => { /* An unavailable audio device leaves the table playable. */ });
+    void this.unlock.then(() => {
+      this.startHeartbeat();
+      this.startEvent();
+    });
   }
   mute(value: boolean) {
     this.muted = value;
     if (this.context && this.master) this.master.gain.setValueAtTime(value ? 0 : .6, this.context.currentTime);
+    if (value) { this.stopHeartbeat(); this.stopEvent(); }
+    else { this.startHeartbeat(); this.startEvent(); }
     if (this.context && this.voice) {
       const now = this.context.currentTime;
       this.duckTension(value || this.voice.end <= now ? 1 : .76, now);
@@ -158,8 +176,180 @@ export class TableAudio {
     }
     return level;
   }
+  /** Callers describe the current phase; this method never unlocks browser audio. */
+  setHeartbeat(state: HeartbeatState) {
+    const next = { ...state, chambersFired: Math.max(0, Math.floor(state.chambersFired)) };
+    if (next.active === this.heartbeatState.active && next.chambersFired === this.heartbeatState.chambersFired && next.pulling === this.heartbeatState.pulling) return;
+    this.heartbeatState = next;
+    this.stopHeartbeat();
+    this.startHeartbeat();
+  }
+  private startHeartbeat() {
+    const ctx = this.context;
+    if (!ctx || !this.tensionDuck || !this.heartbeatState.active || this.muted || this.heartbeatLayer) return;
+    if (ctx.state !== 'running') {
+      const generation = this.heartbeatGeneration;
+      void this.unlock?.then(() => {
+        if (this.heartbeatGeneration === generation && ctx.state === 'running') this.startHeartbeat();
+      });
+      return;
+    }
+    this.heartbeatLayer = this.makeLayer(this.tensionDuck);
+    this.heartbeatNextBeat = ctx.currentTime + .025;
+    this.heartbeatBeats = [];
+    this.pumpHeartbeat();
+  }
+  private pumpHeartbeat() {
+    const ctx = this.context, layer = this.heartbeatLayer;
+    if (!ctx || !layer || layer.closed) return;
+    const now = ctx.currentTime, settings = heartbeatSettings(this.heartbeatState.chambersFired, this.heartbeatState.pulling);
+    // A backgrounded tab resumes with one new beat, never a burst of missed beats.
+    if (this.heartbeatNextBeat < now - .1) this.heartbeatNextBeat = now + .015;
+    const period = 60 / settings.bpm;
+    while (this.heartbeatNextBeat < now + .12) {
+      const start = this.heartbeatNextBeat;
+      this.heartbeatBeats.push(start);
+      this.heartbeatThump(layer, start, settings.volume, 76, .18);
+      this.heartbeatThump(layer, start + Math.min(.17, period * .24), settings.volume * .62, 62, .13);
+      this.heartbeatNextBeat += period;
+    }
+    this.heartbeatBeats = this.heartbeatBeats.filter(start => start > now - 1);
+    this.heartbeatTimer = setTimeout(() => this.pumpHeartbeat(), 25);
+  }
+  private heartbeatThump(layer: AudioLayer, start: number, volume: number, pitch: number, duration: number) {
+    const ctx = this.context!, oscillator = ctx.createOscillator(), envelope = ctx.createGain(), filter = ctx.createBiquadFilter();
+    oscillator.type = 'sine'; oscillator.frequency.setValueAtTime(pitch, start);
+    oscillator.frequency.exponentialRampToValueAtTime(pitch * .48, start + duration);
+    envelope.gain.setValueAtTime(0, start); envelope.gain.linearRampToValueAtTime(volume, start + .006);
+    envelope.gain.exponentialRampToValueAtTime(.0001, start + duration);
+    filter.type = 'lowpass'; filter.frequency.value = 190; filter.Q.value = .7;
+    oscillator.connect(filter); filter.connect(envelope); envelope.connect(layer.gain);
+    this.ownSource(layer, oscillator, [filter, envelope]); oscillator.start(start); oscillator.stop(start + duration + .01);
+  }
+  private stopHeartbeat() {
+    this.heartbeatGeneration++;
+    if (this.heartbeatTimer !== null) clearTimeout(this.heartbeatTimer);
+    this.heartbeatTimer = null;
+    if (this.heartbeatLayer) this.stopLayer(this.heartbeatLayer);
+    this.heartbeatLayer = null; this.heartbeatBeats = [];
+  }
+  /** This is the same audio-clock beat envelope used by the vignette. */
+  getHeartbeatLevel() {
+    const ctx = this.context;
+    if (!ctx || ctx.state !== 'running' || this.muted || !this.heartbeatLayer) return 0;
+    const period = 60 / heartbeatSettings(this.heartbeatState.chambersFired, this.heartbeatState.pulling).bpm;
+    let level = 0;
+    for (const start of this.heartbeatBeats) {
+      const age = ctx.currentTime - start;
+      if (age >= 0 && age < .18) level = Math.max(level, Math.sin(age / .18 * Math.PI));
+      const second = age - Math.min(.17, period * .24);
+      if (second >= 0 && second < .13) level = Math.max(level, Math.sin(second / .13 * Math.PI) * .62);
+    }
+    return level;
+  }
+  setEvent(event: RoundEvent | null) {
+    if (this.event?.kind === event?.kind && this.event?.startedAt === event?.startedAt && this.event?.seed === event?.seed && this.event?.duration === event?.duration) return;
+    this.stopEvent(); this.event = event;
+    this.startEvent();
+  }
+  private startEvent() {
+    const ctx = this.context, event = this.event;
+    if (!ctx || !this.master || !event || this.muted || this.eventLayer) return;
+    if (ctx.state !== 'running') {
+      const request = this.eventRequest;
+      void this.unlock?.then(() => {
+        if (this.eventRequest === request && ctx.state === 'running') this.startEvent();
+      });
+      return;
+    }
+    const elapsed = Math.max(0, Date.now() - event.startedAt);
+    if (elapsed >= event.duration) return;
+    const layer = this.makeLayer(this.master); this.eventLayer = layer;
+    const now = ctx.currentTime, random = voiceRandom(event.seed ^ 0x9e3779b9);
+    const at = (offset: number) => now + Math.max(.005, (offset - elapsed) / 1000);
+    if (event.kind === 'door') {
+      for (const offset of eventBangOffsets(event)) {
+        if (offset < elapsed) continue;
+        this.noise(layer, at(offset), .44, .4, 610, random, 'lowpass');
+        this.resonance(layer, at(offset), .48, .18, 92, 38);
+      }
+    } else if (event.kind === 'blackout') {
+      for (const offset of [0, event.duration - 280, event.duration - 140, event.duration - 35]) {
+        if (offset + 60 < elapsed) continue;
+        this.noise(layer, at(offset), .065, .075, 1100, random, 'bandpass');
+        this.resonance(layer, at(offset), .075, .025, 110, 64, 'sawtooth');
+      }
+    } else {
+      const duration = (event.duration - elapsed) / 1000;
+      this.noise(layer, now + .005, duration, .055, 1800, random, 'highpass', true);
+    }
+    layer.closed = true;
+    if (layer.sources.size === 0) this.disposeLayer(layer);
+  }
+  private stopEvent() {
+    this.eventRequest++;
+    if (this.eventLayer) this.stopLayer(this.eventLayer);
+    this.eventLayer = null;
+  }
+  private playMechanism(sound: 'hammer' | 'clack' | 'spin') {
+    const ctx = this.context!, layer = this.makeLayer(this.master!), now = ctx.currentTime;
+    const random = voiceRandom(sound === 'spin' ? 0x51a7 : sound === 'hammer' ? 0xc0c4 : 0xc1ac);
+    const clicks = sound === 'spin' ? 12 : 1;
+    for (let index = 0; index < clicks; index++) {
+      const start = now + .005 + index * .058;
+      this.noise(layer, start, sound === 'clack' ? .13 : .045, sound === 'spin' ? .075 : .18, sound === 'clack' ? 1150 : 2200, random, 'bandpass');
+      this.resonance(layer, start, sound === 'clack' ? .14 : .065, sound === 'spin' ? .018 : .035, sound === 'clack' ? 220 : 480, sound === 'clack' ? 95 : 230);
+    }
+    layer.closed = true;
+  }
+  private makeLayer(destination: AudioNode): AudioLayer {
+    const gain = this.context!.createGain(); gain.connect(destination);
+    return { gain, sources: new Set(), nodes: new Set(), closed: false };
+  }
+  private ownSource(layer: AudioLayer, source: AudioScheduledSourceNode, nodes: AudioNode[]) {
+    layer.sources.add(source); layer.nodes.add(source); nodes.forEach(node => layer.nodes.add(node));
+    source.onended = () => {
+      [source, ...nodes].forEach(node => { node.disconnect(); layer.nodes.delete(node); });
+      layer.sources.delete(source);
+      if (layer.closed && layer.sources.size === 0) this.disposeLayer(layer);
+    };
+  }
+  private stopLayer(layer: AudioLayer) {
+    const ctx = this.context!; layer.closed = true;
+    const now = ctx.currentTime;
+    layer.gain.gain.cancelScheduledValues(now); layer.gain.gain.setValueAtTime(layer.gain.gain.value, now);
+    layer.gain.gain.linearRampToValueAtTime(0, now + .025);
+    for (const source of layer.sources) source.stop(now + .03);
+    if (layer.sources.size === 0) this.disposeLayer(layer);
+  }
+  private disposeLayer(layer: AudioLayer) {
+    layer.nodes.forEach(node => node.disconnect()); layer.nodes.clear(); layer.gain.disconnect();
+    if (this.eventLayer === layer) this.eventLayer = null;
+  }
+  private noise(layer: AudioLayer, start: number, duration: number, volume: number, cutoff: number, random: () => number, type: BiquadFilterType, flutter = false) {
+    const ctx = this.context!, buffer = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * duration), ctx.sampleRate), samples = buffer.getChannelData(0);
+    for (let index = 0; index < samples.length; index++) samples[index] = (random() * 2 - 1) * (flutter ? .55 + random() * .45 : Math.pow(1 - index / samples.length, 2));
+    const source = ctx.createBufferSource(), envelope = ctx.createGain(), filter = ctx.createBiquadFilter();
+    source.buffer = buffer; filter.type = type; filter.frequency.value = cutoff; filter.Q.value = type === 'bandpass' ? 2.4 : .7;
+    envelope.gain.setValueAtTime(0, start); envelope.gain.linearRampToValueAtTime(volume, start + .006);
+    envelope.gain.setValueAtTime(volume, start + Math.max(.007, duration - .04));
+    envelope.gain.linearRampToValueAtTime(0, start + duration);
+    source.connect(filter); filter.connect(envelope); envelope.connect(layer.gain);
+    this.ownSource(layer, source, [filter, envelope]); source.start(start); source.stop(start + duration);
+  }
+  private resonance(layer: AudioLayer, start: number, duration: number, volume: number, pitch: number, endPitch: number, type: OscillatorType = 'sine') {
+    const ctx = this.context!, source = ctx.createOscillator(), envelope = ctx.createGain(); source.type = type;
+    source.frequency.setValueAtTime(pitch, start); source.frequency.exponentialRampToValueAtTime(endPitch, start + duration);
+    envelope.gain.setValueAtTime(volume, start); envelope.gain.exponentialRampToValueAtTime(.0001, start + duration);
+    source.connect(envelope); envelope.connect(layer.gain);
+    this.ownSource(layer, source, [envelope]); source.start(start); source.stop(start + duration);
+  }
   play(sound: Sound) {
     if (!this.context || !this.master) return;
+    if (sound === 'hammer' || sound === 'clack' || sound === 'spin') {
+      if (!this.muted) this.playMechanism(sound);
+      return;
+    }
     const ctx = this.context, now = ctx.currentTime;
     // End the suspense tone at the trigger pull so the click is followed by silence.
     if (this.tension) { this.tension.stop(); this.tension = null; }

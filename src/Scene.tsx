@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
-import { CONFIG, type GamePhase, type Round } from './game';
-import { createRoom } from './scene/room';
+import { CONFIG, type Card, type GamePhase, type Round } from './game';
+import { createRoom, decisionEvent } from './scene/room';
 import { tableAudio } from './audio';
+import { eventDoorPulse, type OpponentTell, type RoundEvent, type Side } from './tension';
 import { createActors } from './scene/actors';
 import { createLookKeys, createLookState, dragLook, shouldRecenter, updateKeyboardLook, updateLook } from './scene/camera';
 
@@ -17,6 +18,16 @@ export type SceneProps = {
   danger: boolean;
   recenterToken: number;
   lookDisabled?: boolean;
+  chambersFired?: number;
+  tell?: OpponentTell | null;
+  triggerHeld?: boolean;
+  triggerProgress?: number;
+  spinning?: Side | null;
+  spinSerial?: number;
+  peekActor?: Side | null;
+  peekSerial?: number;
+  peekedCard?: Card | null;
+  event?: RoundEvent | null;
 };
 
 function splatterTexture() {
@@ -38,6 +49,8 @@ function splatterTexture() {
 const retroFragment = `
   uniform sampler2D sceneTexture;
   uniform float time;
+  uniform float triggerDarkening;
+  uniform float heartbeatPulse;
   varying vec2 vUv;
   float noise(vec2 p) { return fract(sin(dot(p, vec2(12.9898,78.233)) + time * .29) * 43758.5453); }
   float bayer(vec2 p) {
@@ -57,6 +70,7 @@ const retroFragment = `
     color += (noise(gl_FragCoord.xy) - .5) * .018;
     vec2 uv = (vUv - .5) * vec2(1.12, 1.);
     float vignette = 1. - smoothstep(.16, .77, length(uv)) * .72;
+    vignette *= 1. - smoothstep(.03, .72, length(uv)) * triggerDarkening * (.30 + heartbeatPulse * .12);
     float highlight = smoothstep(.88, 1., max(color.r, max(color.g, color.b)));
     color *= mix(vignette, 1., highlight * .85);
     gl_FragColor = vec4(max(color, vec3(0.)), 1.);
@@ -120,7 +134,7 @@ export default function Scene(props: SceneProps) {
     const postScene = new THREE.Scene();
     const postCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     const postMaterial = new THREE.ShaderMaterial({
-      uniforms: { sceneTexture: { value: target.texture }, time: { value: 0 } },
+      uniforms: { sceneTexture: { value: target.texture }, time: { value: 0 }, triggerDarkening: { value: 0 }, heartbeatPulse: { value: 0 } },
       vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }',
       fragmentShader: retroFragment,
       depthTest: false, depthWrite: false, toneMapped: false,
@@ -193,6 +207,7 @@ export default function Scene(props: SceneProps) {
       const cameraDelta = Math.max(0, (now - lastTime) / 1000);
       const dt = Math.min(cameraDelta, .05); lastTime = now;
       const time = (now - startTime) / 1000, state = latest.current;
+      const epoch = Date.now(), event = decisionEvent(state.phase, state.event, epoch);
       const replay = state.phase === 'SHUFFLING' && state.roundNumber === 1 && previousPhase !== 'SHUFFLING';
       if (replay) {
         look = createLookState(); clearKeys(); impulse = flash = deathProgress = 0;
@@ -221,13 +236,31 @@ export default function Scene(props: SceneProps) {
       else deathProgress = 0;
       blood.visible = state.dead === 'ai' && CONFIG.GORE_LEVEL !== 'low';
       const sway = Math.sin(time * 1.15) * .0025;
+      const doorShake = eventDoorPulse(event, epoch) * (motionPreference.matches ? .2 : 1);
       camera.position.set(Math.sin(time * .7) * .005, 1.85 + Math.sin(time * 1.1) * .007 - deathProgress * .38, 2.65);
+      camera.position.x += Math.sin(time * 79) * doorShake * .006;
       camera.rotation.set(-.173 + look.pitch + sway + Math.sin(time * 73) * impulse * .025, look.yaw + Math.sin(time * 61) * impulse * .018, -deathProgress * .62 + Math.cos(time * 82) * impulse * .012);
+      camera.rotation.x += Math.sin(time * 87 + .7) * doorShake * .005;
+      camera.rotation.z += Math.cos(time * 73) * doorShake * .003;
       camera.updateMatrixWorld(true);
-      room.update(time, dt, state.danger, state.suspense, impulse);
+      room.update(time, dt, state.danger, state.suspense, impulse, event, epoch);
       const voiceLevel = tableAudio.getVoiceLevel();
-      actors.update(time, dt, { ...state, voiceLevel, reducedMotion: motionPreference.matches });
+      const heartbeat = tableAudio.getHeartbeatLevel();
+      actors.update(time, dt, { ...state, event, voiceLevel, reducedMotion: motionPreference.matches });
+      postMaterial.uniforms.triggerDarkening.value = state.phase === 'PLAYER_SHOOTING' ? Math.max(0, Math.min(1, state.triggerProgress ?? 0)) : 0;
+      postMaterial.uniforms.heartbeatPulse.value = heartbeat * (motionPreference.matches ? .2 : 1);
       canvas.dataset.voiceLevel = voiceLevel.toFixed(4);
+      canvas.dataset.heartbeatLevel = heartbeat.toFixed(4);
+      canvas.dataset.triggerProgress = (state.triggerProgress ?? 0).toFixed(4);
+      canvas.dataset.triggerHeld = String(!!state.triggerHeld);
+      canvas.dataset.event = event?.kind ?? '';
+      canvas.dataset.doorPulse = doorShake.toFixed(4);
+      canvas.dataset.peekVisible = String(actors.peekCard.visible);
+      canvas.dataset.peekActor = state.peekActor ?? '';
+      canvas.dataset.spinning = state.spinning ?? '';
+      canvas.dataset.cylinderAngle = actors.cylinder.rotation.x.toFixed(4);
+      canvas.dataset.hammerAngle = actors.hammer.rotation.z.toFixed(4);
+      canvas.dataset.tell = state.phase === 'PLAYER_DECISION' ? state.tell?.kind ?? '' : '';
       actors.gun.getWorldPosition(gunPosition);
       muzzle.position.copy(gunPosition); muzzle.intensity = flash * 22;
       canvas.dataset.yaw = look.yaw.toFixed(5); canvas.dataset.pitch = look.pitch.toFixed(5);
@@ -256,6 +289,7 @@ export default function Scene(props: SceneProps) {
 
     return () => {
       cancelAnimationFrame(frame); observer.disconnect();
+      room.reset(); room.dispose();
       window.removeEventListener('keydown', keyDown);
       window.removeEventListener('keyup', keyUp);
       window.removeEventListener('blur', clearKeys);
