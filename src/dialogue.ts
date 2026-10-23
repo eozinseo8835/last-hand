@@ -71,6 +71,43 @@ export const DIALOGUE = {
     'I knew this hand would come.',
     'Keep your eyes on me.',
   ],
+  player_hits: [
+    'You keep asking the deck to forgive you.',
+    'Every card makes the table feel smaller.',
+    'One more reason to doubt your hands.',
+    'Borrow another number; the debt stays yours.',
+  ],
+  player_stands: [
+    'Then we can stop pretending there is room.',
+    'You have chosen where to stop breathing.',
+    'Let us see what your restraint is worth.',
+    'Now my cards get their turn to speak.',
+  ],
+  player_busts: [
+    'You asked for one card too many.',
+    'Even luck has a number it will not cross.',
+    'The deck heard you clearly that time.',
+    'You were safer before you reached for more.',
+  ],
+  ai_hits: [
+    'I suppose I owe the table another card.',
+    'Not enough to sit still yet.',
+    'There are rules even I must follow.',
+    'Let us see what the deck has kept for me.',
+  ],
+  ai_busts: [
+    'That was more than I intended.',
+    'The numbers can be cruel to either chair.',
+    'I appear to have run out of arithmetic.',
+    'So much for knowing when to stop.',
+  ],
+  push: [
+    'For a moment, neither of us owes the chamber.',
+    'The table has postponed its answer.',
+    'Two equal hands still leave one bullet.',
+    'Enjoy the silence while it belongs to us both.',
+  ],
+
 } as const;
 
 export type DialogueCategory = keyof typeof DIALOGUE;
@@ -89,10 +126,9 @@ export function chooseDialogue(
 
 export function roundDialogueCategory(
   aiTotal: number,
-  chamber: number,
+  _chamber: number,
   random: RandomSource = Math.random,
 ): DialogueCategory {
-  if (chamber >= CONFIG.DANGER_CHAMBER) return 'danger';
   if (aiTotal >= CONFIG.CONFIDENT_THRESHOLD) return 'confident';
   return random() < CONFIG.BLUFF_CHANCE ? 'bluff' : 'nervous';
 }

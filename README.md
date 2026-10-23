@@ -1,17 +1,17 @@
 # LAST HAND
 
-A single-player psychological card duel for desktop browsers. Two strangers, two cards each, six shared chambers, one bullet. All interface and dialogue text is in English.
+A single-player psychological blackjack duel in a procedural pixelated 3D bunker. Face the Stranger, play one shared deck each round, and avoid losing a hand: the loser faces the shared six-chamber revolver. All interface and dialogue text is in English.
 
 ## Develop
 
-Requires Node.js 22+ and npm.
+Requires Node.js 22+, npm, and a current desktop Chrome with WebGL 2 / hardware acceleration.
 
 ```sh
 npm ci --cache /tmp/last-hand-npm-cache
-npm run dev -- --port 5173
+npm run dev
 ```
 
-Open the development server in a desktop browser. Click **Sit down** to begin; **How to play** explains the rules. Sound starts with your first interaction and can be muted at any time.
+Open the development server in a desktop browser and click **Sit down**. **How to play** explains the rules. Sound begins with your first interaction and can be muted at any time.
 
 ```sh
 npm test
@@ -19,31 +19,38 @@ npm run build
 npm run preview -- --port 4173
 ```
 
-## Pixel 3D scene
+## Blackjack and controls
 
-The `pixel-3d` branch replaces the original scene with a procedural Three.js bunker. The `work` branch retains the original SVG version. Game rules, state transitions, audio, and dialogue are unchanged.
+- **HIT** takes another card from the current round's deck. **STAND** lays down your held cards and reveals the Stranger's hole card; the Stranger draws until 17 or more and stands on soft 17.
+- Face cards count as 10. An Ace counts as 11 unless it must count as 1 to avoid busting. The HUD labels soft totals.
+- A player bust loses immediately, with no dealer draws. A dealer bust loses to the player. Equal totals are a **PUSH**: neither a shot nor a fold is used.
+- **FOLD** is available only before the first HIT of a round, up to three times per game.
+- The loser shoots. The player must click **PULL THE TRIGGER**; the Stranger shoots automatically. Empty chambers advance the same shared cylinder. The single bullet ends the game by the sixth pull.
+- Hold the left mouse button and drag, or hold **A / D** to look left/right and **W / S** to look up/down. Looking turns the seated head without walking, within ±100° yaw and ±35° pitch. Key motion accelerates and releases smoothly.
+- **Recenter** faces the table. Deals, reveals, dealer draws, and shooting automatically recenter the camera and ignore keyboard look.
 
-- Hold the left mouse button on the scene and drag to look around; the seated view is limited to ±100° yaw and ±35° pitch.
-- Click **Recenter** to face the table. Dealing, reveal, and shooting automatically recenter the camera.
-- The scene renders at a 360-pixel internal height with nearest-neighbor scaling, ordered dithering, film grain, and a vignette. HTML controls and text remain crisp.
-- Room props, The Stranger, cards, revolver, and hands are code-built geometry. Textures and TV static are generated with canvas. No external models, images, or API services are used.
-- Requires WebGL 2 / hardware acceleration in a current desktop Chrome. Low resolution, batched static geometry, and one 512px shadow light are used to reduce GPU/CPU cost. A MacBook Air 60fps target has not been verified on physical hardware.
+The Stranger shuffles and deals player / Stranger up / player / Stranger hole one card at a time. Your cards slide back-up to your low-poly left hand and form a camera-facing fan. They are only laid face-up on the table at showdown. The Stranger peeks without exposing its hole card and sweeps the cards before each new round.
 
-`CONFIG.LOOK_SENSITIVITY` and `CONFIG.PIXEL_HEIGHT` in `src/game.ts` tune the view without affecting gameplay. `CONFIG.GORE_LEVEL = "low"` removes blood effects.
+## Scene and implementation
 
-## Structure
+The `pixel-3d` branch retains its existing Three.js bunker, lighting, Stranger design, gore level, procedural textures, palette, dithering, film grain, and vignette. The scene renders at a 360-pixel internal height with nearest-neighbor scaling. HUD text and controls remain crisp HTML, inside a safe margin.
 
-- `src/game.ts`: pure deck, scoring, and shared revolver rules; all gameplay tuning in `CONFIG`.
-- `src/useGame.ts`: guarded game state machine and pacing, with timer cleanup on replay/unmount.
-- `src/dialogue.ts`: authored dialogue and nonrepeating selection; no live AI or API.
-- `src/Scene.tsx`: WebGL rendering, pixel postprocessing, camera input, and scene lifecycle.
-- `src/scene/room.ts`, `actors.ts`: procedural bunker, props, animated character, hands, revolver, and card meshes.
+- `src/game.ts`: deck operations, soft/hard blackjack totals, hand comparison, unchanged revolver rules, and tuning in `CONFIG`.
+- `src/useGame.ts`: timed, guarded game state machine; one shared deck per round; explicit player trigger and complete replay reset.
+- `src/dialogue.ts`: authored dialogue, bluff selection, and nonrepeating delivery; no live AI or API.
+- `src/Scene.tsx`: WebGL rendering, postprocessing, mouse/WASD input, and scene lifecycle.
+- `src/scene/room.ts`: procedural room, props, and existing lighting.
+- `src/scene/actors.ts`: character, hands, revolver, dealer deck, held fan, and per-card animations.
 - `src/scene/camera.ts`, `merge.ts`: constrained look controls and static geometry batching.
-- `src/audio.ts`: Web Audio synthesis and master mute.
-- `src/App.tsx`, `src/styles.css`: HTML interface, responsive 16:9 layout, and screen effects.
+- `src/audio.ts`: existing Web Audio synthesis and master mute.
+- `src/App.tsx`, `src/styles.css`: interface, soft totals, actions, and HUD layout.
 
-Set `CONFIG.GORE_LEVEL` to `"low"` to remove stylized blood. Fonts are bundled. No external image/audio assets, backend, accounts, credentials, or runtime network calls are needed.
+`CONFIG.LOOK_KEY_SPEED` is keyboard angular speed in radians per second; `DEAL_SPEED` is milliseconds per dealt card; `DEALER_STANDS_ON` defaults to 17. `LOOK_SENSITIVITY`, `PIXEL_HEIGHT`, and `GORE_LEVEL` retain their existing defaults. Set `GORE_LEVEL` to `"low"` to remove blood effects.
+
+Geometry and textures are code-generated, and fonts are bundled. No external model/image/audio assets, backend, accounts, credentials, or runtime API services are required. Static geometry batching and one 512px shadow light reduce rendering cost. Physical MacBook Air 60fps performance has not been measured in this cloud environment.
 
 ## Validation
 
-`npm test` runs 47 engine, React integration, camera, and geometry tests covering deck integrity, values, ties, all six bullet positions, folding limits, hidden information, action locks, forced player trigger, both death paths, replay, dialogue, audio mute, timer cleanup, camera bounds/recentering, and geometry batching. The 3D interface was also exercised in Chromium through six shared trigger pulls and replay, including drag/button separation, camera limits and recentering, hidden cards, folding limits, and viewport checks at 1280×720 and 1920×1080. Chromium reported no console errors. This cloud check used software WebGL; it is not a MacBook Air performance measurement.
+`npm test` runs 79 engine, React integration, camera, and geometry tests. These cover soft/hard Aces, exact deal order and sounds, same-deck hits without duplicates, bust paths, dealer 17 / soft 17, push safety, fold restrictions, the existing shared revolver, guarded animations, explicit trigger, dialogue, mute, sweep/replay, keyboard bounds and auto-recenter, and actual card mesh orientations before and after showdown.
+
+The interface is also checked in Chromium for held-card readability, dealer animations, keyboard and mouse controls, bust / push / dealer draws, and safe HUD bounds at 1280×720, 1440×900, and 1920×1080. Cloud browser checks use software WebGL rather than a physical Mac GPU.

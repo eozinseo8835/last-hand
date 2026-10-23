@@ -94,3 +94,25 @@ h1 > span { color: #aeb99b; }h1 > i { font-family: Georgia, serif; font-size: 23
 @keyframes blink { 50% { opacity: 0; } }@keyframes indicator { 0%, 96%, 98%, 100% { opacity: 1; } 97%,99% { opacity: .4; } }@keyframes flash { from { opacity: .96; } to { opacity: 0; } }@keyframes deathFade { from { opacity: 0; } 10%,100% { opacity: 1; } }@keyframes blackFade { from,25% { opacity: 0; } to { opacity: 1; } }@keyframes endFade { from { opacity: 0; } to { opacity: 1; } }
 @media(max-width:850px) { .header-tagline,.footer-tick { display: none; }.app-header { padding: 0 20px; }.header-actions { gap: 12px; }.wordmark { font-size: 12px; gap: 8px; }.wordmark-version { display: none; }.sound-button { width: auto; }.sound-button > span { display: none; }.text-button { font-size: 10px; }.header-divider { display: none; }.app-footer { padding: 0 20px; font-size: 6px; letter-spacing: .3px; }.app-footer > span:last-child { max-width: 130px; text-align: right; line-height: 1.7; }.rules-modal { padding: 35px 27px; } }
 @media(prefers-reduced-motion:reduce) { *,*::before,*::after { animation-duration: .01ms!important; animation-iteration-count: 1!important; transition-duration: .01ms!important; } }
+/* A shared safe area keeps every readout clear of the scaled scene boundary. */
+.stage { --hud-safe: 64px; }
+.hud-left, .player-readout { left: var(--hud-safe); }
+.hud-right, .look-controls { right: var(--hud-safe); }
+.stranger-transmission { left: var(--hud-safe); max-width: 304px; overflow-wrap: break-word; }
+.scene-bottom { left: var(--hud-safe); right: var(--hud-safe); gap: 32px; line-height: 1.5; }
+.scene-bottom > span { max-width: 48%; }
+.scene-bottom > span:last-child { text-align: right; }
+.result-line { top: 111px; bottom: auto; left: 440px; right: 440px; min-height: 34px; padding: 3px 0; line-height: 1.6; }
+.fold-button { min-width: 130px; }
+.hit-button { min-width: 128px; }
+.hit-button > span { color: #b6b792; font-size: 17px; }
+.stand-button { width: 171px; justify-content: space-between; letter-spacing: 2px; }
+.soft-prefix, .player-total b .soft-prefix { font-size: 15px; font-weight: 400; color: #c8c8a5; letter-spacing: 0; }
+.opponent-caption b .soft-prefix { font-size: 12px; color: #d7c79b; }
+.player-total { min-height: 41px; }
+.player-total b { white-space: nowrap; }
+.look-controls > span { white-space: nowrap; }
+@media (max-width: 850px) {
+  .app-header, .app-footer { padding-left: 24px; padding-right: 24px; }
+}
+.game-actions { left: var(--hud-safe); right: var(--hud-safe); }

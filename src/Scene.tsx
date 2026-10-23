@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { CONFIG, type GamePhase, type Round } from './game';
 import { createRoom } from './scene/room';
 import { createActors } from './scene/actors';
-import { createLookState, dragLook, shouldRecenter, updateLook } from './scene/camera';
+import { createLookKeys, createLookState, dragLook, shouldRecenter, updateKeyboardLook, updateLook } from './scene/camera';
 
 export type SceneProps = {
   phase: GamePhase;
@@ -15,6 +15,7 @@ export type SceneProps = {
   shotEffect: 'click' | 'shot' | null;
   danger: boolean;
   recenterToken: number;
+  lookDisabled?: boolean;
 };
 
 function splatterTexture() {
@@ -88,7 +89,7 @@ export default function Scene(props: SceneProps) {
     renderer.shadowMap.type = THREE.BasicShadowMap;
     const canvas = renderer.domElement;
     canvas.className = 'pixel-canvas';
-    canvas.setAttribute('aria-label', '3D bunker. Hold the left mouse button and drag to look around.');
+    canvas.setAttribute('aria-label', '3D bunker. Hold the left mouse button and drag, or use W A S D, to look around.');
     canvas.dataset.testid = 'bunker-canvas';
     mount.appendChild(canvas);
 
@@ -98,7 +99,8 @@ export default function Scene(props: SceneProps) {
     const camera = new THREE.PerspectiveCamera(58, 16 / 9, .055, 28);
     camera.rotation.order = 'YXZ';
     const room = createRoom(world);
-    const actors = createActors(world);
+    world.add(camera);
+    const actors = createActors(world, camera);
     const blood = new THREE.Group();
     const bloodMap = splatterTexture();
     const bloodMaterial = new THREE.MeshBasicMaterial({ map: bloodMap, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
@@ -134,16 +136,36 @@ export default function Scene(props: SceneProps) {
 
     let look = createLookState();
     if (latest.current.phase === 'START') look.yaw = look.targetYaw = .20;
+    const keys = createLookKeys();
+    const keyBindings = { KeyA: 'left', KeyD: 'right', KeyW: 'up', KeyS: 'down' } as const;
+    function clearKeys() {
+      keys.left = keys.right = keys.up = keys.down = false;
+      look.yawVelocity = look.pitchVelocity = 0;
+    }
+    function keyDown(event: KeyboardEvent) {
+      if (event.ctrlKey || event.metaKey || event.altKey || event.isComposing || latest.current.lookDisabled) return;
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+      const direction = keyBindings[event.code as keyof typeof keyBindings];
+      if (direction) { keys[direction] = true; event.preventDefault(); }
+    }
+    function keyUp(event: KeyboardEvent) {
+      const direction = keyBindings[event.code as keyof typeof keyBindings];
+      if (direction) keys[direction] = false;
+    }
+    window.addEventListener('keydown', keyDown);
+    window.addEventListener('keyup', keyUp);
+    window.addEventListener('blur', clearKeys);
     let dragging = false, lastX = 0, lastY = 0;
     function pointerDown(event: PointerEvent) {
-      if (event.button !== 0 || shouldRecenter(latest.current.phase, latest.current.suspense)) return;
+      if (event.button !== 0 || latest.current.lookDisabled || shouldRecenter(latest.current.phase, latest.current.suspense)) return;
       dragging = true; lastX = event.clientX; lastY = event.clientY;
       canvas.setPointerCapture(event.pointerId); canvas.classList.add('is-dragging');
       event.preventDefault();
     }
     function pointerMove(event: PointerEvent) {
       if (!dragging) return;
-      if (!shouldRecenter(latest.current.phase, latest.current.suspense)) {
+      if (!latest.current.lookDisabled && !shouldRecenter(latest.current.phase, latest.current.suspense)) {
         dragLook(look, event.clientX - lastX, event.clientY - lastY, CONFIG.LOOK_SENSITIVITY);
       }
       lastX = event.clientX; lastY = event.clientY;
@@ -159,28 +181,32 @@ export default function Scene(props: SceneProps) {
     canvas.addEventListener('lostpointercapture', pointerUp);
 
     let frame = 0, lastTime = performance.now(), startTime = lastTime;
+    let previousCards: Round | null | undefined;
     let previousRound = -1, previousRevealed = false, previousEffect: SceneProps['shotEffect'] = null;
     let previousRecenter = latest.current.recenterToken, previousPhase = latest.current.phase;
     let impulse = 0, flash = 0, deathProgress = 0, renderedFrames = 0;
     let fpsStart = performance.now(), fpsFrames = 0;
     const gunPosition = new THREE.Vector3();
     function animate(now: number) {
-      const dt = Math.min((now - lastTime) / 1000, .05); lastTime = now;
+      const cameraDelta = Math.max(0, (now - lastTime) / 1000);
+      const dt = Math.min(cameraDelta, .05); lastTime = now;
       const time = (now - startTime) / 1000, state = latest.current;
-      const replay = state.phase === 'DEALING' && state.roundNumber === 1 && previousPhase !== 'DEALING';
+      const replay = state.phase === 'SHUFFLING' && state.roundNumber === 1 && previousPhase !== 'SHUFFLING';
       if (replay) {
-        look = createLookState(); impulse = flash = deathProgress = 0;
+        look = createLookState(); clearKeys(); impulse = flash = deathProgress = 0;
         blood.visible = false; previousEffect = null; room.reset();
       }
-      if (state.roundNumber !== previousRound || state.revealed !== previousRevealed) {
-        actors.setCards(state.round, state.revealed);
-        previousRound = state.roundNumber; previousRevealed = state.revealed;
+      if (state.round !== previousCards || state.roundNumber !== previousRound || state.revealed !== previousRevealed) {
+        actors.setCards(state.round ? { player: state.round.player, ai: state.round.ai, deck: [] } : null, state.revealed);
+        previousCards = state.round; previousRound = state.roundNumber; previousRevealed = state.revealed;
       }
       if (state.recenterToken !== previousRecenter) {
-        look.targetYaw = look.targetPitch = 0; previousRecenter = state.recenterToken;
+        clearKeys(); look.targetYaw = look.targetPitch = 0; previousRecenter = state.recenterToken;
       }
       const locked = shouldRecenter(state.phase, state.suspense);
-      updateLook(look, dt, locked);
+      if (state.lookDisabled) clearKeys();
+      updateKeyboardLook(look, keys, cameraDelta, CONFIG.LOOK_KEY_SPEED, locked || !!state.lookDisabled);
+      updateLook(look, cameraDelta, locked);
       if (state.shotEffect && state.shotEffect !== previousEffect) {
         impulse = state.shotEffect === 'shot' ? 1 : .28;
         flash = state.shotEffect === 'shot' ? 1 : 0;
@@ -192,18 +218,23 @@ export default function Scene(props: SceneProps) {
       if (state.dead === 'player') deathProgress = Math.min(1, deathProgress + dt / 1.8);
       else deathProgress = 0;
       blood.visible = state.dead === 'ai' && CONFIG.GORE_LEVEL !== 'low';
+      const sway = Math.sin(time * 1.15) * .0025;
+      camera.position.set(Math.sin(time * .7) * .005, 1.85 + Math.sin(time * 1.1) * .007 - deathProgress * .38, 2.65);
+      camera.rotation.set(-.173 + look.pitch + sway + Math.sin(time * 73) * impulse * .025, look.yaw + Math.sin(time * 61) * impulse * .018, -deathProgress * .62 + Math.cos(time * 82) * impulse * .012);
+      camera.updateMatrixWorld(true);
       room.update(time, dt, state.danger, state.suspense, impulse);
       actors.update(time, dt, state);
       actors.gun.getWorldPosition(gunPosition);
       muzzle.position.copy(gunPosition); muzzle.intensity = flash * 22;
-      const sway = Math.sin(time * 1.15) * .0025;
-      camera.position.set(Math.sin(time * .7) * .005, 1.85 + Math.sin(time * 1.1) * .007 - deathProgress * .38, 2.65);
-      camera.rotation.set(-.173 + look.pitch + sway + Math.sin(time * 73) * impulse * .025, look.yaw + Math.sin(time * 61) * impulse * .018, -deathProgress * .62 + Math.cos(time * 82) * impulse * .012);
       canvas.dataset.yaw = look.yaw.toFixed(5); canvas.dataset.pitch = look.pitch.toFixed(5);
       canvas.dataset.targetYaw = look.targetYaw.toFixed(5); canvas.dataset.targetPitch = look.targetPitch.toFixed(5);
       canvas.dataset.cameraLocked = String(locked); canvas.dataset.phase = state.phase;
       canvas.dataset.blood = String(blood.visible); canvas.dataset.strangerSlumped = String(state.dead === 'ai');
       canvas.dataset.round = String(state.roundNumber);
+      canvas.dataset.playerCards = String(state.round?.player.length ?? 0);
+      canvas.dataset.dealerCards = String(state.round?.ai.length ?? 0);
+      canvas.dataset.playerTableFaces = String(actors.cardSlots.filter(slot => slot.group.visible && slot.group.userData.owner === 'player' && slot.group.userData.tableFaceUp).length);
+      canvas.dataset.heldCards = String(actors.cardSlots.filter(slot => slot.group.visible && slot.group.userData.owner === 'player' && slot.group.userData.held).length);
       postMaterial.uniforms.time.value = time;
       // A lower shadow refresh rate suits the period look and leaves the GPU headroom.
       renderer.shadowMap.needsUpdate = renderedFrames++ % 4 === 0;
@@ -221,6 +252,9 @@ export default function Scene(props: SceneProps) {
 
     return () => {
       cancelAnimationFrame(frame); observer.disconnect();
+      window.removeEventListener('keydown', keyDown);
+      window.removeEventListener('keyup', keyUp);
+      window.removeEventListener('blur', clearKeys);
       canvas.removeEventListener('pointerdown', pointerDown);
       canvas.removeEventListener('pointermove', pointerMove);
       canvas.removeEventListener('pointerup', pointerUp);

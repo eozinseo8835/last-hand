@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowRight, Volume2, VolumeX, X, CircleHelp, RotateCcw, Crosshair, Mouse, MoveUpRight } from 'lucide-react';
 import Scene from './Scene';
-import { CONFIG, handTotal, type Card } from './game';
+import { CONFIG, handScore, type Card } from './game';
 import { useGame } from './useGame';
 import { tableAudio } from './audio';
 
@@ -34,12 +34,14 @@ function Cylinder({ chamber }: { chamber: number }) {
 }
 
 export default function App() {
-  const { game, start, fold, go, pullTrigger } = useGame();
+  const { game, start, fold, hit, stand, pullTrigger } = useGame();
   const [muted, setMuted] = useState(false), [rulesOpen, setRulesOpen] = useState(false);
   const [scale, setScale] = useState(1), [recenterToken, setRecenterToken] = useState(0);
   const rulesButton = useRef<HTMLButtonElement>(null), closeButton = useRef<HTMLButtonElement>(null);
   const intro = game.phase === 'START', over = game.phase === 'GAME_OVER';
   const ready = game.phase === 'PLAYER_DECISION';
+  const playerScore = handScore(game.round?.player ?? []);
+  const dealerScore = handScore(game.round?.ai ?? []);
   const danger = !intro && game.revolver.currentChamber >= CONFIG.DANGER_CHAMBER;
   useLayoutEffect(() => {
     const resize = () => setScale(Math.max(.1, Math.min((window.innerWidth - 40) / 1440, (window.innerHeight - 108) / 810, 1.5)));
@@ -57,7 +59,7 @@ export default function App() {
     <main className="main-frame">
       <div className="stage-viewport" style={{ width: 1440 * scale, height: 810 * scale }}>
         <section className={`stage ${intro ? 'intro-scene' : 'active-scene'} ${danger ? 'danger-stage' : ''}`} style={{ transform: `scale(${scale})` }} aria-label="Last Hand game table">
-          <Scene phase={game.phase} round={game.round} roundNumber={game.roundNumber} revealed={game.revealed} suspense={game.suspense} dead={game.dead} shotEffect={game.shotEffect} danger={danger} recenterToken={recenterToken}/>
+          <Scene phase={game.phase} round={game.round} roundNumber={game.roundNumber} revealed={game.revealed} suspense={game.suspense} dead={game.dead} shotEffect={game.shotEffect} danger={danger} recenterToken={recenterToken} lookDisabled={rulesOpen}/>
           <div className="scene-edge"/>
           <div className="hud-layer">
             <div className="scene-corner top-left"/><div className="scene-corner top-right"/><div className="scene-corner bottom-left"/><div className="scene-corner bottom-right"/>
@@ -72,18 +74,18 @@ export default function App() {
                 <div className="intro-meta">SINGLE PLAYER <span>/</span> 2–5 MIN <span>/</span> NO RELOAD</div>
               </div>
               <div className="intro-room-label"><span>THE STRANGER</span><i/><small>HE’S BEEN EXPECTING YOU.</small></div>
-              <div className="intro-rules"><div><span>01</span><p>Two cards.<br/><b>Higher total wins.</b></p></div><div><span>02</span><p>Lose the hand.<br/><b>Pull the trigger.</b></p></div><div><span>03</span><p>Six chambers.<br/><b>One bullet.</b></p></div></div>
+              <div className="intro-rules"><div><span>01</span><p>Get close to 21.<br/><b>Never go over.</b></p></div><div><span>02</span><p>Lose the hand.<br/><b>Pull the trigger.</b></p></div><div><span>03</span><p>Six chambers.<br/><b>One bullet.</b></p></div></div>
             </> : <>
               <div className="game-hud hud-left"><span className="small-label">FOLDS LEFT</span><div className="fold-indicators">{Array.from({ length: 3 }, (_, i) => <span key={i} className={i < game.folds ? 'full' : ''}/>)}<b>{game.folds} / 3</b></div></div>
               <div className="round-hud"><span className="live-dot"/> AT THE TABLE <i/><b>ROUND {String(game.roundNumber).padStart(2, '0')}</b></div>
               <div className={`game-hud hud-right ${danger ? 'danger-hud' : ''}`}><div><span className="small-label">SHARED CYLINDER</span><b>CHAMBER {Math.min(game.revolver.currentChamber, 6)} <span>/ 6</span></b></div><Cylinder chamber={game.revolver.currentChamber}/></div>
-              <div className="stranger-transmission"><div className="opponent-caption"><span className="small-label">THE STRANGER</span><span className="transmission-line"/><b>{game.revealed && game.round ? handTotal(game.round.ai) : '??'}<small> POINTS</small></b></div><Typewriter text={game.dialogue}/><span className="transmission-hint">CLICK TO SKIP TRANSMISSION</span></div>
+              <div className="stranger-transmission"><div className="opponent-caption"><span className="small-label">THE STRANGER</span><span className="transmission-line"/><b>{game.revealed && game.round ? <>{dealerScore.soft && <small className="soft-prefix">Soft </small>}{dealerScore.total}</> : '??'}<small> POINTS</small></b></div><Typewriter text={game.dialogue}/><span className="transmission-hint">CLICK TO SKIP TRANSMISSION</span></div>
               <div className={`result-line ${game.result ? `result-${game.result}` : ''}`} role="status">{game.message}</div>
-              <div className="player-readout"><span className="small-label">YOUR HAND</span><div className="player-total"><b>{game.round ? handTotal(game.round.player) : '—'}</b><span>YOUR TOTAL<br/><small>HIGHER HAND WINS</small></span></div></div>
-              <div className="game-actions">{game.phase === 'PLAYER_SHOOTING' ? <button className="primary-button trigger-button" disabled={!game.awaitingTrigger} onClick={pullTrigger}><Crosshair size={17}/>{game.awaitingTrigger ? 'PULL THE TRIGGER' : 'HOLD YOUR BREATH…'}</button> : <><button className="secondary-button fold-button" disabled={!ready || game.folds === 0} onClick={fold}><span>FOLD</span><small>{game.folds} LEFT</small></button><button className="primary-button go-button" disabled={!ready} onClick={go}><span>GO</span><ArrowRight size={20}/></button></>}</div>
+              <div className="player-readout"><span className="small-label">YOUR HAND</span><div className="player-total" aria-label={`Your total: ${playerScore.soft ? 'Soft ' : ''}${playerScore.total}`}><b>{playerScore.soft && <small className="soft-prefix">Soft </small>}{game.round?.player.length ? playerScore.total : '—'}</b><span>YOUR TOTAL<br/><small>{playerScore.bust ? 'BUST' : 'CLOSEST TO 21 WINS'}</small></span></div></div>
+              <div className="game-actions">{game.phase === 'PLAYER_SHOOTING' ? <button className="primary-button trigger-button" disabled={!game.awaitingTrigger} onClick={pullTrigger}><Crosshair size={17}/>{game.awaitingTrigger ? 'PULL THE TRIGGER' : 'HOLD YOUR BREATH…'}</button> : <><button className="secondary-button fold-button" disabled={!ready || game.hasHit || game.folds === 0} onClick={fold} title={game.hasHit ? 'Folding is only available before your first hit.' : `${game.folds} folds remaining`}><span>FOLD</span><small>{game.folds} LEFT</small></button><button className="secondary-button hit-button" disabled={!ready} onClick={hit}>HIT<span>+</span></button><button className="primary-button stand-button" disabled={!ready} onClick={stand}><span>STAND</span><ArrowRight size={20}/></button></>}</div>
               <div className="sr-only"><div className="opponent-cards">{game.round?.ai.map((card, i) => <CardDescription key={card.id} card={card} hidden={i === 1 && !game.revealed}/>)}</div><div className="player-cards">{game.round?.player.map(card => <CardDescription key={card.id} card={card}/>)}</div></div>
             </>}
-            <div className="look-controls"><span><Mouse size={13}/> HOLD + DRAG TO LOOK</span><button className="recenter-button" onClick={() => setRecenterToken(token => token + 1)}><Crosshair size={14}/> Recenter</button></div>
+            <div className="look-controls"><span><Mouse size={13}/> DRAG OR WASD TO LOOK</span><button className="recenter-button" onClick={() => setRecenterToken(token => token + 1)}><Crosshair size={14}/> Recenter</button></div>
             <div className="scene-bottom"><span>{intro ? 'LUCK HAS A LIMIT.' : danger ? 'THE ODDS ARE CLOSING IN.' : 'TRUST NOTHING. PLAY YOUR HAND.'}</span><span>ONE BULLET. NO SECOND CHANCES.<MoveUpRight size={11}/></span></div>
           </div>
           {game.shotEffect === 'shot' && <div className="muzzle-flash"/>}
@@ -95,6 +97,6 @@ export default function App() {
       </div>
     </main>
     <footer className="app-footer"><span>ONE TABLE. TWO STRANGERS. ONE BULLET.</span><span className="footer-tick">— — —</span><span>LAST HAND <i>/</i> A FICTIONAL GAME OF CHANCE</span></footer>
-    {rulesOpen && <div className="modal-backdrop" onClick={closeRules} onKeyDown={event => { if (event.key === 'Escape') closeRules(); }}><section className="rules-modal" role="dialog" aria-modal="true" aria-labelledby="rules-title" onClick={event => event.stopPropagation()}><button className="close-button" ref={closeButton} onClick={closeRules} aria-label="Close rules"><X size={20}/></button><div className="eyebrow">BEFORE YOU TAKE A SEAT</div><h2 id="rules-title">KNOW THE STAKES.</h2><p className="rules-lead">Luck deals the cards. You make the call.</p><ol><li><span>01</span><div><h3>READ YOUR HAND.</h3><p>You get two cards. You see one of the stranger’s. Aces count as 1; face cards count as 10. The higher total wins.</p></div></li><li><span>02</span><div><h3>GO, OR LET IT GO.</h3><p>GO reveals the hidden card. FOLD skips the round safely, but you only get three. A tie costs neither a fold nor a shot.</p></div></li><li><span>03</span><div><h3>FACE THE CHAMBER.</h3><p>The loser pulls the trigger. Six chambers, one bullet, no reload. Every empty click brings you both closer.</p></div></li></ol><div className="rules-warning">His words are a bluff. His cards aren’t.</div><button className="primary-button" onClick={closeRules}>Understood<ArrowRight size={18}/></button></section></div>}
+    {rulesOpen && <div className="modal-backdrop" onClick={closeRules} onKeyDown={event => { if (event.key === 'Escape') closeRules(); }}><section className="rules-modal" role="dialog" aria-modal="true" aria-labelledby="rules-title" onClick={event => event.stopPropagation()}><button className="close-button" ref={closeButton} onClick={closeRules} aria-label="Close rules"><X size={20}/></button><div className="eyebrow">BEFORE YOU TAKE A SEAT</div><h2 id="rules-title">KNOW THE STAKES.</h2><p className="rules-lead">Luck deals the cards. You make the call.</p><ol><li><span>01</span><div><h3>READ YOUR HAND.</h3><p>Get closer to 21 than the Stranger without going over. Face cards count as 10. Aces count as 11, or 1 to keep you from busting. A soft total still counts an Ace as 11.</p></div></li><li><span>02</span><div><h3>HIT, STAND, OR FOLD.</h3><p>HIT draws another card. STAND reveals the Stranger’s hand; it draws to 17 and stands on soft 17. FOLD skips safely before your first HIT, up to three times per game.</p></div></li><li><span>03</span><div><h3>FACE THE CHAMBER.</h3><p>A bust loses the hand. Equal totals are a PUSH: nobody shoots. Otherwise, the loser pulls the trigger. Six shared chambers, one bullet, no reload.</p></div></li></ol><div className="rules-warning">His words are a bluff. His cards aren’t.</div><button className="primary-button" onClick={closeRules}>Understood<ArrowRight size={18}/></button></section></div>}
   </div>;
 }
