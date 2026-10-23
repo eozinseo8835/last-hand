@@ -19,6 +19,20 @@ npm run build
 npm run preview -- --port 4173
 ```
 
+The development server uses port 5173 and reports an error if that port is occupied, so a second copy cannot silently open on 5174 while the browser keeps showing an older game.
+
+If you still see **GO**, you are viewing an older version. Stop the running server with **Ctrl+C**. For a Git checkout, update the game folder before restarting:
+
+```sh
+git fetch origin
+git switch pixel-3d
+git pull --ff-only origin pixel-3d
+npm ci
+npm run dev
+```
+
+For a ZIP download, extract the latest archive into a new folder and run `npm ci` followed by `npm run dev` from the folder containing `package.json`. Open the URL printed by that terminal. The current game has **FOLD / HIT / STAND**, a held card fan, and **CLOSEST TO 21 WINS**. If port 5173 is occupied, stop its existing server before restarting.
+
 ## Blackjack and controls
 
 - **HIT** takes another card from the current round's deck. **STAND** lays down your held cards and reveals the Stranger's hole card; the Stranger draws until 17 or more and stands on soft 17.

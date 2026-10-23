@@ -7,6 +7,7 @@ import { useGame } from './useGame';
 import { CONFIG, createDeck, createRevolver, dealRound, handTotal, type Card, type Round } from './game';
 import { DIALOGUE } from './dialogue';
 import { tableAudio } from './audio';
+import { createVoicePlan } from './voice';
 
 vi.mock('./audio', () => ({ tableAudio: { init: vi.fn(), play: vi.fn(), mute: vi.fn(), startVoice: vi.fn(), stopVoice: vi.fn(), getVoiceLevel: vi.fn(() => 0) } }));
 vi.mock('./game', async importOriginal => {
@@ -296,5 +297,31 @@ describe('rendered blackjack controls and hidden information', () => {
     act(() => container.querySelector<HTMLButtonElement>('.dialogue')!.click());
     expect(tableAudio.stopVoice).toHaveBeenCalledTimes(beforeSkip + 1);
     expect(container.querySelector('.dialogue .typing')).toBeNull();
+  });
+
+  it.each([
+    ['player_hits', safeHits, 'HIT', 0],
+    ['player_stands', playerWins, 'STAND', 0],
+    ['player_busts', playerBusts, 'HIT', CONFIG.DEAL_SPEED],
+    ['ai_hits', dealerBusts, 'STAND', 950],
+    ['ai_busts', dealerBusts, 'STAND', 950 + CONFIG.DEAL_SPEED + 200],
+    ['push', tied, 'STAND', 950],
+  ] as const)('voices the %s subtitle with its matching dialogue category', (category, round, action, delay) => {
+    vi.mocked(dealRound).mockImplementation(() => copy(round));
+    mount(<App/>); click('Sit down'); advance(DEAL_COMPLETE);
+    const previousVoiceCount = vi.mocked(tableAudio.startVoice).mock.calls.length;
+    const previousVoiceOrder = vi.mocked(tableAudio.startVoice).mock.invocationCallOrder.at(-1)!;
+    click(action);
+    if (delay > 0) advance(delay);
+
+    const subtitle = container.querySelector('.dialogue')?.getAttribute('aria-label')?.replace(/ Click to finish dialogue\.$/, '');
+    expect(subtitle).toBeTruthy();
+    expect(DIALOGUE[category]).toContain(subtitle);
+    expect(vi.mocked(tableAudio.startVoice).mock.calls.length).toBeGreaterThan(previousVoiceCount);
+    expect(tableAudio.startVoice).toHaveBeenLastCalledWith(createVoicePlan(subtitle!, category, false));
+    const stoppedVoiceOrder = vi.mocked(tableAudio.stopVoice).mock.invocationCallOrder.at(-1)!;
+    const replacementVoiceOrder = vi.mocked(tableAudio.startVoice).mock.invocationCallOrder.at(-1)!;
+    expect(stoppedVoiceOrder).toBeGreaterThan(previousVoiceOrder);
+    expect(stoppedVoiceOrder).toBeLessThan(replacementVoiceOrder);
   });
 });
