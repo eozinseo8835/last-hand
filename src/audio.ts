@@ -1,4 +1,5 @@
 import { CONFIG } from './game';
+import type { Speaker } from './campaign';
 import { voiceRandom, type VoicePlan } from './voice';
 import { eventBangOffsets, heartbeatSettings, type RoundEvent } from './tension';
 
@@ -6,7 +7,7 @@ type Sound = 'card' | 'click' | 'shot' | 'tension' | 'hammer' | 'clack' | 'spin'
 export type HeartbeatState = { active: boolean; chambersFired: number; pulling: boolean };
 type AudioLayer = { gain: GainNode; sources: Set<AudioScheduledSourceNode>; nodes: Set<AudioNode>; closed: boolean };
 type SpeakingVoice = {
-  plan: VoicePlan; start: number; end: number; gain: GainNode;
+  plan: VoicePlan; speaker: Speaker; start: number; end: number; gain: GainNode;
   nodes: AudioNode[]; sources: AudioScheduledSourceNode[]; stopped: boolean;
 };
 
@@ -58,20 +59,20 @@ export class TableAudio {
       }
     }
   }
-  startVoice(plan: VoicePlan) {
+  startVoice(plan: VoicePlan, speaker: Speaker = 'captive', behind = false) {
     this.stopVoice();
     if (!this.context || !this.master || this.muted || !CONFIG.VOICE_ENABLED || plan.parameters.volume <= 0 || !plan.steps.some(step => step.syllable)) return;
     const request = this.voiceRequest;
     if (this.context.state !== 'running') {
       // The first click may still be completing resume(); never resume from a dialogue effect.
       void this.unlock?.then(() => {
-        if (this.voiceRequest === request && this.context?.state === 'running' && !this.muted && CONFIG.VOICE_ENABLED) this.scheduleVoice(plan);
+        if (this.voiceRequest === request && this.context?.state === 'running' && !this.muted && CONFIG.VOICE_ENABLED) this.scheduleVoice(plan, speaker, behind);
       });
       return;
     }
-    this.scheduleVoice(plan);
+    this.scheduleVoice(plan, speaker, behind);
   }
-  private scheduleVoice(plan: VoicePlan) {
+  private scheduleVoice(plan: VoicePlan, speaker: Speaker, behind = false) {
     const ctx = this.context!, now = ctx.currentTime;
     const line = ctx.createGain(), drive = ctx.createGain(), distortion = ctx.createWaveShaper();
     const mask = ctx.createBiquadFilter(), room = ctx.createConvolver(), wet = ctx.createGain();
@@ -84,7 +85,8 @@ export class TableAudio {
     echo.delayTime.value = .085; echoGain.gain.value = .11;
     drive.connect(distortion); distortion.connect(mask); mask.connect(line);
     mask.connect(room); room.connect(wet); wet.connect(line);
-    mask.connect(echo); echo.connect(echoGain); echoGain.connect(line); line.connect(this.master!);
+    mask.connect(echo); echo.connect(echoGain); echoGain.connect(line);
+    const position = this.positionVoice(line, speaker, behind);
     const impulse = ctx.createBuffer(2, Math.ceil(ctx.sampleRate * .27), ctx.sampleRate);
     const roomRandom = voiceRandom(plan.seed ^ 0x811c9dc5);
     for (let channel = 0; channel < 2; channel++) {
@@ -96,8 +98,8 @@ export class TableAudio {
     }
     room.buffer = impulse;
     const voice: SpeakingVoice = {
-      plan, start: now, end: now, gain: line, stopped: false,
-      nodes: [line, drive, distortion, mask, room, wet, echo, echoGain], sources: [],
+      plan, speaker, start: now, end: now, gain: line, stopped: false,
+      nodes: [line, drive, distortion, mask, room, wet, echo, echoGain, ...(position ? [position] : [])], sources: [],
     };
     this.voice = voice;
     for (const step of plan.steps) {
@@ -152,6 +154,31 @@ export class TableAudio {
     gain.cancelScheduledValues(now); gain.setValueAtTime(gain.value, now);
     gain.linearRampToValueAtTime(value, now + .06);
   }
+  private positionVoice(line: GainNode, speaker: Speaker, behind = false): AudioNode | null {
+    const ctx = this.context!, pan = behind ? 0 : speaker === 'host' ? -.7 : 0;
+    try {
+      if (behind && typeof ctx.createPanner === 'function') {
+        const position = ctx.createPanner(); position.panningModel = 'HRTF';
+        // The listener faces -Z by default, so +Z places the final line behind it.
+        if (position.positionX) {
+          position.positionX.value = 0; position.positionY.value = 0; position.positionZ.value = 1;
+        } else position.setPosition(0, 0, 1);
+        line.connect(position); position.connect(this.master!); return position;
+      }
+      if (typeof ctx.createStereoPanner === 'function') {
+        const position = ctx.createStereoPanner(); position.pan.value = pan;
+        line.connect(position); position.connect(this.master!); return position;
+      }
+      if (typeof ctx.createPanner === 'function') {
+        const position = ctx.createPanner(); position.panningModel = 'equalpower';
+        if (position.positionX) {
+          position.positionX.value = pan * 1.5; position.positionY.value = 0; position.positionZ.value = -1;
+        } else position.setPosition(pan * 1.5, 0, -1);
+        line.connect(position); position.connect(this.master!); return position;
+      }
+    } catch { /* Older audio devices retain the murmur even without stereo positioning. */ }
+    line.connect(this.master!); return null;
+  }
   stopVoice() {
     this.voiceRequest++;
     const voice = this.voice, ctx = this.context;
@@ -165,9 +192,13 @@ export class TableAudio {
     for (const source of voice.sources) source.stop(now + .08);
     this.duckTension(1, now);
   }
-  getVoiceLevel() {
+  getVoiceSpeaker(): Speaker | null {
+    const ctx = this.context, voice = this.voice;
+    return ctx?.state === 'running' && !this.muted && CONFIG.VOICE_ENABLED && voice && voice.plan.parameters.volume > 0 ? voice.speaker : null;
+  }
+  getVoiceLevel(speaker?: Speaker) {
     const voice = this.voice, ctx = this.context;
-    if (!voice || !ctx || ctx.state !== 'running' || this.muted || !CONFIG.VOICE_ENABLED || voice.plan.parameters.volume <= 0) return 0;
+    if (!voice || (speaker !== undefined && voice.speaker !== speaker) || !ctx || ctx.state !== 'running' || this.muted || !CONFIG.VOICE_ENABLED || voice.plan.parameters.volume <= 0) return 0;
     const elapsed = (ctx.currentTime - voice.start) * 1000;
     let level = 0;
     for (const step of voice.plan.steps) {
@@ -176,6 +207,60 @@ export class TableAudio {
       if (progress >= 0 && progress <= 1) level = Math.max(level, Math.sin(progress * Math.PI));
     }
     return level;
+  }
+  /** Story cues share the existing click-unlocked master and never touch gameplay RNG. */
+  playStory(kind: 'hood' | 'drag' | 'door' | 'feed-shot' | 'escape') {
+    if (!this.context || !this.master || this.muted) return;
+    const layer = this.makeLayer(this.master), now = this.context.currentTime + .005;
+    const seeds = { hood: 0x400d, drag: 0xd4a6, door: 0xd004, 'feed-shot': 0xfead, escape: 0xe5ca9e };
+    const random = voiceRandom(seeds[kind]);
+    if (kind === 'hood') {
+      this.noise(layer, now, .62, .07, 360, random, 'lowpass', true);
+      this.resonance(layer, now + .05, .38, .018, 80, 45);
+      this.hoodBreath(layer, now, random);
+    } else if (kind === 'drag') {
+      this.noise(layer, now, 1.9, .045, 480, random, 'lowpass', true);
+      for (let step = 0; step < 6; step++) {
+        const start = now + .12 + step * .28;
+        this.noise(layer, start, .16, .09, 650, random, 'lowpass');
+        this.resonance(layer, start, .16, .045, 90, 42);
+      }
+    } else if (kind === 'door') {
+      this.noise(layer, now, .48, .19, 720, random, 'lowpass');
+      this.resonance(layer, now, .62, .09, 145, 38);
+      this.noise(layer, now + .1, .12, .07, 1850, random, 'bandpass');
+    } else if (kind === 'feed-shot') {
+      this.noise(layer, now, .34, .18, 390, random, 'lowpass');
+      this.resonance(layer, now, .42, .1, 85, 27);
+    } else {
+      this.noise(layer, now, 1.5, .035, 900, random, 'lowpass', true);
+      for (let step = 0; step < 4; step++) {
+        const start = now + .16 + step * .3;
+        this.noise(layer, start, .15, .06, 950, random, 'lowpass');
+        this.resonance(layer, start, .13, .025, 100, 58);
+      }
+    }
+    layer.closed = true;
+  }
+  /** A cloth-muffled inhale, pause, and longer exhale under the opening hood. */
+  private hoodBreath(layer: AudioLayer, start: number, random: () => number) {
+    const ctx = this.context!, duration = 1.18;
+    const buffer = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * duration), ctx.sampleRate);
+    const samples = buffer.getChannelData(0);
+    for (let index = 0; index < samples.length; index++) samples[index] = random() * 2 - 1;
+    const source = ctx.createBufferSource(), body = ctx.createBiquadFilter(), cloth = ctx.createBiquadFilter(), breath = ctx.createGain();
+    source.buffer = buffer;
+    body.type = 'highpass'; body.frequency.value = 140; body.Q.value = .65;
+    cloth.type = 'lowpass'; cloth.frequency.value = 650; cloth.Q.value = .65;
+    breath.gain.setValueAtTime(0, start);
+    breath.gain.linearRampToValueAtTime(.085, start + .26);
+    breath.gain.linearRampToValueAtTime(0, start + .44);
+    breath.gain.setValueAtTime(0, start + .54);
+    breath.gain.linearRampToValueAtTime(.065, start + .82);
+    breath.gain.linearRampToValueAtTime(0, start + duration);
+    source.connect(body); body.connect(cloth); cloth.connect(breath); breath.connect(layer.gain);
+    this.ownSource(layer, source, [body, cloth, breath]);
+    source.start(start); source.stop(start + duration);
   }
   /** Callers describe the current phase; this method never unlocks browser audio. */
   setHeartbeat(state: HeartbeatState) {

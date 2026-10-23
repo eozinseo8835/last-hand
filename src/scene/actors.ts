@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { CONFIG, type Card, type GamePhase, type Round } from '../game';
 import { mergeStaticMeshes } from './merge';
 import { eventDoorPulse, type OpponentTell, type RoundEvent, type Side } from '../tension';
+import { OPPONENTS } from '../campaign';
 
 export type ActorState = {
   phase: GamePhase;
@@ -22,6 +23,11 @@ export type ActorState = {
   peekSerial?: number;
   peekedCard?: Card | null;
   event?: RoundEvent | null;
+  roomNumber?: 1 | 2 | 3;
+  speaker?: 'host' | 'captive' | null;
+  hostVoiceLevel?: number;
+  captiveVoiceLevel?: number;
+  storyStage?: string;
 };
 
 type CardSlot = {
@@ -319,8 +325,113 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
   const animated = new Set<THREE.Mesh>([torso, shoulders, leftUpper, leftLower, rightUpper, rightLower]);
   mergeStaticMeshes(stranger, mesh => mesh.parent === stranger && !animated.has(mesh));
 
+  // Keep the original pale mask and suit intact for the non-playing Host.
+  head.name = 'Cast head'; torso.name = 'Cast torso'; shoulders.name = 'Cast shoulders';
+  leftHand.name = 'Cast left hand'; rightHand.name = 'Cast right hand';
+  leftUpper.name = 'Cast left upper arm'; leftLower.name = 'Cast left forearm';
+  rightUpper.name = 'Cast right upper arm'; rightLower.name = 'Cast right forearm';
+  const host = stranger.clone(true); host.name = 'The Host';
+  host.position.set(-1.95, .86, -.45); host.rotation.y = 1.0;
+  host.userData = { actorRole: 'host', canShoot: false, canDie: false };
+  scene.add(host);
+  const hostHead = host.getObjectByName('Cast head') as THREE.Group;
+  const hostTorso = host.getObjectByName('Cast torso') as THREE.Mesh;
+  const hostShoulders = host.getObjectByName('Cast shoulders') as THREE.Mesh;
+  const hostLeftHand = host.getObjectByName('Cast left hand') as THREE.Group;
+  const hostRightHand = host.getObjectByName('Cast right hand') as THREE.Group;
+  const hostLeftUpper = host.getObjectByName('Cast left upper arm') as THREE.Mesh;
+  const hostLeftLower = host.getObjectByName('Cast left forearm') as THREE.Mesh;
+  const hostRightUpper = host.getObjectByName('Cast right upper arm') as THREE.Mesh;
+  const hostRightLower = host.getObjectByName('Cast right forearm') as THREE.Mesh;
+  hostHead.name = 'Host masked head';
+  const hostLegs = new THREE.Group(); hostLegs.name = 'Host standing legs'; host.add(hostLegs);
+  const hostLegParts: THREE.Group[] = [];
+  for (const x of [-.16, .16]) {
+    const leg = new THREE.Group(); leg.position.set(x, .15, -.04); hostLegs.add(leg); hostLegParts.push(leg);
+    cylinder(leg, .12, .94, [0, -.52, 0], suit, 6);
+    box(leg, [.24, .12, .38], [0, -.95, .10], black); mergeStaticMeshes(leg);
+  }
+  box(hostLegs, [.49, .18, .29], [0, .15, -.03], suit);
+
+  // The front seat is a fellow captive, never another masked dealer.
+  const captive = stranger; captive.userData = { actorRole: 'captive', canShoot: true, canDie: true };
+  const oldSuit = stranger.children.filter(object => object instanceof THREE.Mesh && !animated.has(object));
+  oldSuit.forEach(object => { object.visible = false; });
+  head.clear(); head.name = 'Captive head';
+  const clothing = [surface(0x3b4841), surface(0x77796b), surface(0x414a42)];
+  const flesh = [surface(0xb2a087), surface(0xa18b72), surface(0xa6a18b)];
+  const captiveNames = [OPPONENTS[1].name, OPPONENTS[2].name, OPPONENTS[3].name];
+  const heads: THREE.Group[] = [], costumes: THREE.Group[] = [];
+  for (let room = 0; room < 3; room++) {
+    const humanHead = new THREE.Group(); humanHead.name = `${captiveNames[room]} face`;
+    const faceSkin = flesh[room], cloth = clothing[room], hair = surface(room === 2 ? 0x777c6e : room === 1 ? 0x302e25 : 0x242d25);
+    const cranium = new THREE.Mesh(new THREE.SphereGeometry(1, 8, 6), faceSkin);
+    cranium.scale.set(room === 2 ? .167 : .194, room === 0 ? .255 : .266, .164);
+    cranium.castShadow = cranium.receiveShadow = true; humanHead.add(cranium);
+    for (const x of [-.19, .19]) {
+      const ear = new THREE.Mesh(new THREE.SphereGeometry(.045, 5, 4), faceSkin);
+      ear.position.set(x * (room === 2 ? .88 : 1), -.005, 0); ear.scale.set(.55, 1, .6); humanHead.add(ear);
+    }
+    const nose = new THREE.Mesh(new THREE.ConeGeometry(.035, .105, 4), faceSkin);
+    nose.rotation.x = Math.PI / 2; nose.position.set(0, -.005, .172); humanHead.add(nose);
+    for (const x of [-.070, .070]) {
+      const eye = box(humanHead, [room === 0 ? .041 : .037, room === 0 ? .028 : .016, .014], [x, .040, .153], black);
+      eye.rotation.z = room === 1 ? x * .8 : 0;
+      const brow = box(humanHead, [.060, .012, .014], [x, .090, .145], hair);
+      brow.rotation.z = room === 0 ? -Math.sign(x) * .18 : room === 1 ? -.05 : Math.sign(x) * .06;
+    }
+    const mouth = box(humanHead, [room === 0 ? .072 : .106, .012, .015], [room === 1 ? .008 : 0, -.105, .143], black);
+    mouth.rotation.z = room === 1 ? .14 : room === 0 ? -.025 : 0;
+    if (room === 0) {
+      const crown = new THREE.Mesh(new THREE.SphereGeometry(1, 7, 4, 0, Math.PI * 2, 0, Math.PI * .49), hair);
+      crown.scale.set(.202, .267, .17); crown.position.y = .015; humanHead.add(crown);
+      const sweat = surface(0xbfc6b0, .1, .28);
+      for (const [x, y] of [[.115, .115], [-.13, .015], [.09, -.05]]) {
+        const bead = new THREE.Mesh(new THREE.ConeGeometry(.009, .030, 4), sweat);
+        bead.rotation.z = Math.PI; bead.position.set(x, y, .150); humanHead.add(bead);
+      }
+    } else {
+      for (const x of [-.135, .135]) box(humanHead, [.055, .155, .11], [x, .130, -.032], hair);
+      if (room === 1) box(humanHead, [.20, .055, .12], [0, .222, -.03], hair);
+      if (room === 2) {
+        const wrinkles = surface(0x777c68);
+        for (const y of [.128, .153]) box(humanHead, [.135, .006, .009], [0, y, .118], wrinkles);
+        for (const x of [-.095, .095]) box(humanHead, [.059, .006, .010], [x, .006, .148], wrinkles);
+      }
+    }
+    mergeStaticMeshes(humanHead); heads.push(humanHead); head.add(humanHead);
+    const costume = new THREE.Group(); costume.name = `${captiveNames[room]} clothes`;
+    cylinder(costume, .089, .17, [0, .97, 0], faceSkin, 7);
+    if (room === 0) {
+      const hood = new THREE.Mesh(new THREE.TorusGeometry(.22, .078, 4, 8, Math.PI * 1.25), cloth);
+      hood.rotation.x = -.28; hood.rotation.z = -.40; hood.position.set(0, 1.02, -.035); costume.add(hood);
+      box(costume, [.012, .21, .012], [-.09, .80, .215], shirt);
+      box(costume, [.012, .25, .012], [.09, .78, .215], shirt);
+      polygon(costume, [-.28,.72,.18, -.17,.64,.221, -.25,.58,.221], surface(0x1b2620));
+      polygon(costume, [.26,.39,.21, .16,.35,.241, .25,.29,.24], surface(0x26302a));
+      box(costume, [.25, .11, .025], [0, .31, .242], surface(0x344039));
+    } else if (room === 1) {
+      polygon(costume, [-.13,.94,.20, -.045,.77,.241, .01,.89,.239], shirt);
+      polygon(costume, [.13,.94,.20, .035,.77,.241, .01,.89,.239], shirt);
+      polygon(costume, [.018,.77,.25, -.023,.71,.263, .025,.66,.268, .018,.77,.25, .025,.66,.268, .070,.70,.258], surface(0x403a2e));
+      polygon(costume, [.026,.69,.268, -.001,.35,.267, .055,.29,.267, .026,.69,.268, .055,.29,.267, .082,.38,.267], surface(0x403a2e));
+      for (const y of [.29,.46,.60]) box(costume, [.018,.018,.008], [-.047,y,.249], black);
+    } else {
+      polygon(costume, [-.11,.94,.19, 0,.81,.238, .11,.94,.19], surface(0x73796b));
+      box(costume, [.018,.54,.012], [0,.53,.249], surface(0x29352c));
+      for (const y of [.34,.53,.68]) box(costume, [.017,.017,.012], [0,y,.260], black);
+    }
+    mergeStaticMeshes(costume); costumes.push(costume); captive.add(costume);
+  }
+  const captiveHood = new THREE.Mesh(new THREE.ConeGeometry(.29, .67, 7, 1, true), surface(0x1d2721));
+  captiveHood.name = 'Captive kidnapping hood'; captiveHood.position.set(0, 1.20, .015); captiveHood.visible = false; captive.add(captiveHood);
+  let currentRoom = 0, lastStoryStage = '', storyStartedAt = 0;
+  const hostHandTarget = new THREE.Vector3(), hostElbow = new THREE.Vector3(), hostPositionTarget = new THREE.Vector3();
+  const hostDoorStart = new THREE.Vector3(), hostDoorWaypoint = new THREE.Vector3(-1.95, .86, -2.5), hostDoorFinish = new THREE.Vector3(2.05, .86, -3.5);
+
   const playerHands = new THREE.Group();
   playerHands.name = 'First-person hands and sleeves';
+  playerHands.userData = { actorRole: 'player' };
   scene.add(playerHands);
   const heldRig = new THREE.Group();
   heldRig.name = 'Player left hand and held fan';
@@ -332,6 +443,7 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
   }
   const heldRigRestPosition = heldRig.position.clone();
   const playerLeft = makeHand(skinShadow), playerRight = makeHand(skinShadow);
+  playerRight.group.name = 'Player right gripping hand';
   heldRig.add(playerLeft.group);
   playerHands.add(playerRight.group);
   playerLeft.group.position.set(-.10, -.40, -.88);
@@ -339,6 +451,8 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
   playerRight.group.position.set(.95, .925, 1.12);
   playerRight.group.rotation.y = Math.PI + .17;
   playerRight.group.scale.x = -1;
+  const playerRightIdleQuaternion = playerRight.group.quaternion.clone();
+  const playerRightSpinQuaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(-.8, Math.PI + .17, .6));
   const leftSleeve = cylinder(heldRig, .115, 1, [0, 0, 0], suit, 6);
   const rightSleeve = cylinder(playerHands, .115, 1, [0, 0, 0], suit, 6);
   const playerLeftStart = new THREE.Vector3(-.48, -.77, -.20);
@@ -357,6 +471,11 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
   const gunMotionOffset = new THREE.Vector3();
   const gunRestQuaternion = gun.quaternion.clone();
   const gunAimQuaternion = new THREE.Quaternion(), gunPoseQuaternion = new THREE.Quaternion();
+  const gripOffset = new THREE.Vector3(-.20, -.105, -.065);
+  const gripRotation = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(
+    new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0),
+  ));
+  const gripWorldQuaternion = new THREE.Quaternion(), handParentQuaternion = new THREE.Quaternion();
   const barrelToViewer = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI / 2);
   const aimOrigin = new THREE.Vector3(), aimCameraQuaternion = new THREE.Quaternion();
   const aimOffset = new THREE.Vector3(0, -.09, -1.165);
@@ -370,8 +489,9 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
   const backMaterial = new THREE.MeshStandardMaterial({ map: backTexture, roughness: 1, emissive: 0x253a2a, emissiveIntensity: .12 });
   const edgeMaterial = surface(0xa5a68c);
   const deck = new THREE.Group();
-  deck.name = 'The Stranger’s deck';
-  deck.position.set(-.94, TABLE_Y + .035, -.56);
+  deck.name = 'The Host’s deck';
+  deck.userData.owner = 'host';
+  deck.position.set(-1.27, TABLE_Y + .035, -.40);
   scene.add(deck);
   const lowerPack = new THREE.Group(), upperPack = new THREE.Group();
   deck.add(lowerPack, upperPack);
@@ -383,7 +503,7 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     top.rotation.x = -Math.PI / 2; top.position.y = .023;
     top.receiveShadow = true; pack.add(top); mergeStaticMeshes(pack);
   }
-  const deckStart = new THREE.Vector3(-.94, TABLE_Y + .102, -.56);
+  const deckStart = new THREE.Vector3(-1.27, TABLE_Y + .102, -.40);
   const pickup = new THREE.Vector3(-.20, TABLE_Y + .02, .78);
   // The lifted top card remains back-up. Only the camera's private inset gets its face.
   const deckCorner = new THREE.Group(); deckCorner.name = 'Lifted deck corner';
@@ -412,7 +532,7 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
 
   function makeSlot(owner: 'player' | 'ai', index: number): CardSlot {
     const group = new THREE.Group();
-    group.name = `${owner === 'player' ? 'Player' : 'Stranger'} card ${index + 1}`;
+    group.name = `${owner === 'player' ? 'Player' : 'Captive'} card ${index + 1}`;
     group.userData = { owner, index, held: false, tableFaceUp: false };
     const frontMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, emissive: owner === 'player' ? 0xffffff : 0x655e41, emissiveIntensity: owner === 'player' ? .70 : .22 });
     const geometry = new THREE.PlaneGeometry(.47, .66);
@@ -593,12 +713,40 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     const motion = state.reducedMotion ? .25 : 1;
     const fired = Math.max(0, Math.min(6, state.chambersFired ?? 0));
     const alive = state.dead !== 'ai';
-    const fear = alive ? fired * motion : 0;
+    const room = state.roomNumber ?? 1;
+    if (room !== currentRoom) {
+      currentRoom = room; const index = room - 1;
+      heads.forEach((object, i) => { object.visible = i === index; });
+      costumes.forEach((object, i) => { object.visible = i === index; });
+      captive.name = captiveNames[index]; captive.userData.roomNumber = room;
+      for (const mesh of [torso, shoulders, leftUpper, leftLower, rightUpper, rightLower]) mesh.material = clothing[index];
+      for (const hand of [leftHand, rightHand]) hand.traverse(object => {
+        if (object instanceof THREE.Mesh) object.material = flesh[index];
+      });
+      torso.scale.x = shoulders.scale.x = room === 3 ? .84 : 1;
+      slump = 0; captive.rotation.set(0, 0, 0); captive.position.set(0, .86, -1.65);
+    }
+    const breakdownOnset = OPPONENTS[room].breakdownStart - 1;
+    const pressure = fired >= breakdownOnset ? fired - breakdownOnset + 1 : 0;
+    const fear = alive ? (pressure + (state.roomNumber === 1 ? .55 : 0)) * motion : 0;
     const tell = state.phase === 'PLAYER_DECISION' && alive ? state.tell : null;
     const calm = tell?.disposition === 'calm';
     const doorFlinch = alive && state.phase === 'PLAYER_DECISION' ? eventDoorPulse(state.event, Date.now()) * motion : 0;
     const playerPull = state.phase === 'PLAYER_SHOOTING' ? THREE.MathUtils.clamp(state.triggerProgress ?? (state.suspense ? 1 : 0), 0, 1) : 0;
     actorTime = time;
+    const stage = state.storyStage ?? '';
+    if (stage !== lastStoryStage) {
+      lastStoryStage = stage; storyStartedAt = time;
+      if (String(state.phase) === 'ENDING_WIN' && stage === 'door') hostDoorStart.copy(host.position);
+    }
+    const storyElapsed = Math.max(0, time - storyStartedAt);
+    const unhooding = String(state.phase) === 'OPENING' && (stage === 'hooded' || stage === 'unhood');
+    const atExit = String(state.phase) === 'ENDING_WIN' && ['door', 'stairs', 'viewers', 'title'].includes(stage);
+    const doorWalk = atExit && stage === 'door' ? THREE.MathUtils.clamp(storyElapsed / 1.2, 0, 1) : atExit ? 1 : 0;
+    const hoodLift = stage === 'unhood' ? THREE.MathUtils.clamp(storyElapsed / .8, 0, 1) : 0;
+    captiveHood.visible = unhooding && hoodLift < .99;
+    captiveHood.position.set(-hoodLift * .30, 1.20 + hoodLift * .85, .015 - hoodLift * .05);
+    captiveHood.rotation.z = -hoodLift * .22;
     const enteringRound = state.roundNumber !== lastRound;
     const replay = state.roundNumber === 1 && state.phase === 'SHUFFLING' && lastPhase !== 'SHUFFLING';
     if (enteringRound || replay) {
@@ -633,7 +781,7 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     upperPack.position.set(shuffle * .14, .045 + Math.abs(shuffle) * .045, 0);
     upperPack.rotation.y = shuffle * .22;
     const dealing = state.phase === 'DEALING' || state.phase === 'HITTING' || state.phase === 'DEALER_TURN';
-    const dealerAction = dealing || shuffling || state.phase === 'PEEKING' || state.phase === 'DEALER_PEEKING' || state.phase === 'SWEEPING';
+    const dealerAction = dealing || shuffling || state.phase === 'PEEKING' || state.phase === 'DEALER_PEEKING' || state.phase === 'SWEEPING' || state.phase === 'REVEAL';
     const aiShoots = state.phase === 'AI_SHOOTING';
     // Finish raising before the hold completes, leaving a steady, centered aim
     // through the last second rather than reaching it only after the shot.
@@ -655,9 +803,15 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
       gunPoseQuaternion.slerpQuaternions(gunRestQuaternion, gunAimQuaternion, playerPose);
     }
     // Sway is a presentation offset, never an accumulated shift of the aim pose.
-    gun.position.sub(gunMotionOffset).lerp(gunTarget, smoothing);
+    gun.position.sub(gunMotionOffset);
+    if (state.phase === 'PLAYER_SHOOTING' && playerPull > 0) {
+      // Hold progress already follows elapsed time, including the release drain.
+      // Another frame-clamped lerp can miss the firing deadline on a slow GPU.
+      gun.position.copy(gunTarget); gun.quaternion.copy(gunPoseQuaternion);
+    } else {
+      gun.position.lerp(gunTarget, smoothing); gun.quaternion.slerp(gunPoseQuaternion, smoothing);
+    }
     gunMotionOffset.set(0, 0, 0);
-    gun.quaternion.slerp(gunPoseQuaternion, smoothing);
     if (lifting) gunMotionOffset.y = Math.sin(time * 8) * .00045;
     const tensionActive = state.chambersFired !== undefined && state.phase !== 'START' && state.phase !== 'GAME_OVER';
     const handTremble = tensionActive ? (.00035 + fired * .00055 + playerPull * .0035) * motion : 0;
@@ -714,17 +868,17 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     shoulders.position.y = .82 + Math.sin(time * breathRate) * breathAmplitude * .5 * (1 - slump) + twitch - doorFlinch * .022;
     head.rotation.z = (calm ? 0 : Math.sin(time * .37) * .043 * (1 - slump)) + Math.sin(time * 18) * fear * .002;
     head.rotation.y = (calm ? 0 : Math.sin(time * .23) * .055 * (1 - slump)) + (tell?.kind === 'avert' ? (.15 + Math.sin(time * .85) * .045) * motion : 0);
-    const peekMotion = state.phase === 'PEEKING' ? Math.sin(Math.min(1, elapsedShoot / .60) * Math.PI) : 0;
-    // The audio envelope supplies the rhythm; no independent mouth or speech loop.
-    const voiceBob = state.dead === 'ai' ? 0 : THREE.MathUtils.clamp(state.voiceLevel ?? 0, 0, 1) * (state.reducedMotion ? .25 : 1);
+    const peekMotion = state.peekActor === 'ai' ? Math.sin(Math.min(1, peekAge / .70) * Math.PI) : 0;
+    // Only the speaking character receives a syllable envelope.
+    const activeSpeaker = state.speaker === undefined ? 'captive' : state.speaker;
+    const captiveVoice = activeSpeaker === 'captive' ? state.captiveVoiceLevel ?? state.voiceLevel ?? 0 : 0;
+    const voiceBob = state.dead === 'ai' ? 0 : THREE.MathUtils.clamp(captiveVoice, 0, 1) * motion;
     head.position.y = 1.19 + voiceBob * .0025;
     head.rotation.x = (calm ? 0 : Math.sin(time * .61) * .018) + peekMotion * .19 + voiceBob * .010 + Math.sin(time * 13) * fear * .0025 - doorFlinch * .09;
     stranger.position.z = -1.65 - doorFlinch * .025;
+    if (room === 3 && alive && state.phase === 'PLAYER_DECISION') head.rotation.y -= Math.max(0, Math.sin(time * .31)) ** 12 * .19 * motion;
     const touch = tell?.kind === 'touch' ? Math.max(0, Math.sin(time * 1.6)) ** 4 * motion : 0;
-    if (state.peekActor === 'ai' || state.phase === 'DEALER_PEEKING') handTarget.set(deckStart.x + .02, .13 + cornerLift * .09, deckStart.z + 1.65);
-    else if (touch > .001) handTarget.set(THREE.MathUtils.lerp(-.74, .45, touch), .055 + touch * .065, THREE.MathUtils.lerp(.72, 1.30, touch));
-    else if (state.phase === 'PEEKING') handTarget.set(.45, .055 + peekMotion * .11, 1.30);
-    else if (dealerAction) handTarget.set(deckStart.x - .04 + shuffle * .05, .10 + Math.abs(shuffle) * .025, deckStart.z + 1.65);
+    if (touch > .001) handTarget.set(THREE.MathUtils.lerp(-.74, .45, touch), .055 + touch * .065, THREE.MathUtils.lerp(.72, 1.30, touch));
     else handTarget.set(-.74, .055 + (calm ? 0 : Math.sin(time * 1.2) * .001), .72);
     handTarget.x += Math.sin(time * 19) * fear * .0017; handTarget.y += Math.sin(time * 23) * fear * .0015;
     leftHand.position.lerp(handTarget, smoothing);
@@ -740,13 +894,6 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
       rightHand.position.lerp(handTarget, smoothing);
       rightHand.rotation.x += (-1.0 - rightHand.rotation.x) * smoothing;
       rightHand.rotation.z += (-.9 - rightHand.rotation.z) * smoothing;
-    } else if (dealerAction && state.phase !== 'PEEKING') {
-      const stroke = dealing && newest ? Math.sin(Math.min(1, newest.age / (CONFIG.DEAL_SPEED / 1000) / .65) * Math.PI) : 0;
-      handTarget.set(deckStart.x + .18 + stroke * .30 + shuffle * .08, .14 + stroke * .06, deckStart.z + 1.70 + stroke * (newest?.owner === 'player' ? .38 : .15));
-      if (state.phase === 'SWEEPING') handTarget.set(Math.sin(Math.min(1, elapsedShoot / .60) * Math.PI) * .50, .14, 1.08);
-      rightHand.position.lerp(handTarget, smoothing);
-      rightHand.rotation.x += (.08 - rightHand.rotation.x) * smoothing;
-      rightHand.rotation.z += (-.12 - rightHand.rotation.z) * smoothing;
     } else {
       handTarget.set(.74 + Math.sin(time * 17) * fear * .0017, .055 + Math.sin(time * 21) * fear * .0015, .72);
       rightHand.position.lerp(handTarget, smoothing);
@@ -756,7 +903,6 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     animatedElbow.copy(rightElbow);
     animatedElbow.y += gunBlend * .28 * (aiShoots ? 1 : 0);
     animatedElbow.z -= gunBlend * .2 * (aiShoots ? 1 : 0);
-    if (dealerAction) { animatedElbow.y += .12; animatedElbow.x -= .20; }
     segment(rightUpper, rightShoulder, animatedElbow);
     segment(rightLower, animatedElbow, rightHand.position);
     segment(leftLower, leftElbow, leftHand.position);
@@ -769,22 +915,85 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     playerLeft.group.rotation.x += ((cardRevealed ? -1.2 : -Math.PI / 2 + .20) - playerLeft.group.rotation.x) * smoothing;
     for (const finger of playerLeft.fingers) finger.rotation.x = heldCount && !cardRevealed ? -.95 : -.08;
     segment(leftSleeve, playerLeftStart, playerLeft.group.position);
-    if (playerShoots) {
+    if (state.phase === 'PLAYER_SHOOTING' && playerPull > 0) {
+      // Attach the palm beside the actual grip in gun space. Its pose follows
+      // the same elapsed-time raise, even when only a few frames are rendered.
+      gun.localToWorld(handTarget.copy(gripOffset));
+      playerHands.worldToLocal(handTarget);
+      playerRight.group.position.copy(handTarget);
+      gun.getWorldQuaternion(gripWorldQuaternion).multiply(gripRotation);
+      playerHands.getWorldQuaternion(handParentQuaternion).invert();
+      playerRight.group.quaternion.copy(handParentQuaternion).multiply(gripWorldQuaternion);
+    } else if (playerShoots) {
       handTarget.copy(gun.position);
       handTarget.y -= .14;
       handTarget.z += .05;
       playerRight.group.position.lerp(handTarget, smoothing);
-      playerRight.group.rotation.x += (-.8 - playerRight.group.rotation.x) * smoothing;
-      playerRight.group.rotation.z += (.6 - playerRight.group.rotation.z) * smoothing;
+      playerRight.group.quaternion.slerp(playerRightSpinQuaternion, smoothing);
     } else {
       handTarget.set(.95, .925, 1.12);
       playerRight.group.position.lerp(handTarget, smoothing);
-      playerRight.group.rotation.x += (0 - playerRight.group.rotation.x) * smoothing;
-      playerRight.group.rotation.z += (0 - playerRight.group.rotation.z) * smoothing;
+      playerRight.group.quaternion.slerp(playerRightIdleQuaternion, smoothing);
+      if (playerRight.group.quaternion.angleTo(playerRightIdleQuaternion) < .0001) {
+        playerRight.group.rotation.set(0, Math.PI + .17, 0);
+      }
+    }
+    for (let i = 0; i < playerRight.fingers.length; i++) {
+      playerRight.fingers[i].rotation.x = state.phase === 'PLAYER_SHOOTING' && playerPull > 0 ? i === 0 ? -.5 : -1.15 : 0;
     }
     segment(rightSleeve, playerRightStart, playerRight.group.position);
 
+    // Dealer gestures belong exclusively to the Host; captive hands only tell or shoot.
+    host.rotation.x = host.rotation.z = 0;
+    hostPositionTarget.set(unhooding ? -.78 : -1.95, .86, unhooding ? -1.35 : -.45);
+    if (atExit) {
+      if (doorWalk < .45) hostPositionTarget.lerpVectors(hostDoorStart, hostDoorWaypoint, doorWalk / .45);
+      else hostPositionTarget.lerpVectors(hostDoorWaypoint, hostDoorFinish, (doorWalk - .45) / .55);
+      host.position.copy(hostPositionTarget);
+    } else host.position.lerp(hostPositionTarget, smoothing);
+    host.rotation.y += ((atExit ? 2.2 : 1.0) - host.rotation.y) * smoothing;
+    const walk = atExit && doorWalk < 1 ? 1 : 0;
+    hostLegParts.forEach((leg, index) => { leg.rotation.x = Math.sin(time * 10 + index * Math.PI) * .23 * walk * motion; });
+    host.position.y += Math.abs(Math.sin(time * 10)) * .012 * walk * motion;
+    host.userData.openingDoor = atExit;
+    const hostVoice = activeSpeaker === 'host' ? state.hostVoiceLevel ?? state.voiceLevel ?? 0 : 0;
+    const hostBob = THREE.MathUtils.clamp(hostVoice, 0, 1) * motion;
+    hostHead.position.y = 1.19 + hostBob * .0025;
+    hostHead.rotation.set((unhooding ? -.12 : Math.sin(time * .35) * .010) + hostBob * .010, unhooding ? 0 : -.25, 0);
+    hostTorso.scale.y = 1 + Math.sin(time * .98) * .006;
+    hostShoulders.position.y = .82 + Math.sin(time * .98) * .003;
+    host.updateWorldMatrix(true, false);
+    hostHandTarget.set(deckStart.x - .12, TABLE_Y + .065 + Math.abs(shuffle) * .035, deckStart.z + .19);
+    if (shuffling) hostHandTarget.x += shuffle * .09;
+    host.worldToLocal(hostHandTarget);
+    if (unhooding) hostHandTarget.set(-.34, .28, .44);
+    if (atExit) hostHandTarget.set(-.32, .24, .35);
+    hostLeftHand.position.lerp(hostHandTarget, smoothing);
+    const stroke = dealing && newest ? Math.sin(Math.min(1, newest.age / (CONFIG.DEAL_SPEED / 1000)) * Math.PI) : 0;
+    hostHandTarget.set(deckStart.x + .10 + stroke * .52, TABLE_Y + .12 + stroke * .055, deckStart.z + stroke * .30);
+    if (atExit) {
+      if (doorWalk > .75) hostHandTarget.set(2.70, 1.20, -4.0);
+      else host.localToWorld(hostHandTarget.set(.35, .25 + Math.sin(time * 10) * .07, .4));
+    } else if (unhooding) {
+      hostHandTarget.set(-.13 - hoodLift * .30, 2.25 + hoodLift * .75, -1.57);
+    } else if (state.phase === 'REVEAL' || state.phase === 'PEEKING') {
+      hostHandTarget.set(-.40, TABLE_Y + .11 + Math.sin(Math.min(1, elapsedShoot / .65) * Math.PI) * .07, -.32);
+    } else if (state.phase === 'SWEEPING') {
+      const sweep = Math.sin(Math.min(1, elapsedShoot / .60) * Math.PI);
+      hostHandTarget.set(deckStart.x + sweep * .72, TABLE_Y + .15, deckStart.z + sweep * .48);
+    } else if (abilityPeek) hostHandTarget.set(deckStart.x + .12, TABLE_Y + .13 + cornerLift * .10, deckStart.z + .12);
+    else if (!dealerAction) hostHandTarget.set(-1.22, TABLE_Y + .07, -.50);
+    host.worldToLocal(hostHandTarget); hostRightHand.position.lerp(hostHandTarget, smoothing);
+    hostLeftHand.rotation.set(-.02, -.14, 0); hostRightHand.rotation.set(dealerAction ? -.12 : 0, .14, dealerAction ? -.10 : 0);
+    hostElbow.copy(leftElbow); hostElbow.y += dealerAction ? .06 : 0;
+    segment(hostLeftUpper, leftShoulder, hostElbow); segment(hostLeftLower, hostElbow, hostLeftHand.position);
+    hostElbow.copy(rightElbow); hostElbow.y += dealerAction ? .10 : 0;
+    segment(hostRightUpper, rightShoulder, hostElbow); segment(hostRightLower, hostElbow, hostRightHand.position);
+    for (const hand of [hostLeftHand, hostRightHand]) {
+      for (const finger of hand.children) if (finger instanceof THREE.Group) finger.rotation.x = shuffling ? -.45 : dealing ? -.25 : -.08;
+    }
+
     animateCards(time, dt, state);
   }
-  return { stranger, head, leftHand, rightHand, playerHands, heldRig, deck, gun, hammer, cylinder: revolverCylinder, peekCard, peekFront, deckCorner, cardSlots, setCards, update };
+  return { stranger, captive, head, captiveHead: head, leftHand, rightHand, host, hostHead, hostLeftHand, hostRightHand, captiveHood, playerHands, heldRig, deck, gun, hammer, cylinder: revolverCylinder, peekCard, peekFront, deckCorner, cardSlots, setCards, update };
 }

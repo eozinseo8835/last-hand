@@ -79,10 +79,22 @@ function texture(kind: 'concrete' | 'floor' | 'wood' | 'felt' | 'cardboard'): TH
   return map;
 }
 
+export type RoomCampaign = {
+  roomNumber?: 1 | 2 | 3;
+  phase?: GamePhase;
+  storyStage?: string;
+  stageElapsed?: number;
+};
+
+/** The exit sequence waits at the table while the Host finishes announcing it. */
+export function isExitStage(phase?: string, stage?: string): boolean {
+  return phase === 'ENDING_WIN' && ['door', 'stairs', 'viewers', 'title'].includes(stage ?? '');
+}
+
 export type BunkerRoom = {
   lamp: THREE.Group;
   bulbLight: THREE.PointLight;
-  update: (time: number, delta: number, danger: boolean, suspense: boolean, impulse: number, event?: RoundEvent | null, now?: number) => void;
+  update: (time: number, delta: number, danger: boolean, suspense: boolean, impulse: number, event?: RoundEvent | null, now?: number, campaign?: RoomCampaign) => void;
   reset: () => void;
   dispose: () => void;
 };
@@ -179,11 +191,15 @@ export function createRoom(scene: THREE.Scene): BunkerRoom {
 
   // Back door, small hand-painted maintenance marks, and one failing emergency lamp.
   const door = new THREE.Group(); door.position.set(2.7, 0, -4.105); root.add(door);
-  box(1.35, 2.57, .12, darkMetal, 0, 1.285, 0, door);
-  box(1.18, 2.43, .06, mat(0x3c453a, { metalness: .35 }), 0, 1.26, .09, door);
-  for (const y of [.34, 1.05, 1.86, 2.27]) box(1.1, .035, .035, metal, 0, y, .139, door);
-  box(.07, .27, .11, metal, -.4, 1.19, .2, door); box(.23, .05, .07, rust, -.33, 1.27, .27, door);
-  for (const y of [.35, 1.3, 2.2]) box(.13, .15, .08, metal, .59, y, .14, door);
+  const doorHinge = new THREE.Group(); doorHinge.name = 'exit-door-hinge'; doorHinge.position.x = .675; door.add(doorHinge);
+  const doorPanel = new THREE.Group(); doorPanel.position.x = -.675; doorHinge.add(doorPanel);
+  box(1.35, 2.57, .12, darkMetal, 0, 1.285, 0, doorPanel);
+  box(1.18, 2.43, .06, mat(0x3c453a, { metalness: .35 }), 0, 1.26, .09, doorPanel);
+  for (const y of [.34, 1.05, 1.86, 2.27]) box(1.1, .035, .035, metal, 0, y, .139, doorPanel);
+  box(.07, .27, .11, metal, -.4, 1.19, .2, doorPanel); box(.23, .05, .07, rust, -.33, 1.27, .27, doorPanel);
+  for (const y of [.35, 1.3, 2.2]) box(.13, .15, .08, metal, .59, y, .14, doorPanel);
+  const doorway = new THREE.Mesh(new THREE.PlaneGeometry(1.28, 2.52), new THREE.MeshBasicMaterial({ color: 0x030504 }));
+  doorway.name = 'exit-doorway'; doorway.position.set(0, 1.26, .08); doorway.visible = false; door.add(doorway);
   box(.56, .14, .1, darkMetal, 0, 2.89, .08, door);
   box(.44, .085, .06, new THREE.MeshBasicMaterial({ color: 0x9c2920 }), 0, 2.89, .145, door);
   const emergency = new THREE.PointLight(0xd53d22, 1.35, 3.1, 2); emergency.name = 'emergency-light'; emergency.position.set(2.7, 2.9, -3.8); root.add(emergency);
@@ -283,16 +299,39 @@ export function createRoom(scene: THREE.Scene): BunkerRoom {
   const hazeMaterial = new THREE.MeshBasicMaterial({ color: 0xd4bc82, transparent: true, opacity: .003, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending });
   const haze = new THREE.Mesh(new THREE.ConeGeometry(1.5, 1.85, 16, 1, true), hazeMaterial); haze.name = 'lamp-haze'; haze.position.set(0, 1.725, .02); root.add(haze);
 
+  // This exit exists beyond the old back wall, hidden until the last survivor leaves.
+  const stairs = new THREE.Group(); stairs.name = 'exit-stairwell'; stairs.visible = false; scene.add(stairs);
+  for (let index = 0; index < 8; index++) box(1.6, .35, .68, concrete, 2.7, .175 + index * .35, -5.2 - index * .65, stairs);
+  box(.12, 5.3, 6.2, darkMetal, 1.83, 2.65, -7.75, stairs);
+  box(.12, 5.3, 6.2, darkMetal, 3.57, 2.65, -7.75, stairs);
+  box(1.8, .11, 6.2, black, 2.7, 5.35, -7.75, stairs);
+  const daylight = new THREE.Mesh(new THREE.PlaneGeometry(1.35, 2.2), new THREE.MeshBasicMaterial({ color: 0xdce9cd, toneMapped: false }));
+  daylight.name = 'stairwell-daylight'; daylight.position.set(2.7, 3.9, -10.55); stairs.add(daylight);
+  box(.13, 2.38, .1, darkMetal, 1.96, 3.9, -10.45, stairs);
+  box(.13, 2.38, .1, darkMetal, 3.44, 3.9, -10.45, stairs);
+  box(1.62, .13, .1, darkMetal, 2.7, 5.05, -10.45, stairs);
+  const exitLight = new THREE.PointLight(0xe5edc5, 32, 8, 2); exitLight.position.set(2.7, 4.2, -10.2); stairs.add(exitLight);
+  const viewersCanvas = document.createElement('canvas'); viewersCanvas.width = 96; viewersCanvas.height = 72;
+  const viewersContext = viewersCanvas.getContext('2d')!;
+  const viewersTexture = new THREE.CanvasTexture(viewersCanvas);
+  viewersTexture.minFilter = viewersTexture.magFilter = THREE.NearestFilter; viewersTexture.colorSpace = THREE.SRGBColorSpace;
+  const stairMonitor = new THREE.Group(); stairMonitor.name = 'stairwell-monitor'; stairMonitor.position.set(3.18, 3.35, -8.45); stairMonitor.rotation.y = Math.PI - .3; stairs.add(stairMonitor);
+  box(.68, .52, .18, darkMetal, 0, 0, 0, stairMonitor);
+  const viewersScreen = new THREE.Mesh(new THREE.PlaneGeometry(.56, .41), new THREE.MeshBasicMaterial({ map: viewersTexture, color: 0xb8cdb0, toneMapped: false }));
+  viewersScreen.name = 'viewers-counter'; viewersScreen.position.z = .101; stairMonitor.add(viewersScreen);
+  mergeStaticMeshes(stairs, mesh => mesh !== viewersScreen);
+  mergeStaticMeshes(doorPanel);
+
   // Only rigid room geometry is batched. Lamp descendants must retain their
   // local transforms for swinging, and the transparent haze keeps its own pass.
   mergeStaticMeshes(root, mesh => {
-    if (mesh === haze || mesh === watchedScreen) return false;
-    for (let parent = mesh.parent; parent; parent = parent.parent) if (parent === lamp) return false;
+    if (mesh === haze || mesh === watchedScreen || mesh === brokenSlat || mesh === fallenLeg) return false;
+    for (let parent = mesh.parent; parent; parent = parent.parent) if (parent === lamp || parent === door) return false;
     return true;
   });
 
   const staticRandom = randomGenerator(1553);
-  let nextStatic = 0, nextFlicker = 1.7, flickerUntil = 0, swing = 0, lastImpulse = 0, nextEventStatic = 0;
+  let nextStatic = 0, nextFlicker = 1.7, flickerUntil = 0, swing = 0, lastImpulse = 0, nextEventStatic = 0, nextViewers = 0;
   function restoreEvent() {
     watchedScreen.material = staticMaterial; watchedGlow.intensity = watchedGlowRest;
   }
@@ -304,11 +343,41 @@ export function createRoom(scene: THREE.Scene): BunkerRoom {
       lamp.rotation.set(0, 0, 0);
       bulbLight.intensity = 20; bulbMaterial.color.setHex(0xffdfb0); filament.visible = true;
       ambient.intensity = .32; hazeMaterial.opacity = .003; restoreEvent(); root.userData.event = null;
+      stairs.visible = doorway.visible = false; doorHinge.rotation.y = 0; root.userData.exitOpen = false;
+      bulbLight.color.setHex(0xffdfb0); ambient.color.setHex(0x7d8c72);
+      tvGlows[0].intensity = 1.45; tvGlows[1].intensity = 1.45 * .8;
+      brokenSlat.position.z = .63; brokenSlat.rotation.y = .52; fallenLeg.position.x = -.51; fallenLeg.rotation.y = .7;
     },
     dispose() { eventMaterial.dispose(); eventTexture.dispose(); },
-    update(time, delta, danger, suspense, impulse, event = null, now = Date.now()) {
+    update(time, delta, danger, suspense, impulse, event = null, now = Date.now(), campaign = {}) {
       const active = event && now >= event.startedAt && now < event.startedAt + event.duration ? event : null;
       root.userData.event = active?.kind ?? null;
+      const number = campaign.roomNumber;
+      const mood = number === 2 ? { bulb: 0xf77c65, intensity: 26, sky: 0x994c3b, ambient: .25, glow: .8, emergency: 1 }
+        : number === 3 ? { bulb: 0xd0bc8b, intensity: 5.8, sky: 0x343d37, ambient: .035, glow: .32, emergency: .3 }
+        : number === 1 ? { bulb: 0xb8cfa2, intensity: 20, sky: 0x7d8c72, ambient: .32, glow: 1, emergency: 1 }
+        : { bulb: 0xffdfb0, intensity: 20, sky: 0x7d8c72, ambient: .32, glow: 1, emergency: 1 };
+      root.userData.roomNumber = number ?? 1;
+      bulbLight.color.setHex(mood.bulb); ambient.color.setHex(mood.sky);
+      tvGlows[0].intensity = 1.45 * mood.glow; tvGlows[1].intensity = 1.45 * .8 * mood.glow;
+      brokenSlat.rotation.y = number === 2 ? .18 : number === 3 ? -.3 : .52;
+      brokenSlat.position.z = number === 3 ? .82 : .63;
+      fallenLeg.rotation.y = number === 2 ? -.4 : number === 3 ? 1.1 : .7;
+      fallenLeg.position.x = number === 3 ? -.75 : -.51;
+      const exiting = isExitStage(campaign.phase, campaign.storyStage);
+      const stage = campaign.storyStage ?? '', elapsed = campaign.stageElapsed ?? 0;
+      stairs.visible = doorway.visible = exiting;
+      const doorProgress = exiting ? stage === 'door' ? THREE.MathUtils.smoothstep(elapsed / 1.5, 0, 1) : 1 : 0;
+      doorHinge.rotation.y = doorProgress * 1.64;
+      root.userData.exitOpen = doorProgress > .98;
+      if (exiting && now >= nextViewers) {
+        const progress = stage === 'viewers' ? Math.min(1, elapsed / 1.5) : stage === 'title' ? 1 : 0;
+        const count = Math.floor(11980 + progress * 428);
+        viewersContext.fillStyle = '#050b07'; viewersContext.fillRect(0, 0, 96, 72);
+        viewersContext.fillStyle = '#bed0b3'; viewersContext.font = 'bold 10px monospace'; viewersContext.textAlign = 'center';
+        viewersContext.fillText('VIEWERS:', 48, 27); viewersContext.font = 'bold 14px monospace'; viewersContext.fillText(count.toLocaleString('en-US'), 48, 48);
+        viewersTexture.needsUpdate = true; viewersScreen.userData.viewers = count; nextViewers = now + 100;
+      }
       if (time >= nextStatic) {
         for (let i = 0; i < staticPixels.data.length; i += 4) {
           const row = Math.floor(i / (64 * 4));
@@ -335,18 +404,18 @@ export function createRoom(scene: THREE.Scene): BunkerRoom {
         const returning = createTensionRandom(active.seed ^ Math.floor((now - active.startedAt) / 43));
         power = remaining < 280 && returning() > .58 ? .15 + returning() * .6 : 0;
       }
-      bulbLight.intensity = 20 * flicker * dim * power;
-      bulbMaterial.color.setHex(0xffdfb0).multiplyScalar(flicker * power);
+      bulbLight.intensity = mood.intensity * flicker * dim * power;
+      bulbMaterial.color.setHex(mood.bulb).multiplyScalar(flicker * power);
       filament.visible = power > .1;
-      ambient.intensity = .32 * power;
-      emergency.intensity = 1.2 + Math.sin(time * 1.4) * .12;
+      ambient.intensity = mood.ambient * power;
+      emergency.intensity = (1.2 + Math.sin(time * 1.4) * .12) * mood.emergency;
       hazeMaterial.opacity = .003 * flicker * dim * power;
       if (active?.kind === 'tv') {
         watchedScreen.material = eventMaterial;
         const elapsed = now - active.startedAt;
         const random = createTensionRandom(active.seed ^ Math.floor(elapsed / 75));
         const screenPower = elapsed < 220 || active.duration - elapsed < 200 ? (random() > .5 ? .3 : 1) : 1;
-        watchedGlow.intensity = watchedGlowRest * (1.2 + screenPower);
+        watchedGlow.intensity = watchedGlowRest * mood.glow * (1.2 + screenPower);
         eventMaterial.color.setHex(0xb4d5ba).multiplyScalar(screenPower);
         if (now >= nextEventStatic) {
           for (let i = 0; i < eventPixels.data.length; i += 4) {
@@ -361,7 +430,7 @@ export function createRoom(scene: THREE.Scene): BunkerRoom {
           }
           eventTexture.needsUpdate = true; nextEventStatic = now + 75;
         }
-      } else restoreEvent();
+      } else { restoreEvent(); watchedGlow.intensity = watchedGlowRest * mood.glow; }
     },
   };
 }

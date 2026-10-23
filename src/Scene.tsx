@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { CONFIG, type Card, type GamePhase, type Round } from './game';
-import { createRoom, decisionEvent } from './scene/room';
+import { createRoom, decisionEvent, isExitStage } from './scene/room';
 import { tableAudio } from './audio';
 import { eventDoorPulse, type OpponentTell, type RoundEvent, type Side } from './tension';
 import { createActors } from './scene/actors';
+import { createCeilingFeed, createMonitorWall } from './scene/monitors';
 import { createLookKeys, createLookState, dragLook, shouldRecenter, updateKeyboardLook, updateLook } from './scene/camera';
 
 export type SceneProps = {
@@ -28,6 +29,12 @@ export type SceneProps = {
   peekSerial?: number;
   peekedCard?: Card | null;
   event?: RoundEvent | null;
+  roomNumber?: 1 | 2 | 3;
+  speaker?: 'host' | 'captive' | null;
+  storyStage?: string;
+  feedDeaths?: number[];
+  feedDeathSerial?: number;
+  guestsRemaining?: number;
 };
 
 function splatterTexture() {
@@ -116,6 +123,28 @@ export default function Scene(props: SceneProps) {
     const room = createRoom(world);
     world.add(camera);
     const actors = createActors(world, camera);
+    const monitors = createMonitorWall(world);
+    const ceilingFeed = createCeilingFeed(world, monitors.group);
+    monitors.setCeilingTexture(ceilingFeed.target.texture);
+    // The first-person hands and this overhead body represent the same player.
+    // Only the surveillance camera sees layer 1, so the seated POV stays intact.
+    const surveillancePlayer = new THREE.Group();
+    surveillancePlayer.name = 'surveillance-player-body';
+    surveillancePlayer.userData.actorRole = 'player';
+    surveillancePlayer.position.set(0, .86, 1.80);
+    const playerCloth = new THREE.MeshStandardMaterial({ color: 0x354032, roughness: .9, flatShading: true });
+    const playerSkin = new THREE.MeshStandardMaterial({ color: 0x9d9079, roughness: .9, flatShading: true });
+    const playerHair = new THREE.MeshStandardMaterial({ color: 0x242b22, roughness: .95, flatShading: true });
+    const playerTorso = new THREE.Mesh(new THREE.BoxGeometry(.49, .68, .26), playerCloth);
+    playerTorso.position.y = .43;
+    const playerShoulders = new THREE.Mesh(new THREE.BoxGeometry(.62, .15, .28), playerCloth);
+    playerShoulders.position.y = .75;
+    const playerHead = new THREE.Mesh(new THREE.SphereGeometry(1, 8, 6), playerSkin);
+    playerHead.scale.set(.185, .25, .17); playerHead.position.set(0, .97, .02);
+    const playerCrown = new THREE.Mesh(new THREE.SphereGeometry(1, 8, 4, 0, Math.PI * 2, 0, Math.PI * .48), playerHair);
+    playerCrown.scale.set(.19, .255, .175); playerCrown.position.copy(playerHead.position);
+    surveillancePlayer.add(playerTorso, playerShoulders, playerHead, playerCrown);
+    surveillancePlayer.traverse(object => object.layers.set(1)); world.add(surveillancePlayer);
     const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
     const blood = new THREE.Group();
     const bloodMap = splatterTexture();
@@ -200,6 +229,9 @@ export default function Scene(props: SceneProps) {
     let previousCards: Round | null | undefined;
     let previousRound = -1, previousRevealed = false, previousEffect: SceneProps['shotEffect'] = null;
     let previousRecenter = latest.current.recenterToken, previousPhase = latest.current.phase;
+    let previousRoom = latest.current.roomNumber ?? 1, previousStoryStage = latest.current.storyStage ?? '';
+    let storyStartedAt = 0, winPose = false, tablePeople = 0;
+    const finalCameraPosition = new THREE.Vector3(), finalCameraQuaternion = new THREE.Quaternion();
     let impulse = 0, flash = 0, deathProgress = 0, renderedFrames = 0;
     let fpsStart = performance.now(), fpsFrames = 0;
     const gunPosition = new THREE.Vector3();
@@ -208,11 +240,19 @@ export default function Scene(props: SceneProps) {
       const dt = Math.min(cameraDelta, .05); lastTime = now;
       const time = (now - startTime) / 1000, state = latest.current;
       const epoch = Date.now(), event = decisionEvent(state.phase, state.event, epoch);
-      const replay = state.phase === 'SHUFFLING' && state.roundNumber === 1 && previousPhase !== 'SHUFFLING';
-      if (replay) {
+      const roomNumber = state.roomNumber ?? 1;
+      const replay = (state.phase === 'OPENING' && previousPhase !== 'OPENING') ||
+        (state.roomNumber === undefined && state.phase === 'SHUFFLING' && state.roundNumber === 1 && previousPhase !== 'SHUFFLING');
+      const enteringRoom = roomNumber !== previousRoom;
+      if (state.phase !== previousPhase) storyStartedAt = time;
+      if ((state.storyStage ?? '') !== previousStoryStage) { previousStoryStage = state.storyStage ?? ''; storyStartedAt = time; }
+      const stageElapsed = time - storyStartedAt;
+      if (replay || enteringRoom) {
         look = createLookState(); clearKeys(); impulse = flash = deathProgress = 0;
-        blood.visible = false; previousEffect = null; room.reset();
+        blood.visible = false; previousEffect = null; room.reset(); monitors.reset(); ceilingFeed.reset();
+        if (replay) winPose = false;
       }
+      previousRoom = roomNumber;
       if (state.round !== previousCards || state.roundNumber !== previousRound || state.revealed !== previousRevealed) {
         actors.setCards(state.round ? { player: state.round.player, ai: state.round.ai, deck: [] } : null, state.revealed);
         previousCards = state.round; previousRound = state.roundNumber; previousRevealed = state.revealed;
@@ -234,6 +274,9 @@ export default function Scene(props: SceneProps) {
       flash = Math.max(0, flash - dt * 10);
       if (state.dead === 'player') deathProgress = Math.min(1, deathProgress + dt / 1.8);
       else deathProgress = 0;
+      const feedSlump = state.dead === 'player' && state.phase === 'ENDING_DEATH' && state.storyStage !== 'fall' ? 1 : deathProgress;
+      surveillancePlayer.rotation.set(-feedSlump * 1.3, 0, -feedSlump * .14);
+      surveillancePlayer.position.y = .86 - feedSlump * .05;
       blood.visible = state.dead === 'ai' && CONFIG.GORE_LEVEL !== 'low';
       const sway = Math.sin(time * 1.15) * .0025;
       const doorShake = eventDoorPulse(event, epoch) * (motionPreference.matches ? .2 : 1);
@@ -242,11 +285,35 @@ export default function Scene(props: SceneProps) {
       camera.rotation.set(-.173 + look.pitch + sway + Math.sin(time * 73) * impulse * .025, look.yaw + Math.sin(time * 61) * impulse * .018, -deathProgress * .62 + Math.cos(time * 82) * impulse * .012);
       camera.rotation.x += Math.sin(time * 87 + .7) * doorShake * .005;
       camera.rotation.z += Math.cos(time * 73) * doorShake * .003;
+      if (isExitStage(state.phase, state.storyStage)) {
+        const stage = state.storyStage ?? 'door';
+        if (stage === 'door') camera.lookAt(2.7, 1.35, -4.1);
+        else {
+          const progress = stage === 'stairs' ? THREE.MathUtils.smoothstep(Math.min(1, stageElapsed / 4), 0, 1) : 1;
+          // Walk around the table before climbing the actual stair geometry outside the door.
+          const approach = Math.min(1, progress / .36), climb = Math.max(0, (progress - .36) / .64);
+          camera.position.set(2.7 * Math.min(1, approach * 2.2), 1.85 + climb * 2.8,
+            approach < 1 ? THREE.MathUtils.lerp(2.65, -4.8, approach) : THREE.MathUtils.lerp(-4.8, -10.0, climb));
+          if (!motionPreference.matches && stage === 'stairs') camera.position.y += Math.sin(stageElapsed * 10) * .016;
+          camera.lookAt(2.7, THREE.MathUtils.lerp(1.65, 4.35, climb), -10.6);
+          if (stage === 'viewers') camera.lookAt(3.18, 3.35, -8.45);
+        }
+        finalCameraPosition.copy(camera.position); finalCameraQuaternion.copy(camera.quaternion); winPose = true;
+      } else if (state.phase === 'GAME_OVER' && winPose) {
+        camera.position.copy(finalCameraPosition); camera.quaternion.copy(finalCameraQuaternion);
+      }
       camera.updateMatrixWorld(true);
-      room.update(time, dt, state.danger, state.suspense, impulse, event, epoch);
-      const voiceLevel = tableAudio.getVoiceLevel();
+      room.update(time, dt, state.danger, state.suspense, impulse, event, epoch, {
+        roomNumber: state.roomNumber, phase: state.phase === 'GAME_OVER' && winPose ? 'ENDING_WIN' : state.phase,
+        storyStage: state.storyStage, stageElapsed,
+      });
+      const hostVoiceLevel = tableAudio.getVoiceLevel('host'), captiveVoiceLevel = tableAudio.getVoiceLevel('captive');
+      const voiceLevel = captiveVoiceLevel;
       const heartbeat = tableAudio.getHeartbeatLevel();
-      actors.update(time, dt, { ...state, event, voiceLevel, reducedMotion: motionPreference.matches });
+      actors.update(time, dt, { ...state, roomNumber, event, voiceLevel, hostVoiceLevel, captiveVoiceLevel, reducedMotion: motionPreference.matches });
+      monitors.update(state, time);
+      const signalLost = (state.phase === 'ENDING_DEATH' && state.storyStage === 'no-signal') || (state.phase === 'GAME_OVER' && state.dead === 'player');
+      monitors.setSignalLost(signalLost);
       postMaterial.uniforms.triggerDarkening.value = state.phase === 'PLAYER_SHOOTING' ? Math.max(0, Math.min(1, state.triggerProgress ?? 0)) : 0;
       postMaterial.uniforms.heartbeatPulse.value = heartbeat * (motionPreference.matches ? .2 : 1);
       canvas.dataset.voiceLevel = voiceLevel.toFixed(4);
@@ -254,6 +321,15 @@ export default function Scene(props: SceneProps) {
       canvas.dataset.triggerProgress = (state.triggerProgress ?? 0).toFixed(4);
       canvas.dataset.triggerHeld = String(!!state.triggerHeld);
       canvas.dataset.event = event?.kind ?? '';
+      canvas.dataset.roomNumber = String(roomNumber); canvas.dataset.storyStage = state.storyStage ?? '';
+      canvas.dataset.speaker = tableAudio.getVoiceSpeaker() ?? '';
+      canvas.dataset.hostVoiceLevel = hostVoiceLevel.toFixed(4); canvas.dataset.captiveVoiceLevel = captiveVoiceLevel.toFixed(4);
+      canvas.dataset.animatedSpeaker = hostVoiceLevel > 0 ? 'host' : captiveVoiceLevel > 0 ? 'captive' : '';
+      canvas.dataset.shotTarget = state.phase === 'AI_SHOOTING' ? 'captive' : state.phase === 'PLAYER_SHOOTING' ? 'player' : '';
+      if (!tablePeople) { const roles = new Set<string>(); world.traverse(object => { if (object.userData.actorRole) roles.add(object.userData.actorRole); }); tablePeople = roles.size; }
+      canvas.dataset.tablePeople = String(tablePeople);
+      canvas.dataset.monitorMode = monitors.group.userData.mode;
+      canvas.dataset.monitorFeeds = String(monitors.group.userData.feedCount);
       canvas.dataset.doorPulse = doorShake.toFixed(4);
       canvas.dataset.peekVisible = String(actors.peekCard.visible);
       canvas.dataset.peekActor = state.peekActor ?? '';
@@ -275,7 +351,12 @@ export default function Scene(props: SceneProps) {
       postMaterial.uniforms.time.value = time;
       // A lower shadow refresh rate suits the period look and leaves the GPU headroom.
       renderer.shadowMap.needsUpdate = renderedFrames++ % 4 === 0;
+      const ceilingActive = !signalLost && state.phase !== 'GAME_OVER' && (roomNumber === 3 || state.phase === 'ENDING_DEATH');
+      ceilingFeed.render(renderer, time, ceilingActive);
+      canvas.dataset.ceilingFeed = String(ceilingActive); canvas.dataset.ceilingFrames = String(ceilingFeed.frames);
       renderer.setRenderTarget(target); renderer.render(world, camera);
+      const deathMonitor = state.phase === 'ENDING_DEATH' && state.storyStage !== 'fall';
+      postMaterial.uniforms.sceneTexture.value = signalLost ? monitors.signalTexture : deathMonitor ? ceilingFeed.target.texture : target.texture;
       if (++fpsFrames > 0 && now - fpsStart > 1000) {
         canvas.dataset.fps = (fpsFrames * 1000 / (now - fpsStart)).toFixed(1);
         canvas.dataset.drawCalls = String(renderer.info.render.calls);
@@ -290,6 +371,7 @@ export default function Scene(props: SceneProps) {
     return () => {
       cancelAnimationFrame(frame); observer.disconnect();
       room.reset(); room.dispose();
+      monitors.dispose(); ceilingFeed.dispose();
       window.removeEventListener('keydown', keyDown);
       window.removeEventListener('keyup', keyUp);
       window.removeEventListener('blur', clearKeys);

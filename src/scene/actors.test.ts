@@ -181,6 +181,77 @@ describe('physical blackjack cards and dealer scene', () => {
     expect(barrelDirection.dot(towardEye)).toBeGreaterThan(.9999);
   });
 
+  it('keeps the three-second hold centered before firing even with only seven rendered frames', () => {
+    settleOpening();
+    let elapsed = 0;
+    for (const frameTime of [.4, .4, .4, .4, .4, .4, .3]) {
+      elapsed += frameTime;
+      tick(frameTime, { phase: 'PLAYER_SHOOTING', triggerHeld: true,
+        triggerProgress: elapsed / 3, chambersFired: 3 });
+    }
+    expect(state.triggerProgress).toBeCloseTo(.9);
+    const muzzle = actors.gun.localToWorld(new THREE.Vector3(.315, .09, 0));
+    const screen = muzzle.clone().project(camera);
+    const barrelDirection = new THREE.Vector3(1, 0, 0).transformDirection(actors.gun.matrixWorld);
+    const towardEye = camera.getWorldPosition(new THREE.Vector3()).sub(muzzle).normalize();
+    expect(Math.abs(screen.x)).toBeLessThan(.02); expect(Math.abs(screen.y)).toBeLessThan(.02);
+    expect(barrelDirection.dot(towardEye)).toBeGreaterThan(.9999);
+  });
+
+  it('keeps the right palm and curled fingers attached to the raised revolver grip at sparse frame rates', () => {
+    settleOpening();
+    const hand = actors.playerHands.getObjectByName('Player right gripping hand')!;
+    expect(hand).toBeDefined();
+    let elapsed = 0;
+    for (const frameTime of [.4, .4, .4, .4, .4, .4, .3]) {
+      elapsed += frameTime;
+      tick(frameTime, { phase: 'PLAYER_SHOOTING', triggerHeld: true,
+        triggerProgress: elapsed / 3, chambersFired: 3 });
+      const grip = actors.gun.localToWorld(new THREE.Vector3(-.14, -.13, 0));
+      const palm = hand.localToWorld(new THREE.Vector3(0, 0, .055));
+      expect(palm.distanceTo(grip)).toBeLessThan(.09);
+    }
+    const fingers = hand.children.filter(child => child instanceof THREE.Group);
+    expect(fingers).toHaveLength(4);
+    expect(fingers.every(finger => finger.rotation.x <= -.5)).toBe(true);
+    const muzzle = actors.gun.localToWorld(new THREE.Vector3(.315, .09, 0)).project(camera);
+    expect(Math.abs(muzzle.x)).toBeLessThan(.02); expect(Math.abs(muzzle.y)).toBeLessThan(.02);
+    advance(.8, { triggerHeld: false, triggerProgress: 0 });
+    expect(fingers.every(finger => finger.rotation.x === 0)).toBe(true);
+  });
+
+  it('restores the original hand poses through release, SPIN, another hold, and replay', () => {
+    settleOpening();
+    const hand = actors.playerHands.getObjectByName('Player right gripping hand')!;
+    const idle = hand.quaternion.clone(), idlePosition = hand.position.clone();
+    const fingers = hand.children.filter(child => child instanceof THREE.Group);
+    const spin = new THREE.Quaternion().setFromEuler(new THREE.Euler(-.8, Math.PI + .17, .6));
+    advance(.5, { phase: 'PLAYER_SHOOTING', triggerHeld: true, triggerProgress: .9 });
+    advance(1.8, { triggerHeld: false, triggerProgress: 0 });
+    expect(hand.quaternion.angleTo(idle)).toBeLessThan(.001);
+    expect(hand.rotation.y).toBe(Math.PI + .17);
+    expect(hand.position.distanceTo(idlePosition)).toBeLessThan(.001);
+    expect(fingers.every(finger => finger.rotation.x === 0)).toBe(true);
+
+    advance(1.2, { spinning: 'player', spinSerial: 1 });
+    expect(hand.quaternion.angleTo(spin)).toBeLessThan(.001);
+    expect(fingers.every(finger => finger.rotation.x === 0)).toBe(true);
+    advance(1.8, { spinning: null });
+    expect(hand.quaternion.angleTo(idle)).toBeLessThan(.001);
+    expect(hand.rotation.y).toBe(Math.PI + .17);
+
+    tick(.4, { triggerHeld: true, triggerProgress: .9 });
+    const grip = actors.gun.localToWorld(new THREE.Vector3(-.14, -.13, 0));
+    expect(hand.localToWorld(new THREE.Vector3(0, 0, .055)).distanceTo(grip)).toBeLessThan(.09);
+    actors.setCards(empty(), false);
+    advance(.8, { phase: 'SHUFFLING', roundNumber: 1, dead: null, shotEffect: null,
+      triggerHeld: false, triggerProgress: 0, spinning: null, spinSerial: 0 });
+    expect(hand.quaternion.angleTo(idle)).toBeLessThan(.001);
+    expect(hand.rotation.y).toBe(Math.PI + .17);
+    expect(hand.position.distanceTo(idlePosition)).toBeLessThan(.001);
+    expect(fingers.every(finger => finger.rotation.x === 0)).toBe(true);
+  });
+
   it('spins the actual cylinder and finishes without an unwanted reverse spin', () => {
     settleOpening();
     tick(.01, { phase: 'PLAYER_SHOOTING', spinning: 'player', spinSerial: 1, triggerProgress: 0 });
@@ -236,6 +307,98 @@ describe('physical blackjack cards and dealer scene', () => {
     expect(actors.stranger.position.z).toBeLessThan(-1.67);
     actors.update(time, 0, { ...state, phase: 'HITTING', event: door });
     expect(actors.head.rotation.x).toBe(quietPitch); expect(actors.stranger.position.z).toBe(-1.65);
+  });
+
+  it('has exactly one Host, one captive and the player, with a separate human face for each room', () => {
+    settleOpening();
+    const roles: string[] = []; scene.traverse(object => { if (object.userData.actorRole) roles.push(object.userData.actorRole); });
+    expect(roles.sort()).toEqual(['captive', 'host', 'player']);
+    expect(actors.stranger).toBe(actors.captive); expect(actors.head).toBe(actors.captiveHead);
+    expect(actors.host.position.x).toBeLessThan(-1.8); expect(actors.captive.position.x).toBe(0);
+    expect(actors.deck.userData.owner).toBe('host');
+    const faces: string[] = [];
+    for (const room of [1, 2, 3] as const) {
+      tick(.01, { roomNumber: room });
+      const visibleFaces = actors.captiveHead.children.filter(child => child.visible);
+      expect(visibleFaces).toHaveLength(1); faces.push(visibleFaces[0].name);
+      let maskOnCaptive = false;
+      visibleFaces[0].traverse(object => {
+        if (object instanceof THREE.Mesh && (object.material as THREE.MeshStandardMaterial).color?.getHex() === 0xd1ccb2) maskOnCaptive = true;
+      });
+      expect(maskOnCaptive).toBe(false);
+    }
+    expect(new Set(faces).size).toBe(3);
+    let hostMask = false;
+    actors.hostHead.traverse(object => {
+      if (object instanceof THREE.Mesh && (object.material as THREE.MeshStandardMaterial).color?.getHex() === 0xd1ccb2) hostMask = true;
+    });
+    expect(hostMask).toBe(true);
+  });
+
+  it('keeps the Host upright and away from the shooting hand while the captive shoots and dies', () => {
+    settleOpening();
+    advance(.8, { phase: 'AI_SHOOTING', suspense: true });
+    expect(actors.rightHand.getWorldPosition(new THREE.Vector3()).distanceTo(actors.gun.position)).toBeLessThan(.3);
+    expect(actors.hostRightHand.getWorldPosition(new THREE.Vector3()).distanceTo(actors.gun.position)).toBeGreaterThan(1);
+    advance(1.2, { phase: 'GAME_OVER', dead: 'ai', suspense: false, shotEffect: 'shot' });
+    expect(actors.captive.rotation.x).toBeGreaterThan(1.2);
+    expect(actors.host.rotation.x).toBe(0); expect(actors.host.rotation.z).toBe(0);
+    expect(actors.host.position.y).toBe(.86);
+    expect(actors.host.userData.canShoot).toBe(false); expect(actors.host.userData.canDie).toBe(false);
+  });
+
+  it('bobs only the active speaker even when both voice buses report levels', () => {
+    settleOpening(); const time = now;
+    actors.update(time, 0, { ...state, speaker: null, hostVoiceLevel: 1, captiveVoiceLevel: 1 });
+    const hostBase = actors.hostHead.position.y, captiveBase = actors.head.position.y;
+    actors.update(time, 0, { ...state, speaker: 'host', hostVoiceLevel: 1, captiveVoiceLevel: 1 });
+    expect(actors.hostHead.position.y - hostBase).toBeCloseTo(.0025);
+    expect(actors.head.position.y).toBe(captiveBase);
+    actors.update(time, 0, { ...state, speaker: 'captive', hostVoiceLevel: 1, captiveVoiceLevel: .5 });
+    expect(actors.hostHead.position.y).toBe(hostBase);
+    expect(actors.head.position.y - captiveBase).toBeCloseTo(.00125);
+  });
+
+  it('slides deliveries from the Host deck and moves Host hands rather than the captive hands', () => {
+    settleOpening();
+    const captiveRest = actors.rightHand.position.clone(), hostRest = actors.hostRightHand.position.clone();
+    actors.setCards({ player: [card('5', 'clubs')], ai: [], deck: [] }, false);
+    tick(0, { phase: 'DEALING' });
+    const first = activePlayerCards()[0];
+    // Reusing the existing slot may preserve its fan position; use a fresh second slot delivery.
+    actors.setCards(empty(), false);
+    actors.setCards({ player: [card('5', 'clubs')], ai: [], deck: [] }, false);
+    tick(0, { phase: 'DEALING' });
+    expect(first.group.position.x).toBeCloseTo(actors.deck.position.x);
+    expect(first.group.position.z).toBeCloseTo(actors.deck.position.z);
+    advance(.25);
+    expect(actors.hostRightHand.position.distanceTo(hostRest)).toBeGreaterThan(.04);
+    expect(actors.rightHand.position.distanceTo(captiveRest)).toBeLessThan(.02);
+  });
+
+  it('uses personality breakdown thresholds without making the Host nervous', () => {
+    settleOpening(); const time = now;
+    actors.update(time, 0, { ...state, roomNumber: 1, chambersFired: 2 }); const nervousPitch = actors.head.rotation.x;
+    actors.update(time, 0, { ...state, roomNumber: 2, chambersFired: 2 }); const gamblerPitch = actors.head.rotation.x;
+    actors.update(time, 0, { ...state, roomNumber: 3, chambersFired: 2 }); const survivorPitch = actors.head.rotation.x;
+    expect(nervousPitch).not.toBe(gamblerPitch); expect(gamblerPitch).toBe(survivorPitch);
+    const hostRotation = actors.hostHead.rotation.clone();
+    actors.update(time, 0, { ...state, roomNumber: 2, chambersFired: 3 });
+    expect(actors.head.rotation.x).not.toBe(gamblerPitch);
+    expect(actors.hostHead.rotation.equals(hostRotation)).toBe(true);
+  });
+
+  it('lifts the captive hood during opening and keeps defeated bodies unhooded during departure', () => {
+    settleOpening();
+    const phase = 'OPENING' as ActorState['phase'];
+    tick(.01, { phase, storyStage: 'hooded' }); expect(actors.captiveHood.visible).toBe(true);
+    const coveredY = actors.captiveHood.position.y;
+    tick(.01, { storyStage: 'unhood' }); advance(.4);
+    expect(actors.captiveHood.visible).toBe(true); expect(actors.captiveHood.position.y).toBeGreaterThan(coveredY + .3);
+    advance(.41); expect(actors.captiveHood.visible).toBe(false);
+    tick(.01, { phase: 'TRANSITION' as ActorState['phase'], storyStage: 'departure', dead: 'ai' }); advance(1.3);
+    expect(actors.captiveHood.visible).toBe(false); expect(actors.captive.rotation.x).toBeGreaterThan(1.2);
+    expect(actors.host.rotation.x).toBe(0);
   });
 
   it('keeps every player face off the felt during the opening deliveries, pickup, and later hits', () => {

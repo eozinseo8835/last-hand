@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
-import { createRoom, decisionEvent, type BunkerRoom } from './room';
+import { createRoom, decisionEvent, isExitStage, type BunkerRoom } from './room';
 import type { GamePhase } from '../game';
 import type { RoundEvent } from '../tension';
 
@@ -97,5 +97,48 @@ describe('temporary room tension events', () => {
     expect(scene.getObjectByName('lamp-filament')?.visible).toBe(true);
     expect(room.lamp.rotation.toArray().slice(0, 3)).toEqual([0, 0, 0]);
     expect(scene.getObjectByName('procedural-bunker')?.userData.event).toBeNull();
+  });
+
+  it('gives the three campaign rooms distinct green, harsh red, and weak-bulb lighting while preserving the same room geometry', () => {
+    let before = 0; scene.traverse(() => before++);
+    room.update(.5, .016, false, false, 0, null, 1500, { roomNumber: 1 });
+    const green = room.bulbLight.color.clone();
+    expect(green.g).toBeGreaterThan(green.r);
+    expect(room.bulbLight.intensity).toBe(20);
+    room.update(.6, .016, false, false, 0, null, 1600, { roomNumber: 2 });
+    expect(room.bulbLight.color.r).toBeGreaterThan(room.bulbLight.color.g * 2);
+    expect(room.bulbLight.intensity).toBe(26);
+    room.update(.7, .016, false, false, 0, null, 1700, { roomNumber: 3 });
+    expect(room.bulbLight.intensity).toBeLessThan(6);
+    expect(ambient().intensity).toBeLessThan(.04);
+    let after = 0; scene.traverse(() => after++); expect(after).toBe(before);
+  });
+
+  it('opens the actual exit door and lights a staircase only during the final win, then shows a rising viewers counter', () => {
+    const stairs = scene.getObjectByName('exit-stairwell')!, hinge = scene.getObjectByName('exit-door-hinge')!;
+    expect(stairs.visible).toBe(false); expect(hinge.rotation.y).toBe(0);
+    room.update(.5, .016, false, false, 0, null, 1500, { roomNumber: 3, phase: 'ENDING_WIN', storyStage: 'door', stageElapsed: 1.8 });
+    expect(stairs.visible).toBe(true); expect(hinge.rotation.y).toBeGreaterThan(1.5);
+    expect(scene.getObjectByName('exit-doorway')?.visible).toBe(true);
+    room.update(.6, .016, false, false, 0, null, 1700, { roomNumber: 3, phase: 'ENDING_WIN', storyStage: 'viewers', stageElapsed: .5 });
+    const first = scene.getObjectByName('viewers-counter')?.userData.viewers;
+    room.update(.7, .016, false, false, 0, null, 1900, { roomNumber: 3, phase: 'ENDING_WIN', storyStage: 'viewers', stageElapsed: 1.5 });
+    expect(scene.getObjectByName('viewers-counter')?.userData.viewers).toBeGreaterThan(first);
+    expect(fillText).toHaveBeenCalledWith('12,408', 48, 48);
+    room.reset(); expect(stairs.visible).toBe(false); expect(hinge.rotation.y).toBe(0);
+  });
+
+  it('keeps the exit closed and the player at the table until the Host finishes the win announcement', () => {
+    const stairs = scene.getObjectByName('exit-stairwell')!, hinge = scene.getObjectByName('exit-door-hinge')!;
+    room.update(.5, .016, false, false, 0, null, 1500, { roomNumber: 3, phase: 'ENDING_WIN', storyStage: 'departure', stageElapsed: 20 });
+    expect(isExitStage('ENDING_WIN', 'departure')).toBe(false);
+    expect(stairs.visible).toBe(false); expect(hinge.rotation.y).toBe(0);
+    expect(scene.getObjectByName('exit-doorway')?.visible).toBe(false);
+    expect(scene.getObjectByName('procedural-bunker')?.userData.exitOpen).toBe(false);
+    room.update(.6, .016, false, false, 0, null, 1600, { roomNumber: 3, phase: 'ENDING_WIN', storyStage: 'door', stageElapsed: 0 });
+    expect(isExitStage('ENDING_WIN', 'door')).toBe(true);
+    expect(stairs.visible).toBe(true); expect(hinge.rotation.y).toBe(0);
+    room.update(.7, .016, false, false, 0, null, 1700, { roomNumber: 3, phase: 'ENDING_WIN', storyStage: 'stairs', stageElapsed: 0 });
+    expect(hinge.rotation.y).toBeGreaterThan(1.5);
   });
 });

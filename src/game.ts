@@ -26,6 +26,10 @@ export const CONFIG = {
 
 export type GamePhase =
   | 'START'
+  | 'OPENING'
+  | 'TRANSITION'
+  | 'ENDING_WIN'
+  | 'ENDING_DEATH'
   | 'SHUFFLING'
   | 'DEALING'
   | 'PEEKING'

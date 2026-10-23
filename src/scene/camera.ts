@@ -77,5 +77,6 @@ export function updateLook(state: LookState, delta: number, recenter: boolean): 
 export function shouldRecenter(phase: GamePhase, suspense: boolean): boolean {
   return suspense || phase === 'SHUFFLING' || phase === 'DEALING' || phase === 'PEEKING' ||
     phase === 'HITTING' || phase === 'REVEAL' || phase === 'DEALER_TURN' || phase === 'DEALER_PEEKING' ||
-    phase === 'SWEEPING' || phase === 'AI_SHOOTING' || phase === 'PLAYER_SHOOTING' || phase === 'GAME_OVER';
+    phase === 'SWEEPING' || phase === 'AI_SHOOTING' || phase === 'PLAYER_SHOOTING' || phase === 'GAME_OVER' ||
+    phase === 'OPENING' || phase === 'TRANSITION' || phase === 'ENDING_WIN' || phase === 'ENDING_DEATH';
 }
