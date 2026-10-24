@@ -6,7 +6,7 @@ export type AmbientKind = typeof AMBIENT_KINDS[number];
 export type AmbientEvent = { id: string; kind: AmbientKind; startedAt: number; duration: number; loud: boolean; direction: number; seed: number };
 export const DISTANT_SHOT_GAP_MS = 3000;
 export function shotSequenceActive(phase: GamePhase, suspense = false): boolean {
-  return suspense || ['AI_SHOOTING', 'PLAYER_SHOOTING', 'REVEAL', 'DEALER_TURN', 'DEALER_PEEKING', 'ENDING_DEATH', 'ENDING_WIN', 'GAME_OVER'].includes(phase);
+  return suspense || ['AI_SHOOTING', 'PLAYER_SHOOTING', 'HOST_FORCE_SHOT', 'REVEAL', 'DEALER_TURN', 'DEALER_PEEKING', 'ENDING_DEATH', 'ENDING_WIN', 'GAME_OVER'].includes(phase);
 }
 export const nextAmbientDelay = (random: RandomSource = cosmeticRandom) => 15000 + Math.floor(random() * 15001);
 export function createAmbientEvent(id: string, now: number, random: RandomSource = cosmeticRandom): AmbientEvent {

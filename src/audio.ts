@@ -4,11 +4,11 @@ import { voiceRandom, type VoicePlan } from './voice';
 import { eventBangOffsets, heartbeatSettings, type RoundEvent } from './tension';
 import type { AmbientEvent } from './roomLife';
 
-type Sound = 'card' | 'click' | 'shot' | 'tension' | 'hammer' | 'clack' | 'spin';
+type Sound = 'card' | 'click' | 'shot' | 'tension' | 'hammer' | 'clack' | 'spin' | 'sting';
 export type ShotSoundEvent = { id: string; kind: 'local' | 'distant'; roomId?: number; direction?: number };
 export type StoryCue = 'hood' | 'drag' | 'door' | 'feed-shot' | 'escape' |
   'door-creak' | 'door-slam' | 'boots' | 'burlap-tug' | 'hood-cinch' | 'gasp' | 'sob' | 'snip';
-export type HeartbeatState = { active: boolean; chambersFired: number; pulling: boolean };
+export type HeartbeatState = { active: boolean; chambersFired: number; pulling: boolean; urgency?: number };
 type AudioLayer = { gain: GainNode; sources: Set<AudioScheduledSourceNode>; nodes: Set<AudioNode>; closed: boolean };
 type SpeakingVoice = {
   plan: VoicePlan; speaker: Speaker; start: number; end: number; gain: GainNode;
@@ -417,7 +417,7 @@ export class TableAudio {
   /** Callers describe the current phase; this method never unlocks browser audio. */
   setHeartbeat(state: HeartbeatState) {
     const next = { ...state, chambersFired: Math.max(0, Math.floor(state.chambersFired)) };
-    if (next.active === this.heartbeatState.active && next.chambersFired === this.heartbeatState.chambersFired && next.pulling === this.heartbeatState.pulling) return;
+    if (next.active === this.heartbeatState.active && next.chambersFired === this.heartbeatState.chambersFired && next.pulling === this.heartbeatState.pulling && next.urgency === this.heartbeatState.urgency) return;
     this.heartbeatState = next;
     this.stopHeartbeat();
     this.startHeartbeat();
@@ -440,7 +440,7 @@ export class TableAudio {
   private pumpHeartbeat() {
     const ctx = this.context, layer = this.heartbeatLayer;
     if (!ctx || !layer || layer.closed) return;
-    const now = ctx.currentTime, settings = heartbeatSettings(this.heartbeatState.chambersFired, this.heartbeatState.pulling);
+    const now = ctx.currentTime, settings = heartbeatSettings(this.heartbeatState.chambersFired, this.heartbeatState.pulling, this.heartbeatState.urgency);
     // A backgrounded tab resumes with one new beat, never a burst of missed beats.
     if (this.heartbeatNextBeat < now - .1) this.heartbeatNextBeat = now + .015;
     const period = 60 / settings.bpm;
@@ -475,7 +475,7 @@ export class TableAudio {
   getHeartbeatLevel() {
     const ctx = this.context;
     if (!ctx || ctx.state !== 'running' || this.muted || !this.heartbeatLayer) return 0;
-    const period = 60 / heartbeatSettings(this.heartbeatState.chambersFired, this.heartbeatState.pulling).bpm;
+    const period = 60 / heartbeatSettings(this.heartbeatState.chambersFired, this.heartbeatState.pulling, this.heartbeatState.urgency).bpm;
     let level = 0;
     for (const start of this.heartbeatBeats) {
       const age = ctx.currentTime - start;
@@ -697,7 +697,26 @@ export class TableAudio {
     source.connect(envelope); envelope.connect(layer.gain);
     this.ownSource(layer, source, [envelope]); source.start(start); source.stop(start + duration);
   }
+  playContact(kind: string, stress: number) {
+    const ctx = this.context;
+    if (!ctx || this.muted || ctx.state !== 'running' || !this.master) return;
+    const layer = this.makeLayer(this.master), now = ctx.currentTime;
+    const random = voiceRandom(this.soundSeed(`contact:${kind}:${this.revolverSerial++}`));
+    const level = .009 + Math.max(0, Math.min(1, stress)) * .012;
+    if (kind === 'knuckles') this.impact(layer, now, .035, level, 2400, random, 'highpass');
+    else if (kind === 'heel' || kind === 'drum' || kind === 'square') this.resonance(layer, now, .09, level, kind === 'heel' ? 80 : 180, 48);
+    else this.noise(layer, now, .22, level * .65, kind === 'chair' ? 340 : 900, random, 'lowpass');
+    setTimeout(() => this.disposeLayer(layer), 500);
+  }
   play(sound: Sound) {
+    if (sound === 'sting') {
+      const ctx = this.context;
+      if (!ctx || this.muted || ctx.state !== 'running' || !this.master) return;
+      const layer = this.makeLayer(this.master);
+      this.resonance(layer, ctx.currentTime, .45, .12, 115, 51, 'sawtooth');
+      this.noise(layer, ctx.currentTime, .20, .13, 1900, voiceRandom(this.soundSeed('caught')), 'bandpass');
+      setTimeout(() => this.disposeLayer(layer), 700); return;
+    }
     if (!this.context || !this.master || this.muted) return;
     if (sound === 'hammer' || sound === 'clack' || sound === 'spin') {
       if (!this.muted) this.playMechanism(sound);

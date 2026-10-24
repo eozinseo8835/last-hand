@@ -1,3 +1,4 @@
+import type { Behavior } from './bodyLanguage';
 import { handScore, type Card, type HandWinner, type RandomSource } from './game';
 import type { DialogueCategory } from './dialogue';
 import { cosmeticRandom, type OpponentTell, type Side } from './tension';
@@ -9,6 +10,7 @@ export type OpponentConfig = {
   id: 'nervous' | 'gambler' | 'survivor'; name: string;
   standOn: number; hitSoft17: boolean; mistakeChance: number; bluffChance: number;
   peekMin: number; peekMax: number; spinRemaining: number;
+  behavior: Behavior;
   tellAccuracy: number; breakdownStart: number; brokenAt: number; voice: VoiceProfile;
 };
 
@@ -18,18 +20,21 @@ export const HOST: { name: string; voice: VoiceProfile } = {
 
 export const OPPONENTS: Record<RoomNumber, OpponentConfig> = {
   1: {
-    id: 'nervous', name: 'THE NERVOUS MAN', standOn: 15, hitSoft17: false,
+    behavior: { baseStress: .22, baseTremor: .003, bounceThreshold: .2, fidgetSeconds: 4.5, hunch: .12, crackChamber: 2, fidgets: ['rub','knuckles','drum','grip','sweat','collar','felt','square','wrists'] },
+    id: 'nervous', name: 'THE NERVOUS MAN', standOn: 16, hitSoft17: false,
     mistakeChance: .25, bluffChance: .4, tellAccuracy: .85,
     peekMin: 12, peekMax: 16, spinRemaining: 3,
     breakdownStart: 2, brokenAt: 4, voice: { pitch: 122, speed: 1.15, wobble: 3.4 },
   },
   2: {
+    behavior: { baseStress: .07, baseTremor: .0004, bounceThreshold: .6, fidgetSeconds: 9, hunch: -.04, crackChamber: 4, fidgets: ['square','tie','neck','drum','sweat'] },
     id: 'gambler', name: 'THE GAMBLER', standOn: 17, hitSoft17: true,
     mistakeChance: 0, bluffChance: .5, tellAccuracy: .6,
     peekMin: 12, peekMax: 16, spinRemaining: 3,
     breakdownStart: 4, brokenAt: 6, voice: { pitch: 100, speed: .98, wobble: 1 },
   },
   3: {
+    behavior: { baseStress: .025, baseTremor: .00008, bounceThreshold: .85, fidgetSeconds: 15, hunch: 0, crackChamber: 5, fidgets: ['host','wrists'] },
     id: 'survivor', name: 'THE SURVIVOR', standOn: 17, hitSoft17: false,
     mistakeChance: 0, bluffChance: .4, tellAccuracy: .5,
     peekMin: 12, peekMax: 16, spinRemaining: 3,
@@ -70,7 +75,7 @@ export function opponentBreakdownCategory(room: RoomNumber, category: DialogueCa
 export type AbilityUseStats = Record<Side, { spin: number; peek: number }>;
 export type RunStats = {
   roomsCleared: number; roundsPlayed: number; handsWon: number; handsLost: number; handsPushed: number;
-  hits: number; busts: number; foldsUsed: number; highestChamber: number;
+  forcedShots: number; hits: number; busts: number; foldsUsed: number; highestChamber: number;
   abilitiesUsed: AbilityUseStats; guestsRemainingWhenFell: number | null;
   startedAt: number; endedAt: number | null; totalTimeMs: number;
 };
@@ -78,7 +83,7 @@ export type RunStats = {
 export function freshRunStats(now = Date.now()): RunStats {
   return {
     roomsCleared: 0, roundsPlayed: 0, handsWon: 0, handsLost: 0, handsPushed: 0,
-    hits: 0, busts: 0, foldsUsed: 0, highestChamber: 1,
+    forcedShots: 0, hits: 0, busts: 0, foldsUsed: 0, highestChamber: 1,
     abilitiesUsed: { player: { spin: 0, peek: 0 }, ai: { spin: 0, peek: 0 } },
     guestsRemainingWhenFell: null, startedAt: now, endedAt: null, totalTimeMs: 0,
   };

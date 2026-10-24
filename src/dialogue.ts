@@ -137,6 +137,9 @@ export const DIALOGUE = {
     'Careful with that corner; paper keeps secrets.',
     'Now you must decide what knowing is worth.',
   ],
+  opp_caught_player: ["Put your hand back. I saw that.", "You thought I would miss your fingers?", "Leave the deck alone. We both have to sit here.", "Host. Look where their hand is."] ,
+  caught_by_player: ["All right. You saw me.", "I was only trying to stay alive.", "My hand is coming back. See?", "Do not say anything. Please."] ,
+  glance_away: ["That wall moved. I swear it did.", "I need a moment to look somewhere else.", "Is somebody at the door?", "I cannot stop watching those screens."] ,
   distant_shot: [
     'That came through the wall.',
     'Someone else had to do it.',

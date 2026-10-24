@@ -542,3 +542,21 @@ describe('single-id shots, guard cues, and hooded room mixing', () => {
     audio.playAmbient(null);
   });
 });
+
+describe('caught stings and captive contact sounds', () => {
+  it('keeps all new sounds click-gated and muted, then synthesizes them locally', () => {
+    audio.play('sting'); audio.playContact('heel',1); expect(Context.instances).toHaveLength(0);
+    audio.init(); const ctx=context(); audio.mute(true); const count=ctx.nodes.length;
+    audio.play('sting'); audio.playContact('knuckles',1); expect(ctx.nodes).toHaveLength(count);
+    audio.mute(false); audio.play('sting');
+    expect(ctx.nodes.slice(count).some(node=>node.kind==='oscillator')).toBe(true);
+    const next=ctx.nodes.length; audio.playContact('heel',.9); audio.playContact('fabric',.8); audio.playContact('knuckles',.7);
+    expect(ctx.nodes.slice(next).filter(node=>node.kind==='source').length).toBeGreaterThanOrEqual(2);
+  });
+  it('raises deadline heartbeat urgency without constructing another context or bypassing mute', () => {
+    audio.init(); const ctx=context();
+    audio.setHeartbeat({active:true,chambersFired:2,pulling:false,urgency:1});
+    expect(Context.instances).toHaveLength(1); expect(ctx.nodes.some(node=>node.kind==='oscillator')).toBe(true);
+    audio.mute(true); expect(audio.getHeartbeatLevel()).toBe(0);
+  });
+});

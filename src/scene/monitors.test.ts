@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { createCeilingFeed, createMonitorWall } from './monitors';
+import { stageDurationMs } from '../cinematics';
 
 let scene: THREE.Scene, monitors: ReturnType<typeof createMonitorWall>;
 
@@ -226,8 +227,12 @@ describe('living tables on the monitor wall', () => {
     expect(monitors.screens[0].userData).toMatchObject({ playerHoodProgress: .5, opponentHoodProgress: 0, guardVisible: true });
     monitors.update({ ...state, cinematic: cinematic('player-focus') }, 2, 2000);
     expect(monitors.screens[0].userData).toMatchObject({ playerHoodProgress: 1, opponentHoodProgress: 0, guardVisible: true });
-    monitors.update({ ...state, cinematic: cinematic('opponent-unhood') }, 3, 1850);
-    expect(monitors.screens[0].userData).toMatchObject({ playerHoodProgress: 1, opponentHoodProgress: .5, guardVisible: true });
+    monitors.update({ ...state, cinematic: cinematic('opponent-unhood') }, 3, 1000+stageDurationMs('opponent-unhood')*.4);
+    expect(monitors.screens[0].userData.opponentHoodProgress).toBe(0);
+    monitors.update({ ...state, cinematic: cinematic('opponent-unhood') }, 3.5, 1000+stageDurationMs('opponent-unhood')*.8);
+    expect(monitors.screens[0].userData).toMatchObject({ playerHoodProgress: 1, guardVisible: true });
+    expect(monitors.screens[0].userData.opponentHoodProgress).toBeGreaterThan(.5);
+    expect(monitors.screens[0].userData.opponentHoodProgress).toBeLessThan(.6);
     monitors.update({ ...state, cinematic: cinematic('guard-exit') }, 4, 2000);
     expect(monitors.screens[0].userData).toMatchObject({ playerHoodProgress: 1, opponentHoodProgress: 1, guardVisible: true });
     monitors.update({ ...state, cinematic: cinematic('rules') }, 5, 2000);

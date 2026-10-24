@@ -184,3 +184,10 @@ h1 > span { color: #aeb99b; }h1 > i { font-family: Georgia, serif; font-size: 23
 .stranger-transmission { top: 454px; width: 312px; max-width: 312px; }
 .stranger-transmission .dialogue { overflow-wrap: anywhere; }
 .has-cinematic .story-overlay .hood-fabric { display: none; }
+
+.peek-button.peek-window:not(:disabled) { color: #e8cf96; border-color: #c6ab70; box-shadow: 0 0 18px #c6ab7025; }
+.peek-note { position:absolute; top:637px; left:650px; max-width:220px; padding:6px 9px; font:11px/1.5 monospace; color:#ded1ae; background:#09100bcc; }
+.caught-note { position:absolute; top:260px; left:600px; width:240px; text-align:center; font:700 16px monospace; color:#e6bb89; letter-spacing:.18em; }
+.trigger-countdown { position:absolute; bottom:72px; left:50%; transform:translateX(-50%); color:#d6c6a5; font:14px monospace; }
+.trigger-countdown.urgent { color:#ef8f7b; }
+.host-enforcement { color:#e6e4d5; font:12px monospace; letter-spacing:.08em; padding:20px; }

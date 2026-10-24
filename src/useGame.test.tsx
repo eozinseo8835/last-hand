@@ -1,3 +1,4 @@
+import { planAttention } from './attention';
 // @vitest-environment jsdom
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -14,6 +15,7 @@ import { chooseRoundEvent, cosmeticRandom } from './tension';
 import { OPENING_STAGES, stageDurationMs, type CinematicStage } from './cinematics';
 import { DISTANT_SHOT_GAP_MS } from './roomLife';
 
+vi.mock('./attention', async importOriginal => { const actual = await importOriginal<typeof import('./attention')>(); return { ...actual, planAttention: vi.fn(actual.planAttention) }; });
 vi.mock('./audio', () => ({ tableAudio: { init: vi.fn(), play: vi.fn(), mute: vi.fn(), startVoice: vi.fn(), stopVoice: vi.fn(), getVoiceLevel: vi.fn(() => 0), setHeartbeat: vi.fn(), setEvent: vi.fn(), playStory: vi.fn(), getHeartbeatLevel: vi.fn(() => 0), playShot: vi.fn(() => true), setHooded: vi.fn(), playAmbient: vi.fn() } }));
 vi.mock('./tension', async importOriginal => {
   const actual = await importOriginal<typeof import('./tension')>();
@@ -44,7 +46,7 @@ const dealerBusts = fixture([card('9', 'spades'), card('8', 'hearts')], [card('K
 const safeHits = fixture([card('2', 'spades'), card('3', 'hearts')], [card('9', 'clubs'), card('8', 'diamonds')], [card('4', 'clubs'), card('5', 'diamonds'), card('6', 'clubs'), card('2', 'diamonds')]);
 const DEAL_COMPLETE = 500 + 4 * 650 + 600;
 const FOLD_TO_DECISION = 700 + DEAL_COMPLETE;
-const DEALER_BUST_MS = 950 + 650 + 2 * (CONFIG.DEAL_SPEED + 200);
+const DEALER_BUST_MS = 950 + CONFIG.PEEK_DURATION_MS + 2 * (CONFIG.DEAL_SPEED + 200);
 const AI_INITIAL_HESITATION = 2000;
 const GUARD_TO_RULES = OPENING_STAGES.slice(0, OPENING_STAGES.indexOf('rules')).reduce((sum, stage) => sum + stageDurationMs(stage), 0);
 const CUT_TO_DEAL = stageDurationMs('cut-opponent') + stageDurationMs('cut-player') + stageDurationMs('rub-wrists');
@@ -55,6 +57,15 @@ let container: HTMLDivElement, root: Root, rootMounted: boolean;
 function mount(element: ReactNode = <Harness/>) { act(() => root.render(element)); }
 function advance(milliseconds: number) { act(() => vi.advanceTimersByTime(milliseconds)); }
 function startDecision() { mount(); startMatch(); advance(DEAL_COMPLETE); expect(latest.game.phase).toBe('PLAYER_DECISION'); }
+function waitPeekWindow() {
+  for (let elapsed=0;elapsed<10000&&!latest.game.attention.window;elapsed+=50) advance(50);
+  expect(latest.game.attention.window).toBe(true);
+}
+function peekSuccessfully() {
+  waitPeekWindow(); act(() => latest.peek()); advance(CONFIG.PEEK_DURATION_MS);
+  expect(latest.game.phase).toBe('PLAYER_DECISION'); expect(latest.game.peekedCard).not.toBeNull();
+}
+function prepareUnseenPeek() { waitPeekWindow(); act(() => latest.setOpponentInView(false)); }
 function button(text: string): HTMLButtonElement {
   const found = [...container.querySelectorAll('button')].find(node => node.textContent?.includes(text));
   if (!found) throw new Error(`Button not found: ${text}`);
@@ -196,7 +207,7 @@ describe('blackjack outcomes and dealer rules', () => {
     expect(latest.game.round!.ai).toEqual(playerBusts.ai); expect(latest.game.round!.deck).toHaveLength(47);
     assertCaptiveLine('player_busts');
     advance(950 + 1500); expect(latest.game.phase).toBe('PLAYER_SHOOTING');
-    advance(30000); expect(latest.game.awaitingTrigger).toBe(true);
+    advance(1000); expect(latest.game.awaitingTrigger).toBe(true);
     expect(latest.game.round!.ai).toEqual(playerBusts.ai); expect(latest.game.revolver.currentChamber).toBe(1);
   });
 
@@ -244,9 +255,9 @@ describe('blackjack outcomes and dealer rules', () => {
 });
 
 describe('shared revolver, continuous trigger hold, and replay', () => {
-  it('waits indefinitely, ignores a click, and fires once only after a complete hold', () => {
+  it('ignores a click before the deadline and fires once only after a complete hold', () => {
     startPlayerShot();
-    advance(30000); expect(latest.game.awaitingTrigger).toBe(true); expect(latest.game.revolver.currentChamber).toBe(1);
+    advance(1000); expect(latest.game.awaitingTrigger).toBe(true); expect(latest.game.revolver.currentChamber).toBe(1);
     act(() => latest.pullTrigger()); advance(3000);
     expect(latest.game.phase).toBe('PLAYER_SHOOTING'); expect(latest.game.shotEffect).toBeNull();
     act(() => { latest.beginTriggerHold(); latest.beginTriggerHold(); latest.hit(); latest.stand(); latest.fold(); });
@@ -293,7 +304,7 @@ describe('shared revolver, continuous trigger hold, and replay', () => {
 
   it('Play Again resets abilities, hold progress, folds, revolver, and death state', () => {
     vi.mocked(createRevolver).mockReturnValue({ bulletChamber: 1, currentChamber: 1 }); startDecision();
-    act(() => latest.peek());
+    peekSuccessfully();
     vi.mocked(dealRound).mockImplementation(() => copy(playerBusts)); act(() => latest.fold()); advance(FOLD_TO_DECISION);
     act(() => latest.hit()); advance(CONFIG.DEAL_SPEED + 950 + 1500);
     act(() => latest.spinCylinder()); advance(800); holdTrigger(); advanceStoryUntil(() => latest.game.phase === 'GAME_OVER');
@@ -483,18 +494,15 @@ describe('trigger commitment and hesitation', () => {
     expect(tableAudio.play).not.toHaveBeenCalledWith('click'); expect(localShots()).toHaveLength(0);
   });
 
-  it('has the Host urge an idle shooter after ten seconds, with a fade gap and no auto-fire', () => {
+  it('warns at ten and five seconds remaining with a voice fade gap', () => {
     startPlayerShot();
-    advance(9999); expect(allSpeech().some(line => line.category === 'waiting_for_trigger')).toBe(false);
+    advance(4999); expect(allSpeech().some(line=>line.category==='trigger_warning')).toBe(false);
     advance(1); expect(latest.game.speech).toBeNull();
-    advance(99); expect(latest.game.speech).toBeNull();
-    advance(1); expect(latest.game.speech?.speaker).toBe('host');
-    expect(HOST_DIALOGUE.waiting_for_trigger).toContain(latest.game.speech?.text);
-    const impatient = latest.game.speech?.id;
-    advance(4000); expect(latest.game.speech?.speaker).toBe('host');
-    expect(latest.game.speech?.category).toBe('waiting_for_trigger'); expect(latest.game.speech?.id).not.toBe(impatient);
-    expect(latest.game.phase).toBe('PLAYER_SHOOTING'); expect(latest.game.revolver.currentChamber).toBe(1);
-    expect(latest.game.awaitingTrigger).toBe(true); expect(latest.game.shotEffect).toBeNull();
+    advance(100); expect(latest.game.speech?.speaker).toBe('host');
+    expect(latest.game.speech?.text).toBe('Ten seconds.');
+    advance(4900); expect(latest.game.speech).toBeNull();
+    advance(100); expect(latest.game.speech?.text).toBe('Last chance to do it yourself.');
+    expect(latest.game.revolver.currentChamber).toBe(1);
   });
 
   it('makes the opponent hesitate longer after more fired chambers, without using a hidden card total', () => {
@@ -587,18 +595,20 @@ describe('one-time PEEK without changing the deck', () => {
   it('privately previews the next card once, then HIT receives exactly that card', () => {
     vi.mocked(dealRound).mockImplementation(() => copy(safeHits)); startDecision();
     const before = latest.game.round!, next = before.deck[0];
-    act(() => latest.peek());
-    expect(latest.game.peekedCard).toEqual(next); expect(latest.game.peekActor).toBe('player');
+    waitPeekWindow(); act(() => latest.peek());
+    expect(latest.game.peekedCard).toBeNull(); expect(latest.game.peekActor).toBe('player');
     expect(latest.game.abilities.player.peek).toBe(false); expect(latest.game.abilities.ai.peek).toBe(true);
     expect(latest.game.round).toBe(before); const serial = latest.game.peekSerial;
     act(() => latest.peek()); expect(latest.game.peekSerial).toBe(serial);
+    act(() => latest.hit()); expect(latest.game.round).toBe(before);
+    advance(CONFIG.PEEK_DURATION_MS); expect(latest.game.peekedCard).toEqual(next);
     act(() => latest.hit()); expect(latest.game.round!.player.at(-1)).toEqual(next);
     expect(latest.game.round!.deck[0]).toEqual(before.deck[1]); expect(latest.game.peekedCard).toBeNull();
     advance(CONFIG.DEAL_SPEED); act(() => latest.peek()); expect(latest.game.peekedCard).toBeNull();
   });
 
   it.each(['fold', 'stand'] as const)('clears a private preview on %s and keeps it spent next round', action => {
-    startDecision(); act(() => latest.peek()); expect(latest.game.peekedCard).not.toBeNull();
+    startDecision(); peekSuccessfully();
     act(() => latest[action]()); expect(latest.game.peekedCard).toBeNull();
     if (action === 'fold') {
       advance(FOLD_TO_DECISION); expect(latest.game.abilities.player.peek).toBe(false);
@@ -616,18 +626,18 @@ describe('one-time PEEK without changing the deck', () => {
   it('lets the opponent break its normal draw rule once when the peeked card would bust it', () => {
     const cautious = fixture(playerWins.player, [card('K', 'clubs'), card('4', 'diamonds')], [card('Q', 'hearts')]);
     vi.mocked(dealRound).mockImplementation(() => copy(cautious)); startDecision();
-    const deck = [...latest.game.round!.deck]; act(() => latest.stand()); advance(950);
+    prepareUnseenPeek(); const deck = [...latest.game.round!.deck]; act(() => latest.stand()); advance(950);
     expect(latest.game.phase).toBe('DEALER_PEEKING'); expect(latest.game.peekActor).toBe('ai');
     expect(latest.game.peekedCard).toBeNull(); assertCaptiveLine('opp_peeks');
     expect(latest.game.abilities.ai.peek).toBe(false); expect(latest.game.round!.deck).toEqual(deck);
-    advance(650); expect(latest.game.phase).toBe('ROUND_RESULT'); expect(latest.game.result).toBe('player');
+    advance(CONFIG.PEEK_DURATION_MS); expect(latest.game.phase).toBe('ROUND_RESULT'); expect(latest.game.result).toBe('player');
     expect(latest.game.round!.ai).toHaveLength(2); expect(latest.game.round!.deck).toEqual(deck);
   });
 
   it('draws its safe peeked card exactly once, then follows normal draws after PEEK is spent', () => {
     vi.mocked(dealRound).mockImplementation(() => copy(dealerBusts)); startDecision();
     const first = latest.game.round!.deck[0], second = latest.game.round!.deck[1];
-    act(() => latest.stand()); advance(950 + 650);
+    prepareUnseenPeek(); act(() => latest.stand()); advance(950 + CONFIG.PEEK_DURATION_MS);
     expect(latest.game.round!.ai.at(-1)).toEqual(first); expect(handTotal(latest.game.round!.ai)).toBe(14);
     expect(latest.game.abilities.ai.peek).toBe(false); const serial = latest.game.peekSerial;
     advance(CONFIG.DEAL_SPEED + 200);
@@ -667,7 +677,7 @@ describe('cosmetic events and chamber-only breakdown', () => {
     mount(); startMatch(); advance(DEAL_COMPLETE - 1); expect(latest.game.event).toBeNull();
     advance(1); act(() => latest.stand()); expect(latest.game.event).toBeNull();
     advance(950 + 1500); expect(latest.game.phase).toBe('PLAYER_SHOOTING');
-    advance(20000); expect(latest.game.event).toBeNull(); expect(latest.game.revolver.currentChamber).toBe(1);
+    advance(14000); expect(latest.game.event).toBeNull(); expect(latest.game.revolver.currentChamber).toBe(1);
   });
 
   it('selects one tell for the round and keeps it stable through hits and events', () => {
@@ -724,14 +734,14 @@ describe('three-room campaign, bracket, and run statistics', () => {
   it('resets revolver, folds, player abilities and opponent PEEK when the next room begins', () => {
     vi.mocked(createRevolver).mockReturnValue({ bulletChamber: 2, currentChamber: 1 });
     vi.mocked(dealRound).mockImplementation(() => copy(playerLoses)); startDecision();
-    act(() => latest.peek()); act(() => latest.fold()); advance(FOLD_TO_DECISION);
+    peekSuccessfully(); act(() => latest.fold()); advance(FOLD_TO_DECISION);
     expect(latest.game.folds).toBe(2); expect(latest.game.abilities.player.peek).toBe(false);
     act(() => latest.stand()); advance(950 + 1500);
     act(() => latest.spinCylinder()); advance(800); holdTrigger();
     expect(latest.game.revolver.currentChamber).toBe(2); expect(latest.game.abilities.player.spin).toBe(false);
     expect(latest.game.stats.highestChamber).toBe(2);
     vi.mocked(dealRound).mockImplementation(() => copy(dealerBusts)); nextDecisionAfterEmptyShot();
-    act(() => latest.stand()); advance(DEALER_BUST_MS + 1500);
+    prepareUnseenPeek(); act(() => latest.stand()); advance(DEALER_BUST_MS + 1500);
     expect(latest.game.abilities.ai.peek).toBe(false);
     finishQueuedSpeech(); advance(AI_INITIAL_HESITATION + 300);
     expect(latest.game.dead).toBe('ai');
@@ -902,9 +912,9 @@ describe('campaign rules, personality policies, and serialized speakers', () => 
       const ten = fixture([card('A', 'spades'), card('Q', 'hearts')], [card('6', 'clubs'), card('4', 'diamonds')], [card('K', 'hearts')]);
       vi.mocked(createRevolver).mockReturnValue({ bulletChamber: 6, currentChamber: 2 });
       vi.mocked(dealRound).mockImplementation(() => copy(ten)); startDecision();
-      act(() => latest.stand()); advance(950);
+      prepareUnseenPeek(); act(() => latest.stand()); advance(950);
       expect(latest.game.phase).toBe('DEALER_PEEKING'); expect(latest.game.abilities.ai.peek).toBe(false);
-      advance(650 + CONFIG.DEAL_SPEED + 200 + 1500); expect(latest.game.phase).toBe('AI_SHOOTING');
+      advance(CONFIG.PEEK_DURATION_MS + CONFIG.DEAL_SPEED + 200 + 1500); expect(latest.game.phase).toBe('AI_SHOOTING');
       finishQueuedSpeech(); expect(latest.game.spinning).toBe('ai'); expect(latest.game.abilities.ai.spin).toBe(false);
     } finally { Object.assign(OPPONENTS[1], config); }
   });
@@ -1089,13 +1099,125 @@ describe('single-id shots, synchronized monitor deaths, and ambient room life', 
   });
 
   it('defers overdue ambient events throughout a player shot and resumes them only in safe decision time', () => {
-    startPlayerShot(); advance(30000);
-    expect(latest.game.phase).toBe('PLAYER_SHOOTING'); expect(latest.game.ambientEvent).toBeNull();
+    startPlayerShot(); advance(CONFIG.TRIGGER_TIMEOUT_MS + 3499);
+    expect(latest.game.phase).toBe('HOST_FORCE_SHOT'); expect(latest.game.ambientEvent).toBeNull();
     expect(vi.mocked(tableAudio.playAmbient).mock.calls.filter(([event]) => event !== null)).toHaveLength(0);
-    holdTrigger(); expect(latest.game.shotEffect).toBe('click');
+    advance(1); expect(latest.game.shotEffect).toBe('click');
     advance(1000); expect(latest.game.ambientEvent).toBeNull();
     advanceStoryUntil(() => latest.game.ambientEvent !== null);
     expect(latest.game.phase).toBe('PLAYER_DECISION'); expect(latest.game.ambientEvent!.startedAt).toBeGreaterThan(22500);
     expect(latest.game.roundNumber).toBe(2); expect(latest.game.revolver.currentChamber).toBe(2);
+  });
+});
+
+function timedGazes(hostEnd = 5000, captiveEnd = 5000) {
+  vi.mocked(planAttention).mockImplementationOnce(now => ({
+    host: [{ start: now+1000, end: now+hostEnd, direction:-1 }],
+    captive: [{ start: now+1000, end: now+captiveEnd, direction:1 }],
+  }));
+}
+
+describe('Big Update 2 sneaky PEEK and readable catches', () => {
+  it('blocks player PEEK while either face is watching, spends one use only when started, and delays the secret until completion', () => {
+    timedGazes(); startDecision(); const round=latest.game.round;
+    act(()=>latest.peek()); expect(latest.game.abilities.player.peek).toBe(true);
+    advance(1000); expect(latest.game.attention.window).toBe(true);
+    act(()=>latest.peek()); expect(latest.game.phase).toBe('PLAYER_PEEKING'); expect(latest.game.peekedCard).toBeNull();
+    act(()=>{latest.hit(); latest.stand(); latest.fold();}); expect(latest.game.round).toBe(round);
+    advance(CONFIG.PEEK_DURATION_MS-1); expect(latest.game.peekedCard).toBeNull();
+    advance(1); expect(latest.game.peekedCard).toEqual(round!.deck[0]);
+    expect(latest.game.abilities.player.peek).toBe(false);
+  });
+  it.each(['host','captive'] as const)('catches the player when %s returns and uses one immediate penalty shot without comparing cards', catcher=>{
+    timedGazes(catcher==='host'?1500:5000,catcher==='captive'?1500:5000); startDecision();
+    const before=latest.game.round, handStats={won:latest.game.stats.handsWon,lost:latest.game.stats.handsLost};
+    advance(1000); act(()=>latest.peek()); advance(500);
+    expect(latest.game.caught).toBe(catcher); expect(latest.game.phase).toBe('PLAYER_SHOOTING');
+    expect(latest.game.peekedCard).toBeNull(); expect(latest.game.peekActor).toBeNull();
+    expect(latest.game.triggerRemainingMs).toBe(CONFIG.TRIGGER_TIMEOUT_MS); expect(tableAudio.play).toHaveBeenCalledWith('sting');
+    const category=catcher==='host'?'host_caught_player':'opp_caught_player';
+    advance(100); expect(allSpeech().some(l=>l.category===category&&l.speaker===catcher)).toBe(true);
+    holdTrigger(); expect(latest.game.revolver.currentChamber).toBe(2);
+    expect(latest.game.result).toBeNull(); advance(3400);
+    expect(latest.game.phase).toBe('PLAYER_DECISION'); expect(latest.game.round).toBe(before);
+    expect(latest.game.stats.handsWon).toBe(handStats.won); expect(latest.game.stats.handsLost).toBe(handStats.lost);
+    expect(latest.game.abilities.player.peek).toBe(false); expect(latest.game.folds).toBe(3);
+  });
+  it('applies the folds penalty without a shot or a hand comparison', ()=>{
+    const penalty=CONFIG.PEEK_CAUGHT_PENALTY;
+    try { CONFIG.PEEK_CAUGHT_PENALTY='folds'; timedGazes(1500,5000); startDecision(); advance(1000); act(()=>latest.peek()); advance(500);
+      expect(latest.game.phase).toBe('PLAYER_DECISION'); expect(latest.game.folds).toBe(0);
+      expect(latest.game.revolver.currentChamber).toBe(1); expect(latest.game.awaitingTrigger).toBe(false);
+      expect(latest.game.stats.handsLost).toBe(0); expect(latest.game.peekedCard).toBeNull();
+    } finally { CONFIG.PEEK_CAUGHT_PENALTY=penalty; }
+  });
+  it.each([true,false])('rejects captive PEEK with observed=%s unless both eligibility conditions hold', watched=>{
+    timedGazes(watched?5000:500,5000);
+    vi.mocked(dealRound).mockImplementation(()=>copy(dealerBusts)); startDecision(); advance(1000);
+    act(()=>latest.setOpponentInView(watched)); act(()=>latest.stand()); advance(950);
+    expect(latest.game.phase).toBe('DEALER_TURN'); expect(latest.game.abilities.ai.peek).toBe(true);
+    expect(latest.game.round!.ai.at(-1)).toEqual(dealerBusts.deck[0]);
+  });
+  it('catches a captive mid-peek when the player looks back and prevents it using bust information', ()=>{
+    const cautious=fixture(playerWins.player,[card('K','clubs'),card('4','diamonds')],[card('Q','hearts')]);
+    timedGazes(); vi.mocked(dealRound).mockImplementation(()=>copy(cautious)); startDecision(); advance(1000);
+    act(()=>{latest.setOpponentInView(false); latest.stand();}); advance(950);
+    expect(latest.game.phase).toBe('DEALER_PEEKING'); advance(350);
+    act(()=>latest.setOpponentInView(true)); expect(latest.game.caught).toBe('ai');
+    expect(latest.game.abilities.ai.peek).toBe(false); assertCaptiveLine('caught_by_player');
+    advance(400+CONFIG.DEAL_SPEED+200);
+    expect(handTotal(latest.game.round!.ai)).toBe(24); expect(latest.game.result).toBe('player');
+    expect(latest.game.round!.ai.at(-1)).toEqual(cautious.deck[0]);
+  });
+  it('aborts a captive peek when the Host returns without using the secret', ()=>{
+    timedGazes(2400,5000); vi.mocked(dealRound).mockImplementation(()=>copy(dealerBusts)); startDecision(); advance(1000);
+    act(()=>{latest.setOpponentInView(false); latest.stand();}); advance(950);
+    expect(latest.game.phase).toBe('DEALER_PEEKING'); advance(450);
+    expect(latest.game.peekActor).toBeNull(); expect(latest.game.abilities.ai.peek).toBe(false);
+    advance(400); expect(latest.game.round!.ai.at(-1)).toEqual(dealerBusts.deck[0]);
+  });
+});
+
+describe('Big Update 2 Host trigger deadline', () => {
+  it('starts enforcement at exactly the deadline, disables SPIN, and fires the existing chamber after the cocking pause', ()=>{
+    vi.mocked(createRevolver).mockReturnValue({bulletChamber:6,currentChamber:3}); startPlayerShot();
+    const deadline=latest.game.triggerDeadline, calls=vi.mocked(createRevolver).mock.calls.length;
+    advance(CONFIG.TRIGGER_TIMEOUT_MS-1); expect(latest.game.phase).toBe('PLAYER_SHOOTING');
+    advance(1); expect(latest.game.phase).toBe('HOST_FORCE_SHOT'); expect(latest.game.forceShotAt).toBe(deadline);
+    expect(latest.game.stats.forcedShots).toBe(1); expect(latest.game.awaitingTrigger).toBe(false);
+    act(()=>{latest.spinCylinder(); latest.beginTriggerHold(); latest.forceShot();});
+    expect(vi.mocked(createRevolver).mock.calls).toHaveLength(calls); expect(latest.game.stats.forcedShots).toBe(1);
+    advance(3499); expect(latest.game.revolver.currentChamber).toBe(3);
+    advance(1); expect(latest.game.revolver.currentChamber).toBe(4); expect(latest.game.shotEffect).toBe('click');
+    advance(1000); expect(allSpeech().some(l=>l.speaker==='host'&&l.category==='forced_shot')).toBe(true);
+  });
+  it('never resets the deadline when the player releases and drains a partial hold', ()=>{
+    startPlayerShot(); const deadline=latest.game.triggerDeadline;
+    advance(9000); act(()=>latest.beginTriggerHold()); advance(1000); act(()=>latest.endTriggerHold());
+    expect(latest.game.triggerDeadline).toBe(deadline); advance(4999); expect(latest.game.phase).toBe('PLAYER_SHOOTING');
+    advance(1); expect(latest.game.phase).toBe('HOST_FORCE_SHOT');
+  });
+  it('lets a hold active at zero finish normally without a forced-shot statistic', ()=>{
+    startPlayerShot(); advance(CONFIG.TRIGGER_TIMEOUT_MS-1000); act(()=>latest.beginTriggerHold());
+    advance(1000); expect(latest.game.triggerRemainingMs).toBe(0); expect(latest.game.phase).toBe('PLAYER_SHOOTING');
+    expect(latest.game.triggerHeld).toBe(true); advance(CONFIG.TRIGGER_HOLD_MS-1000);
+    expect(latest.game.shotEffect).toBe('click'); expect(latest.game.revolver.currentChamber).toBe(2);
+    expect(latest.game.stats.forcedShots).toBe(0);
+  });
+  it('enforces immediately if a hold is released after zero instead of granting a fresh timer', ()=>{
+    startPlayerShot(); advance(CONFIG.TRIGGER_TIMEOUT_MS-500); act(()=>latest.beginTriggerHold()); advance(1000);
+    act(()=>latest.endTriggerHold()); expect(latest.game.phase).toBe('HOST_FORCE_SHOT'); expect(latest.game.stats.forcedShots).toBe(1);
+  });
+  it('uses the normal player death sequence when enforcement reaches the loaded chamber', ()=>{
+    vi.mocked(createRevolver).mockReturnValue({bulletChamber:1,currentChamber:1}); startPlayerShot();
+    advance(CONFIG.TRIGGER_TIMEOUT_MS+3500);
+    expect(latest.game.dead).toBe('player'); expect(latest.game.phase).toBe('ENDING_DEATH');
+    expect(latest.game.stats.forcedShots).toBe(1); expect(localShots()).toHaveLength(1);
+  });
+  it('applies the same timeout to a caught PEEK penalty and resumes that hand after an empty forced shot', ()=>{
+    timedGazes(1500,5000); startDecision(); const hand=latest.game.round; advance(1000); act(()=>latest.peek()); advance(500);
+    advance(CONFIG.TRIGGER_TIMEOUT_MS); expect(latest.game.phase).toBe('HOST_FORCE_SHOT');
+    advance(3500+3400); expect(latest.game.phase).toBe('PLAYER_DECISION'); expect(latest.game.round).toBe(hand);
+    expect(latest.game.stats.forcedShots).toBe(1); expect(latest.game.stats.handsLost).toBe(0);
   });
 });

@@ -22,6 +22,9 @@ export const CONFIG = {
   TELL_ACCURACY: .7,
   HEARTBEAT_BASE_BPM: 60,
   TRIGGER_HOLD_MS: 3000,
+  TRIGGER_TIMEOUT_MS: 15000,
+  PEEK_DURATION_MS: 1000,
+  PEEK_CAUGHT_PENALTY: 'trigger' as 'trigger' | 'folds',
   RANDOM_EVENT_CHANCE: .6,
 };
 
@@ -34,6 +37,8 @@ export type GamePhase =
   | 'SHUFFLING'
   | 'DEALING'
   | 'PEEKING'
+  | 'PLAYER_PEEKING'
+  | 'HOST_FORCE_SHOT'
   | 'HITTING'
   | 'DEALER_TURN'
   | 'DEALER_PEEKING'

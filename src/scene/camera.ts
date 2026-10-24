@@ -76,7 +76,7 @@ export function updateLook(state: LookState, delta: number, recenter: boolean): 
 /** Presentation phases keep the deal, reveal, and trigger pull in the player's view. */
 export function shouldRecenter(phase: GamePhase, suspense: boolean): boolean {
   return suspense || phase === 'SHUFFLING' || phase === 'DEALING' || phase === 'PEEKING' ||
-    phase === 'HITTING' || phase === 'REVEAL' || phase === 'DEALER_TURN' || phase === 'DEALER_PEEKING' ||
+    phase === 'HITTING' || phase === 'REVEAL' || phase === 'PLAYER_PEEKING' || phase === 'HOST_FORCE_SHOT' ||
     phase === 'SWEEPING' || phase === 'AI_SHOOTING' || phase === 'PLAYER_SHOOTING' || phase === 'GAME_OVER' ||
     phase === 'OPENING' || phase === 'TRANSITION' || phase === 'ENDING_WIN' || phase === 'ENDING_DEATH';
 }

@@ -16,7 +16,7 @@ export function guardDoorProgress(cinematic: CinematicState | null | undefined, 
 
 /** Presentation rejects a stale event as soon as play leaves the decision phase. */
 export function decisionEvent(phase: GamePhase, event: RoundEvent | null | undefined, now = Date.now()): RoundEvent | null {
-  if (phase !== 'PLAYER_DECISION' || !event || now < event.startedAt || now >= event.startedAt + event.duration) return null;
+  if (phase !== 'PLAYER_DECISION' && phase !== 'PLAYER_PEEKING' || !event || now < event.startedAt || now >= event.startedAt + event.duration) return null;
   return event;
 }
 
@@ -172,13 +172,25 @@ export function createRoom(scene: THREE.Scene): BunkerRoom {
   // A broad fourteen-sided wooden table, with layered worn rails and taut dirty felt.
   const table = new THREE.Group(); table.name = 'card-table'; root.add(table);
   const tableLayer = (radiusX: number, radiusZ: number, height: number, y: number, material: THREE.Material) => {
-    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, height, 16), material);
-    mesh.scale.set(radiusX, 1, radiusZ); mesh.position.y = y; mesh.rotation.y = Math.PI / 16; mesh.castShadow = true; mesh.receiveShadow = true; table.add(mesh); return mesh;
+    const geometry = new THREE.CylinderGeometry(1, 1, height, 16);
+    geometry.rotateY(Math.PI / 16);
+    const vertices = geometry.attributes.position;
+    for (let index=0;index<vertices.count;index++) if (vertices.getZ(index)>0) vertices.setZ(index,vertices.getZ(index)*.74);
+    geometry.computeVertexNormals();
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.scale.set(radiusX, 1, radiusZ); mesh.position.y = y; mesh.castShadow = true; mesh.receiveShadow = true; table.add(mesh); return mesh;
   };
-  tableLayer(1.8, 1.34, .15, .76, wood);
+  // A thin front rail and open steel support leave a real sight line to the
+  // captive's knees/shoes. Opaque felt and the original materials stay intact.
+  tableLayer(1.8, 1.34, .035, .850, wood);
   tableLayer(1.77, 1.31, .035, .85, mat(0x5c4c35));
   tableLayer(1.69, 1.23, .025, .874, felt);
-  tableLayer(1.75, 1.29, .045, .66, darkMetal);
+  const railPoints = Array.from({length:32},(_,i)=> {
+    const angle=i/32*Math.PI*2,z=Math.sin(angle)*1.29;
+    return new THREE.Vector3(Math.cos(angle)*1.75,.66,z>0?z*.74:z);
+  });
+  const underFrame = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(railPoints,true),32,.022,4,true),darkMetal);
+  table.add(underFrame);
   for (const x of [-1.2, 1.2]) for (const z of [-.85, .85]) {
     const leg = box(.1, .68, .1, darkMetal, x, .33, z, table, true); leg.rotation.z = x > 0 ? -.055 : .055;
   }

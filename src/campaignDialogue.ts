@@ -4,7 +4,7 @@ import type { RandomSource } from './game';
 import { cosmeticRandom } from './tension';
 
 export type HostCategory = 'intro_rules' | 'deal' | 'round_result' | 'other_room_death' |
-  'waiting_for_trigger' | 'transition' | 'ending_win' | 'ending_death' | 'cut_ties';
+  'waiting_for_trigger' | 'transition' | 'ending_win' | 'ending_death' | 'cut_ties' | 'host_caught_player' | 'trigger_warning' | 'forced_shot';
 export type SpeechLine = {
   id: number; speaker: Speaker; text: string; category: DialogueCategory | HostCategory;
   danger: boolean; chambersFired: number;
@@ -13,11 +13,14 @@ export type DialogueExchange = { captive: string; host: string };
 
 /** The Host has no opinion about a hand: these lines describe procedure only. */
 export const HOST_DIALOGUE: Record<HostCategory, readonly string[]> = {
+  host_caught_player: ["Unauthorized contact has been observed.", "Return your hand. A penalty will follow.", "The audience has an unobstructed view.", "An attempted violation has been recorded."],
+  trigger_warning: ["Ten seconds.", "Last chance to do it yourself.", "Five seconds remain in your allocation.", "The allotted time is nearly complete."],
+  forced_shot: ["Your time has elapsed.", "The required action has now been completed.", "Assistance has been entered in your record.", "Future hesitation will receive the same assistance."],
   intro_rules: [
     'Eight guests have been assigned to four tables.',
     'The guest closest to twenty-one wins the hand.',
     'The losing guest will operate the shared revolver.',
-    'One SPIN and one PEEK are permitted in each room.',
+    'One SPIN is allocated per room. A PEEK is unauthorized.',
   ],
   deal: [
     'The next hand will now be dealt.',
@@ -74,7 +77,7 @@ export const OPENING_LINES = [
   'You will play blackjack. The hand closest to twenty-one wins. Going over loses.',
   'Choose HIT, STAND, or FOLD. Three folds are permitted in each room.',
   'Each table shares one revolver with one bullet. The loser of each hand pulls the trigger.',
-  'Each guest may use SPIN and PEEK once in every room.',
+  'Each guest may SPIN once per room. A PEEK will receive a penalty if observed.',
   'The last guest standing will be permitted to leave.',
 ] as const;
 export const SHORT_INTRO = 'Your seat is ready. The procedure is unchanged.';
@@ -214,6 +217,9 @@ export const OPPONENT_DIALOGUE: Record<RoomNumber, CaptiveBanks> = {
       'Knowing does not make your hands steadier.',
       'Please do not tell me what comes after.',
     ],
+    opp_caught_player: ["No! Stop touching it. I was watching.", "Your fingers. I can see your fingers.", "Please do not make this worse by cheating.", "Host, their hand went under the card."],
+    caught_by_player: ["Please. I did not get a proper look.", "I am putting it down. Do not shout.", "You caught me. I just panicked.", "I know. I know. My hands are back here."],
+    glance_away: ["Was that a boot outside?", "I cannot watch this table for another second.", "That screen went dark. Did you see?", "If I look at the door, maybe it opens."],
     distant_shot: [
       'Was that the room next to us?',
       'I heard someone fall. I heard it.',
@@ -350,6 +356,9 @@ export const OPPONENT_DIALOGUE: Record<RoomNumber, CaptiveBanks> = {
       'I used to pay good money for that look.',
       'You have information. Let us see if you have nerve.',
     ],
+    opp_caught_player: ["Nice reach. Shame about the audience.", "I know that move. Take your hand back.", "A little too bold with your fingers there.", "Dealer. Our friend is shopping ahead."],
+    caught_by_player: ["You have a better eye than I gave you.", "Fine. No advantage taken.", "Caught clean. I will give you that.", "Old habit. Forget the card; watch my hands."],
+    glance_away: ["That monitor has awful timing.", "Give me a second. Something knocked.", "I am checking the exit. Professional curiosity.", "Let the cameras have my good side."],
     distant_shot: [
       'That sounded expensive for somebody.',
       'Another chair the house can put away.',
@@ -486,6 +495,9 @@ export const OPPONENT_DIALOGUE: Record<RoomNumber, CaptiveBanks> = {
       'I have seen people wish they had not looked.',
       'Keep what you saw to yourself. It is yours.',
     ],
+    opp_caught_player: ["Bring your hand back slowly.", "I have watched that trick end badly.", "The deck is not yours to touch.", "Host. There has been a breach."],
+    caught_by_player: ["I misjudged where you were looking.", "Seen. I will not use it.", "My hands are here now.", "That was a mistake. Let it remain one."],
+    glance_away: ["The monitor changed again.", "I count the footsteps when they pass.", "I need to check that door.", "The Host is watching a different table."],
     distant_shot: [
       'They always wait for us to listen.',
       'I remember the sound through that wall.',

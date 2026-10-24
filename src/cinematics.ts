@@ -4,9 +4,9 @@ export const TRANSFER_STAGES = ['guards-enter', 'transfer-hood', 'lift', 'draggi
 export type CinematicStage = typeof OPENING_STAGES[number] | typeof TRANSFER_STAGES[number];
 export type CinematicState = { stage: CinematicStage; startedAt: number; mode: CinematicMode };
 const DURATIONS: Record<CinematicStage, number> = {
-  hooded: 700, 'door-open': 850, 'guard-approach': 1400, 'player-unhood': 850,
-  'player-focus': 1500, 'opponent-unhood': 1700, 'guard-exit': 1600, rules: 0,
-  'cut-opponent': 750, 'cut-player': 750, 'rub-wrists': 650, complete: 0,
+  hooded: 700, 'door-open': 850, 'guard-approach': 3000, 'player-unhood': 850,
+  'player-focus': 1500, 'opponent-unhood': 4500, 'guard-exit': 3500, rules: 0,
+  'cut-opponent': 1500, 'cut-player': 3500, 'rub-wrists': 650, complete: 0,
   'guards-enter': 1500, 'transfer-hood': 850, lift: 650, dragging: 1600, door: 700,
 };
 export const stageDurationMs = (stage: CinematicStage) => DURATIONS[stage];

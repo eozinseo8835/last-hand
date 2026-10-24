@@ -84,12 +84,12 @@ describe('seated camera controls', () => {
   });
 
   it('automatically recenters for every deal, reveal, shooting, and ending phase', () => {
-    const phases: GamePhase[] = ['SHUFFLING','DEALING','PEEKING','HITTING','REVEAL','DEALER_TURN','DEALER_PEEKING','SWEEPING','AI_SHOOTING','PLAYER_SHOOTING','GAME_OVER','OPENING','TRANSITION','ENDING_WIN','ENDING_DEATH'];
+    const phases: GamePhase[] = ['SHUFFLING','DEALING','PEEKING','HITTING','REVEAL','PLAYER_PEEKING','HOST_FORCE_SHOT','SWEEPING','AI_SHOOTING','PLAYER_SHOOTING','GAME_OVER','OPENING','TRANSITION','ENDING_WIN','ENDING_DEATH'];
     for (const phase of phases) expect(shouldRecenter(phase, false)).toBe(true);
   });
 
   it('allows looking around while idle or deciding, but always locks suspense', () => {
-    const phases: GamePhase[] = ['START','PLAYER_DECISION','ROUND_RESULT'];
+    const phases: GamePhase[] = ['START','PLAYER_DECISION','ROUND_RESULT','DEALER_TURN','DEALER_PEEKING'];
     for (const phase of phases) {
       expect(shouldRecenter(phase, false)).toBe(false);
       expect(shouldRecenter(phase, true)).toBe(true);
@@ -161,7 +161,7 @@ describe('WASD head look', () => {
 
   it('never fights automatic recentering, even when a key stays held', () => {
     const keys = createLookKeys(); keys.left = keys.up = true;
-    for (const phase of ['SHUFFLING','DEALING','PEEKING','HITTING','REVEAL','DEALER_TURN','DEALER_PEEKING','SWEEPING','AI_SHOOTING','PLAYER_SHOOTING','OPENING','TRANSITION','ENDING_WIN','ENDING_DEATH'] as GamePhase[]) {
+    for (const phase of ['SHUFFLING','DEALING','PEEKING','HITTING','REVEAL','PLAYER_PEEKING','HOST_FORCE_SHOT','SWEEPING','AI_SHOOTING','PLAYER_SHOOTING','OPENING','TRANSITION','ENDING_WIN','ENDING_DEATH'] as GamePhase[]) {
       const state = createLookState();
       updateKeyboardLook(state, keys, .3, SPEED, false);
       const yaw = state.targetYaw, pitch = state.targetPitch;

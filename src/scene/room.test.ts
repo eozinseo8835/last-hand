@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { createRoom, decisionEvent, isExitStage, type BunkerRoom } from './room';
 import type { GamePhase } from '../game';
 import type { RoundEvent } from '../tension';
+import { stageDurationMs } from '../cinematics';
 
 let scene: THREE.Scene, room: BunkerRoom;
 let fillText: ReturnType<typeof vi.fn>;
@@ -156,7 +157,7 @@ describe('guard access and noticeable room life', () => {
     for (const stage of ['guard-approach', 'player-unhood', 'player-focus', 'opponent-unhood'] as const) {
       update(stage, 400); expect(hinge.rotation.y).toBeGreaterThan(1.6);
     }
-    update('guard-exit', 1600); expect(hinge.rotation.y).toBe(0);
+    update('guard-exit', stageDurationMs('guard-exit')); expect(hinge.rotation.y).toBe(0);
     update('rules', 500); expect(hinge.rotation.y).toBe(0);
     update('transfer-hood', 500, 'transfer'); expect(hinge.rotation.y).toBeGreaterThan(1.6);
     expect(scene.getObjectByName('exit-stairwell')?.visible).toBe(false);
@@ -191,4 +192,21 @@ describe('guard access and noticeable room life', () => {
     expect(eyes.visible).toBe(false); expect(handle.rotation.z).toBe(0);
     expect(scene.getObjectByName('procedural-bunker')?.userData.ambientEvent).toBeNull();
   });
+});
+
+it('keeps the opaque felt and an actual clear view of captive shoes below the front rail', () => {
+  scene.updateMatrixWorld(true);
+  const eye=new THREE.Vector3(0,1.45,2.65);
+  for (const x of [-.17,.17]) {
+    const foot=new THREE.Vector3(x,.055,-.83), direction=foot.clone().sub(eye);
+    const ray=new THREE.Raycaster(eye,direction.clone().normalize(),0,direction.length()-.03);
+    const hits=ray.intersectObjects(scene.children,true).filter(hit=>hit.object instanceof THREE.Mesh&&hit.object.visible&&!(hit.object.material as THREE.Material).transparent);
+    expect(hits.map(hit=>hit.object.name)).toEqual([]);
+  }
+});
+
+it('keeps the current blackout visible during the one-second player PEEK',()=>{
+ const blackout=event('blackout');
+ expect(decisionEvent('PLAYER_PEEKING',blackout,1500)).toBe(blackout);
+ expect(decisionEvent('PLAYER_PEEKING',blackout,6000)).toBeNull();
 });

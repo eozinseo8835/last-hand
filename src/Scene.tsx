@@ -1,3 +1,5 @@
+import type { Attention } from './attention';
+import { bodyLanguage, shotBodyOnly } from './bodyLanguage';
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { CONFIG, type Card, type GamePhase, type Round } from './game';
@@ -43,6 +45,9 @@ export type SceneProps = {
   ambientEvent?: AmbientEvent | null;
   aiShotStartedAt?: number | null;
   aiShotDurationMs?: number;
+  attention?: Attention; stress?: number; caught?: 'host' | 'captive' | 'ai' | null;
+  peekStartedAt?: number | null; forceShotAt?: number | null;
+  onOpponentInView?: (visible: boolean) => void;
 };
 
 function splatterTexture() {
@@ -305,7 +310,8 @@ export default function Scene(props: SceneProps) {
     const finalCameraPosition = new THREE.Vector3(), finalCameraQuaternion = new THREE.Quaternion();
     let impulse = 0, flash = 0, deathProgress = 0, renderedFrames = 0;
     let fpsStart = performance.now(), fpsFrames = 0;
-    const gunPosition = new THREE.Vector3();
+    const gunPosition = new THREE.Vector3(), captiveScreen = new THREE.Vector3();
+    let opponentVisible: boolean | null = null, contactSerial = -1, lastHeel = -1;
     function animate(now: number) {
       const cameraDelta = Math.max(0, (now - lastTime) / 1000);
       const dt = Math.min(cameraDelta, .05); lastTime = now;
@@ -377,6 +383,15 @@ export default function Scene(props: SceneProps) {
       } else if (state.phase === 'GAME_OVER' && winPose) {
         camera.position.copy(finalCameraPosition); camera.quaternion.copy(finalCameraQuaternion);
       }
+      if (state.phase === 'PLAYER_PEEKING') {
+        const age = state.peekStartedAt == null ? 0 : Math.max(0,(epoch-state.peekStartedAt)/CONFIG.PEEK_DURATION_MS);
+        const leanPeek = Math.sin(Math.min(1,age)*Math.PI);
+        camera.position.x -= leanPeek * .65;
+        camera.position.z -= leanPeek * .60;
+        const deckLook = new THREE.Vector3(-1.20, .99, -.10);
+        const facing = camera.quaternion.clone(); camera.lookAt(deckLook);
+        camera.quaternion.slerpQuaternions(facing, camera.quaternion.clone(), Math.min(1,leanPeek*2));
+      }
       camera.updateMatrixWorld(true);
       room.update(time, dt, state.danger, state.suspense, impulse, event, epoch, {
         roomNumber: state.roomNumber, phase: state.phase === 'GAME_OVER' && winPose ? 'ENDING_WIN' : state.phase,
@@ -386,6 +401,17 @@ export default function Scene(props: SceneProps) {
       const voiceLevel = captiveVoiceLevel;
       const heartbeat = tableAudio.getHeartbeatLevel();
       actors.update(time, dt, { ...state, roomNumber, event, voiceLevel, hostVoiceLevel, captiveVoiceLevel, reducedMotion: motionPreference.matches });
+      const seen = actors.captiveHead.getWorldPosition(captiveScreen).project(camera);
+      const inView = seen.z > -1 && seen.z < 1 && Math.abs(seen.x) <= .4 && Math.abs(seen.y) <= 1;
+      if (inView !== opponentVisible) { opponentVisible = inView; state.onOpponentInView?.(inView); }
+      const body = bodyLanguage(roomNumber, state.stress ?? .2, time, (state.chambersFired ?? 0) + 1, state.phase, state.tell?.disposition === 'calm');
+      if (!shotBodyOnly(state.phase) && state.phase === 'PLAYER_DECISION' && !state.dead) {
+        if (body.fidget && body.fidgetAmount > .25 && contactSerial !== body.serial) {
+          contactSerial = body.serial; tableAudio.playContact(body.fidget, state.stress ?? .2);
+        }
+        const heel = Math.floor(time * (4 + (state.stress ?? 0) * 2));
+        if (body.bounce > .008 && lastHeel !== heel) { lastHeel = heel; tableAudio.playContact('heel', state.stress ?? .2); }
+      }
       monitors.update(state, time, epoch);
       const signalLost = (state.phase === 'ENDING_DEATH' && state.storyStage === 'no-signal') || (state.phase === 'GAME_OVER' && state.dead === 'player');
       monitors.setSignalLost(signalLost);
@@ -422,7 +448,14 @@ export default function Scene(props: SceneProps) {
       canvas.dataset.monitorMode = monitors.group.userData.mode;
       canvas.dataset.monitorFeeds = String(monitors.group.userData.feedCount);
       canvas.dataset.doorPulse = doorShake.toFixed(4);
-      canvas.dataset.peekVisible = String(actors.peekCard.visible);
+      canvas.dataset.peekVisible = String(actors.peekCard.visible && actors.peekCard.parent === actors.heldRig);
+      canvas.dataset.deckCorner = String(actors.deckCorner.visible);
+      canvas.dataset.peekWindow = String(!!state.attention?.window);
+      canvas.dataset.hostAway = String(!!state.attention?.host.away);
+      canvas.dataset.captiveAway = String(!!state.attention?.captive.away);
+      canvas.dataset.opponentInView = String(opponentVisible);
+      canvas.dataset.stress = (state.stress ?? 0).toFixed(3);
+      canvas.dataset.gunHolder = String(actors.gun.userData.holder);
       canvas.dataset.peekActor = state.peekActor ?? '';
       canvas.dataset.spinning = state.spinning ?? '';
       canvas.dataset.cylinderAngle = actors.cylinder.rotation.x.toFixed(4);

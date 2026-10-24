@@ -108,7 +108,9 @@ describe('physical blackjack cards and dealer scene', () => {
     actors.update(time, 0, { ...state, tell: { kind: 'avert', disposition: 'nervous' } });
     expect(actors.head.rotation.y - baseYaw).toBeGreaterThan(.1);
     actors.update(time, 0, { ...state, phase: 'REVEAL', tell: { kind: 'avert', disposition: 'nervous' } });
-    expect(actors.head.rotation.y).toBe(baseYaw);
+    const revealYaw = actors.head.rotation.y;
+    actors.update(time, 0, { ...state, phase: 'REVEAL', tell: null });
+    expect(actors.head.rotation.y).toBe(revealYaw);
     const fingers = actors.leftHand.children.filter(child => child instanceof THREE.Group && typeof child.userData.fingerIndex === 'number' && child.userData.fingerIndex < 4);
     for (const sample of [.3, .7, 1.1]) {
       actors.update(sample, 0, { ...state, tell: { kind: 'still', disposition: 'calm' } });
@@ -260,22 +262,20 @@ describe('physical blackjack cards and dealer scene', () => {
     advance(.3); expect(actors.cylinder.rotation.x).toBe(0);
   });
 
-  it('shows a private peek face to the camera, lifts only a card back on the deck, and removes the secret on the next action', () => {
-    settleOpening(); const next = card('Q', 'hearts');
-    tick(.01, { peekActor: 'player', peekSerial: 1, peekedCard: next }); advance(.3);
-    expect(actors.peekCard.visible).toBe(true); expect(actors.deckCorner.visible).toBe(true);
-    expect(actors.deckCorner.rotation.x).toBeLessThan(-.2);
-    expect(actors.peekCard.userData.identity).toBe(next.id);
-    expect((actors.peekFront.material as THREE.MeshStandardMaterial).map).not.toBeNull();
-    scene.updateMatrixWorld(true);
-    const center = actors.peekFront.getWorldPosition(new THREE.Vector3());
-    const normal = new THREE.Vector3(0, 0, 1).transformDirection(actors.peekFront.matrixWorld);
-    expect(normal.dot(camera.getWorldPosition(new THREE.Vector3()).sub(center).normalize())).toBeGreaterThan(.8);
-    expect(normal.dot(actors.head.getWorldPosition(new THREE.Vector3()).sub(center).normalize())).toBeLessThan(0);
-    tick(.01, { phase: 'DEALER_PEEKING', peekActor: 'ai', peekSerial: 2, peekedCard: null }); advance(.3);
-    expect(actors.peekCard.visible).toBe(false);
+  it('exposes only a hinged corner attached to the deck and clears its face on completion', () => {
+    settleOpening(); const next = card('Q','hearts');
+    tick(.01,{phase:'PLAYER_PEEKING',peekActor:'player',peekSerial:1,peekedCard:next}); advance(.4);
+    expect(actors.deckCorner.visible).toBe(true);
+    expect(actors.deckCorner.userData.attachedToDeck).toBe(true);
+    expect(actors.peekFront.parent).toBe(actors.deckCorner);
+    expect(actors.peekFront.geometry.attributes.position.count).toBe(3);
+    expect(actors.deckCorner.parent).toBe(scene); // No card face in the camera rig.
+    const bounds = new THREE.Box3().setFromObject(actors.deckCorner);
+    expect(bounds.max.y-bounds.min.y).toBeLessThan(.19);
+    expect(actors.rightPlayerArm.pose.root.distanceTo(actors.rightPlayerArm.pose.joint)).toBeCloseTo(.42);
+    tick(.01,{phase:'PLAYER_DECISION',peekActor:null});
+    expect(actors.deckCorner.visible).toBe(false);
     expect((actors.peekFront.material as THREE.MeshStandardMaterial).map).toBeNull();
-    expect(actors.cardSlots.find(slot => slot.owner === 'ai' && slot.index === 1)!.front.userData.identity).toBe('unrevealed');
   });
 
   it('bases fear and hand tremble on fired chambers, reduces it for motion preferences, and amplifies it while pulling', () => {
@@ -343,7 +343,7 @@ describe('physical blackjack cards and dealer scene', () => {
     expect(actors.captive.rotation.x).toBeGreaterThan(1.2);
     expect(actors.host.rotation.x).toBe(0); expect(actors.host.rotation.z).toBe(0);
     expect(actors.host.position.y).toBe(.86);
-    expect(actors.host.userData.canShoot).toBe(false); expect(actors.host.userData.canDie).toBe(false);
+    expect(actors.host.userData.canShoot).toBe(true); expect(actors.host.userData.canDie).toBe(false);
   });
 
   it('bobs only the active speaker even when both voice buses report levels', () => {
@@ -560,4 +560,38 @@ describe('Big Update 2 physical cast', () => {
       expect(slot.group.position.x).toBeLessThan(1.1); expect(faceNormal(slot).y).toBeGreaterThan(.99);
     }
   });
+});
+
+describe('physical Host enforcement and attention', () => {
+  it('keeps the Host gun in its wrapped palm with fixed bones and returns it after an empty forced shot', () => {
+    settleOpening(); const epoch=50000; vi.spyOn(Date,'now').mockReturnValue(epoch);
+    tick(.1,{phase:'HOST_FORCE_SHOT',forceShotAt:epoch-2800});
+    expect(actors.gun.parent).toBe(actors.hostRightHand); expect(actors.gun.userData.holder).toBe('host');
+    const muzzle=actors.gun.localToWorld(new THREE.Vector3(.315,.09,0));
+    const target=camera.localToWorld(new THREE.Vector3(-.14,.015,-.12));
+    expect(muzzle.distanceTo(target)).toBeLessThan(.05);
+    expect(actors.hostRightArm.limb.pose.root.distanceTo(actors.hostRightArm.limb.pose.joint)).toBeCloseTo(.42);
+    vi.mocked(Date.now).mockReturnValue(epoch+3500);
+    advance(1,{phase:'ROUND_RESULT',shotEffect:'click'});
+    expect(actors.gun.parent).toBe(scene); expect(actors.gun.position.distanceTo(new THREE.Vector3(...GUN_REST))).toBeLessThan(.02);
+  });
+  it('uses attention only on the matching character, visibly turning back in the final 400ms', () => {
+    settleOpening(); const gaze={away:true,returning:false,amount:1,direction:-1};
+    tick(.01,{attention:{host:gaze,captive:{...gaze,direction:1},window:true}});
+    expect(actors.hostHead.rotation.y).toBeCloseTo(-.70); expect(actors.head.rotation.y).toBeCloseTo(.72);
+    tick(.01,{attention:{host:{...gaze,returning:true,amount:.25},captive:{...gaze,direction:1,returning:true,amount:.25},window:true}});
+    expect(Math.abs(actors.head.rotation.y)).toBeLessThan(.3); expect(Math.abs(actors.hostHead.rotation.y)).toBeLessThan(.3);
+  });
+});
+
+it('covers the lowered human head with burlap, then sends both cloth hoods away in the guard pocket', () => {
+  settleOpening(); const epoch=Date.now();
+  tick(.1,{phase:'OPENING',cinematic:{stage:'hooded',startedAt:epoch,mode:'full'},tiesCut:{player:false,ai:false}});
+  const cloth=new THREE.Box3().setFromObject(actors.captiveHood), face=actors.head.getWorldPosition(new THREE.Vector3());
+  expect(cloth.min.y).toBeLessThan(face.y-.18); expect(cloth.max.y).toBeGreaterThan(face.y+.18);
+  tick(.1,{cinematic:{stage:'guard-exit',startedAt:epoch,mode:'full'}});
+  expect(actors.guards[0].foldedHoods.visible).toBe(true);
+  expect(actors.guards[0].group.userData.hoodsCarried).toBe(2); expect(actors.captiveHood.visible).toBe(false);
+  tick(.1,{cinematic:{stage:'rules',startedAt:epoch,mode:'full'}});
+  expect(actors.guards.every(guard=>!guard.group.visible)).toBe(true);
 });

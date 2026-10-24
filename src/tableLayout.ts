@@ -6,7 +6,7 @@ export const GUN_REST = [1.35, .962, -.65] as const;
 export function tableCardPosition(owner: 'player' | 'ai', index: number, count: number): [number, number, number] {
   const perRow = 6, row = Math.floor(index / perRow), rowCount = Math.min(perRow, count - row * perRow);
   return [(index % perRow - (rowCount - 1) / 2) * .355, TABLE_CARD_Y + index * .0002,
-    owner === 'ai' ? -.32 - row * .47 : .79 - row * .47];
+    owner === 'ai' ? -.44 - row * .47 : .50 - row * .47];
 }
 export type TableBounds = { minX: number; maxX: number; minZ: number; maxZ: number };
 export function cardBounds(owner: 'player' | 'ai', index: number, count: number): TableBounds {

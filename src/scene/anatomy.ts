@@ -86,6 +86,10 @@ export function guardCharacter(material: THREE.MeshStandardMaterial, black: THRE
   const rightLimb = createFixedLimb(group, .42, .40, .09, material, 'guard right arm');
   const legs = makeLegs(group, material, black, false, 'guard');
   const bag = new THREE.Mesh(new THREE.BoxGeometry(.24, .27, .13), material); bag.position.set(.24, .07, .18); group.add(bag);
+  const foldedHoods = new THREE.Group(); foldedHoods.name = 'Pocketed burlap hoods';
+  foldedHoods.position.set(.24,.14,.26); group.add(foldedHoods); foldedHoods.visible=false;
+  const burlap = new THREE.MeshStandardMaterial({color:0x49402d,roughness:1,flatShading:true});
+  for (let index=0;index<2;index++) { const cloth=new THREE.Mesh(new THREE.DodecahedronGeometry(.10,0),burlap); cloth.position.x=index*.09-.04; cloth.scale.set(.7,1,.5); foldedHoods.add(cloth); }
   group.position.y = .86; group.traverse(object => { if (object instanceof THREE.Mesh) object.castShadow = object.receiveShadow = true; });
   function pose(time: number, walking: number, target?: THREE.Vector3) {
     legs.update(walking, time);
@@ -96,5 +100,5 @@ export function guardCharacter(material: THREE.MeshStandardMaterial, black: THRE
       hand.group.rotation.set(-Math.PI / 2, 0, 0); gripFingers(hand, target && side === 1 ? .9 : .15, 0, 0);
     }
   }
-  return { group, head, left, right, legs, leftLimb, rightLimb, pose };
+  return { group, head, left, right, legs, leftLimb, rightLimb, foldedHoods, pose };
 }

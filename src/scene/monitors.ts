@@ -273,7 +273,7 @@ export function createMonitorWall(scene: THREE.Scene) {
           if (['hooded', 'door-open', 'guard-approach'].includes(stage)) hoods = [0, 0];
           else if (stage === 'player-unhood') hoods = [progress, 0];
           else if (stage === 'player-focus') hoods = [1, 0];
-          else if (stage === 'opponent-unhood') hoods = [1, progress];
+          else if (stage === 'opponent-unhood') hoods = [1, THREE.MathUtils.smoothstep(progress,.65,.94)];
           else if (stage === 'transfer-hood') hoods = [1 - progress, 1 - progress];
           else if (['lift', 'dragging', 'door'].includes(stage)) hoods = [0, 0];
           else hoods = [1, 1];
