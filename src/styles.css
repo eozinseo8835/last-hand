@@ -176,3 +176,11 @@ h1 > span { color: #aeb99b; }h1 > i { font-family: Georgia, serif; font-size: 23
 .campaign-end .end-footnote { margin-top: 20px; }
 @keyframes hoodOff { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(-100%); } }
 @keyframes hoodOn { from { opacity: 0; } to { opacity: 1; } }
+/* One shared inset protects captions and controls at every desktop scale. */
+.stage { --hud-safe: 76px; }
+.opponent-readout { top: 337px; max-width: 335px; align-items: flex-start; flex-direction: column; gap: 7px; }
+.opponent-readout > .small-label { line-height: 1.5; overflow-wrap: anywhere; }
+.opponent-card-readout { max-width: 335px; color: #e3d8b8; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.stranger-transmission { top: 454px; width: 312px; max-width: 312px; }
+.stranger-transmission .dialogue { overflow-wrap: anywhere; }
+.has-cinematic .story-overlay .hood-fabric { display: none; }

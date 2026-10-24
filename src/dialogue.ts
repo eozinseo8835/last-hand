@@ -137,6 +137,12 @@ export const DIALOGUE = {
     'Careful with that corner; paper keeps secrets.',
     'Now you must decide what knowing is worth.',
   ],
+  distant_shot: [
+    'That came through the wall.',
+    'Someone else had to do it.',
+    'I heard a chair move after that.',
+    'Please let that be the last sound.',
+  ],
   short: [
     'Keep it still.',
     'Not another sound.',

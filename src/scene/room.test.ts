@@ -142,3 +142,53 @@ describe('temporary room tension events', () => {
     expect(hinge.rotation.y).toBeGreaterThan(1.5);
   });
 });
+
+
+describe('guard access and noticeable room life', () => {
+  it('opens the real door for the guard, leaves it open for both unhoodings, then closes before rules and play', () => {
+    const hinge = scene.getObjectByName('exit-door-hinge')!;
+    const update = (stage: import('../cinematics').CinematicStage, elapsed: number, mode: import('../cinematics').CinematicMode = 'full') => {
+      room.update(1, .016, false, false, 0, null, 1000 + elapsed,
+        { phase: mode === 'transfer' ? 'TRANSITION' : 'OPENING', cinematic: { stage, startedAt: 1000, mode } });
+    };
+    update('hooded', 400); expect(hinge.rotation.y).toBe(0);
+    update('door-open', 800); expect(hinge.rotation.y).toBeGreaterThan(1.6);
+    for (const stage of ['guard-approach', 'player-unhood', 'player-focus', 'opponent-unhood'] as const) {
+      update(stage, 400); expect(hinge.rotation.y).toBeGreaterThan(1.6);
+    }
+    update('guard-exit', 1600); expect(hinge.rotation.y).toBe(0);
+    update('rules', 500); expect(hinge.rotation.y).toBe(0);
+    update('transfer-hood', 500, 'transfer'); expect(hinge.rotation.y).toBeGreaterThan(1.6);
+    expect(scene.getObjectByName('exit-stairwell')?.visible).toBe(false);
+    update('door', 700, 'transfer'); expect(hinge.rotation.y).toBe(0);
+  });
+  it('sways the bulb and drops bounded dust for one distant event without adding meshes or consuming gameplay RNG', () => {
+    let objects = 0; scene.traverse(() => objects++);
+    const shot = { id: 'run1:room1:table2', table: 2, startedAt: 1000, duration: 3000, direction: -1 };
+    const random = vi.spyOn(Math, 'random').mockImplementation(() => { throw Error('Room life consumed gameplay randomness'); });
+    room.update(1, .016, false, false, 0, null, 1100, { phase: 'PLAYER_DECISION', distantShot: shot });
+    const dust = scene.getObjectByName('distant-shot-dust') as THREE.Points;
+    expect(dust.visible).toBe(true); expect(dust.geometry.getAttribute('position').count).toBe(48);
+    const first = dust.geometry.getAttribute('position').getY(0);
+    expect(Math.abs(room.lamp.rotation.x) + Math.abs(room.lamp.rotation.z)).toBeGreaterThan(.01);
+    room.update(1.5, .016, false, false, 0, null, 1600, { phase: 'PLAYER_DECISION', distantShot: shot });
+    expect(dust.geometry.getAttribute('position').getY(0)).toBeLessThan(first);
+    room.update(4, .016, false, false, 0, null, 4100, { phase: 'PLAYER_DECISION', distantShot: shot });
+    expect(dust.visible).toBe(false); expect(random).not.toHaveBeenCalled();
+    let after = 0; scene.traverse(() => after++); expect(after).toBe(objects);
+    room.reset(); expect(dust.visible).toBe(false);
+  });
+  it('shows eyes in the slot and a rattling handle only while their ambient events are active, with no shot-time events', () => {
+    const eyes = scene.getObjectByName('guard-window-eyes')!, handle = scene.getObjectByName('door-handle')!;
+    const ambientEvent = { id: 'ambient1', kind: 'guard' as const, startedAt: 1000, duration: 2800, loud: false, direction: 1, seed: 31 };
+    room.update(1, .016, false, false, 0, null, 1600, { phase: 'PLAYER_DECISION', ambientEvent });
+    expect(eyes.visible).toBe(true);
+    room.update(1.2, .016, false, false, 0, null, 1800, { phase: 'PLAYER_SHOOTING', ambientEvent });
+    expect(eyes.visible).toBe(false);
+    room.update(1.3, .016, false, false, 0, null, 1900, { phase: 'PLAYER_DECISION', ambientEvent: { ...ambientEvent, kind: 'handle', loud: true } });
+    expect(Math.abs(handle.rotation.z)).toBeGreaterThan(.05);
+    room.update(4, .016, false, false, 0, null, 4100, { phase: 'PLAYER_DECISION', ambientEvent });
+    expect(eyes.visible).toBe(false); expect(handle.rotation.z).toBe(0);
+    expect(scene.getObjectByName('procedural-bunker')?.userData.ambientEvent).toBeNull();
+  });
+});

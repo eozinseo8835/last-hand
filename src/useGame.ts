@@ -11,6 +11,8 @@ import type { RoomNumber, RunStats } from './campaign';
 import { FINAL_HOST_LINE, OPENING_LINES, ROOM_ARRIVAL, SHORT_INTRO, chooseBeggingLine, chooseExchange, chooseHostLine, chooseOpponentLine, shouldExchange } from './campaignDialogue';
 import type { HostCategory, SpeechLine } from './campaignDialogue';
 import { createVoicePlan } from './voice';
+import { OPENING_STAGES, TRANSFER_STAGES, stageDurationMs, tiesForStage, type CinematicMode, type CinematicStage, type CinematicState } from './cinematics';
+import { DISTANT_SHOT_GAP_MS, createAmbientEvent, nextAmbientDelay, type AmbientEvent, type DistantShot } from './roomLife';
 
 export type Session = {
   phase: GamePhase; round: Round | null; roundNumber: number; folds: number;
@@ -26,6 +28,9 @@ export type Session = {
   spinning: Side | null; spinSerial: number;
   peekActor: Side | null; peekSerial: number; peekedCard: Card | null;
   event: RoundEvent | null;
+  cinematic: CinematicState | null; tiesCut: { player: boolean; ai: boolean };
+  distantShot: DistantShot | null; ambientEvent: AmbientEvent | null; shotId: string | null;
+  aiShotStartedAt: number | null; aiShotDurationMs: number | null;
 };
 const initial = (): Session => ({
   phase: 'START', round: null, roundNumber: 0, folds: CONFIG.MAX_FOLDS,
@@ -36,19 +41,28 @@ const initial = (): Session => ({
   message: '', suspense: false, awaitingTrigger: false, hasHit: false, dead: null, shotEffect: null,
   abilities: freshAbilities(), tell: null, triggerHeld: false, triggerProgress: 0,
   spinning: null, spinSerial: 0, peekActor: null, peekSerial: 0, peekedCard: null, event: null,
+  cinematic: null, tiesCut: { player: true, ai: true }, distantShot: null, ambientEvent: null, shotId: null,
+  aiShotStartedAt: null, aiShotDurationMs: null,
 });
 type Timer = ReturnType<typeof setTimeout>;
 type SpeechEntry = { line: SpeechLine; reactive: boolean };
+type PendingDeath = { id: string; room: RoomNumber; table: number; announce: boolean };
+let engineInstances = 0;
 
 /** The state machine owns gameplay and cancelable time; the scene only presents its public state. */
 export function useGame() {
   const [game, setGame] = useState<Session>(initial);
+  const [instanceId] = useState(() => `${Date.now()}:${++engineInstances}`);
   const current = useRef(game), mounted = useRef(true);
   const timers = useRef(new Set<Timer>()), holdTimers = useRef(new Set<Timer>()), drainTimers = useRef(new Set<Timer>());
   const eventStart = useRef<Timer | null>(null), eventEnd = useRef<Timer | null>(null), impatient = useRef<Timer | null>(null);
   const pendingEvent = useRef<EventPlan | null>(null), eventUsed = useRef(false);
   const storyTimers = useRef(new Set<Timer>()), speechTimer = useRef<Timer | null>(null), speechGap = useRef<Timer | null>(null);
   const speechEntries = useRef<SpeechEntry[]>([]), speechId = useRef(0), speechIdle = useRef<(() => void) | null>(null);
+  const runSerial = useRef(0), localShotSerial = useRef(0), ambientSerial = useRef(0);
+  const pendingDeaths = useRef<PendingDeath[]>([]), queuedDeaths = useRef(new Set<string>());
+  const distantTimer = useRef<Timer | null>(null), ambientTimer = useRef<Timer | null>(null);
+  const lastDistantAt = useRef(-Infinity), localShotUntil = useRef(0), ambientDueAt = useRef(Infinity);
   const openingSeen = useRef(false), completedRounds = useRef(new Set<string>()), recordedHands = useRef(new Set<string>());
 
   function cancel(timer: Timer | null) {
@@ -58,13 +72,17 @@ export function useGame() {
   function clearGroup(group: Set<Timer>) { group.forEach(cancel); group.clear(); }
   function update(patch: Partial<Session>) {
     const phase = patch.phase ?? current.current.phase;
+    if (phase === 'GAME_OVER') {
+      ambientDueAt.current = Infinity; cancel(ambientTimer.current); ambientTimer.current = null;
+    }
     if (phase !== 'PLAYER_DECISION') {
       cancel(eventStart.current); cancel(eventEnd.current);
       eventStart.current = eventEnd.current = null;
       patch.event = null;
+      if (current.current.ambientEvent) { patch.ambientEvent = null; tableAudio.playAmbient(null); }
     }
     current.current = { ...current.current, ...patch };
-    if (mounted.current) setGame(current.current);
+    if (mounted.current) { setGame(current.current); wakeDistantShots(); wakeAmbient(); }
   }
   function later(callback: () => void, delay: number, group?: Set<Timer>) {
     if (!mounted.current) return null;
@@ -78,11 +96,11 @@ export function useGame() {
   function clearTimers() {
     timers.current.forEach(clearTimeout); timers.current.clear(); holdTimers.current.clear(); drainTimers.current.clear();
     storyTimers.current.clear();
-    eventStart.current = eventEnd.current = impatient.current = speechTimer.current = speechGap.current = null;
+    eventStart.current = eventEnd.current = impatient.current = speechTimer.current = speechGap.current = distantTimer.current = ambientTimer.current = null;
   }
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; clearTimers(); };
+    return () => { mounted.current = false; clearTimers(); tableAudio.playAmbient(null); tableAudio.setHooded(false); };
   }, []);
 
   function voiceFired(room: RoomNumber, fired: number) {
@@ -122,7 +140,7 @@ export function useGame() {
     pumpSpeech();
   }
   function finishSpeech() {
-    if (current.current.phase === 'OPENING') { advanceOpening(); return; }
+    if (current.current.phase === 'OPENING' && current.current.storyStage === 'rules') { advanceOpening(); return; }
     if (!current.current.speech) return;
     cancel(speechTimer.current); speechTimer.current = null;
     tableAudio.stopVoice(); publishSpeech(null);
@@ -151,13 +169,67 @@ export function useGame() {
     const text = begging ? chooseBeggingLine(current.current.dialogue) : chooseOpponentLine(current.current.roomNumber, category, current.current.dialogue);
     enqueue([{ line: line('captive', category, text), reactive: !preserve }], true);
   }
+  function distantIsSafe() {
+    const state = current.current;
+    if (state.suspense || Date.now() < localShotUntil.current) return false;
+    if (state.phase === 'PLAYER_DECISION' || state.phase === 'SWEEPING') return true;
+    if (state.phase === 'ROUND_RESULT') return state.result === 'tie' || state.shotEffect !== null;
+    return state.phase === 'TRANSITION' && state.storyStage === 'departure' ||
+      state.phase === 'ENDING_DEATH' && state.storyStage !== 'fall';
+  }
+  function wakeDistantShots() {
+    if (!pendingDeaths.current.length || distantTimer.current !== null || !mounted.current) return;
+    const delay = distantIsSafe() ? Math.max(0, lastDistantAt.current + DISTANT_SHOT_GAP_MS - Date.now()) : 100;
+    distantTimer.current = later(() => { distantTimer.current = null; pumpDistantShots(); }, delay);
+  }
+  /** One transaction owns a monitor death, its bang, and the guest-count change. */
+  function playDistantRoomShot(pending: PendingDeath) {
+    const state = current.current;
+    if (state.roomNumber !== pending.room || state.feedDeaths.includes(pending.table)) return;
+    const direction = pending.table === 2 ? -1 : pending.table === 3 ? .6 : 1;
+    const distantShot: DistantShot = { id: pending.id, table: pending.table, startedAt: Date.now(), duration: 3000, direction };
+    lastDistantAt.current = distantShot.startedAt;
+    update({ feedDeaths: [...state.feedDeaths, pending.table], feedDeathSerial: state.feedDeathSerial + 1,
+      guestsRemaining: state.guestsRemaining - 1, distantShot });
+    tableAudio.playShot({ id: pending.id, kind: 'distant', roomId: pending.table, direction });
+    if (pending.announce && state.phase !== 'ENDING_DEATH' && state.phase !== 'ENDING_WIN' && state.phase !== 'GAME_OVER') {
+      hostSay('other_room_death', `Table ${['zero', 'one', 'two', 'three', 'four'][pending.table]}. ${chooseHostLine('other_room_death', current.current.dialogue)}`);
+      if (!state.dead) say('distant_shot');
+    }
+    later(() => { if (current.current.distantShot?.id === pending.id) update({ distantShot: null }); }, distantShot.duration, storyTimers.current);
+  }
+  function pumpDistantShots() {
+    if (!pendingDeaths.current.length) { maybeSpeechIdle(); return; }
+    if (!distantIsSafe() || Date.now() < lastDistantAt.current + DISTANT_SHOT_GAP_MS) { wakeDistantShots(); return; }
+    const pending = pendingDeaths.current.shift()!;
+    playDistantRoomShot(pending);
+    wakeDistantShots(); maybeSpeechIdle();
+  }
   function recordFeedDeath(table: number, announce = true) {
     const state = current.current;
-    if (!feedsForRoom(state.roomNumber).includes(table) || state.feedDeaths.includes(table)) return;
-    update({ feedDeaths: [...state.feedDeaths, table], feedDeathSerial: state.feedDeathSerial + 1,
-      guestsRemaining: state.guestsRemaining - 1 });
-    tableAudio.playStory('feed-shot');
-    if (announce && state.phase !== 'ENDING_DEATH' && state.phase !== 'ENDING_WIN' && state.phase !== 'GAME_OVER') hostSay('other_room_death', `Table ${['zero', 'one', 'two', 'three', 'four'][table]}. ${chooseHostLine('other_room_death', current.current.dialogue)}`);
+    const id = `${instanceId}:${runSerial.current}:room:${state.roomNumber}:table:${table}`;
+    if (!feedsForRoom(state.roomNumber).includes(table) || state.feedDeaths.includes(table) || queuedDeaths.current.has(id)) return;
+    queuedDeaths.current.add(id);
+    pendingDeaths.current.push({ id, room: state.roomNumber, table, announce });
+    wakeDistantShots();
+  }
+  function wakeAmbient() {
+    if (!Number.isFinite(ambientDueAt.current) || ambientTimer.current !== null || !mounted.current) return;
+    const delay = Math.max(0, ambientDueAt.current - Date.now());
+    ambientTimer.current = later(() => { ambientTimer.current = null; startAmbient(); }, delay || 100);
+  }
+  function startAmbient() {
+    const state = current.current;
+    if (state.phase !== 'PLAYER_DECISION' || state.suspense || state.spinning || state.event || state.distantShot || state.ambientEvent) {
+      ambientTimer.current = later(() => { ambientTimer.current = null; startAmbient(); }, 500);
+      return;
+    }
+    const event = createAmbientEvent(`${instanceId}:${runSerial.current}:ambient:${++ambientSerial.current}`, Date.now());
+    ambientDueAt.current = Date.now() + nextAmbientDelay();
+    update({ ambientEvent: event }); tableAudio.playAmbient(event);
+    later(() => {
+      if (current.current.ambientEvent?.id === event.id) { tableAudio.playAmbient(null); update({ ambientEvent: null }); }
+    }, event.duration);
   }
   function completeRound() {
     const state = current.current, key = `${state.roomNumber}:${state.roundNumber}`;
@@ -168,29 +240,60 @@ export function useGame() {
       later(() => { if (current.current.roomNumber === room) recordFeedDeath(table); }, 350 + index * 350, storyTimers.current);
     });
   }
+  function openingLines() {
+    const mode = current.current.cinematic?.mode;
+    return mode === 'arrival' ? [ROOM_ARRIVAL[current.current.roomNumber]] : current.current.introShort ? [SHORT_INTRO] : OPENING_LINES;
+  }
   function showOpeningLine(index: number) {
-    const lines = current.current.introShort ? [SHORT_INTRO] : OPENING_LINES;
-    update({ storyStage: 'rules', introIndex: index });
-    publishSpeech(line('host', 'intro_rules', lines[index]));
+    const mode = current.current.cinematic?.mode ?? (current.current.introShort ? 'short' : 'full');
+    update({ storyStage: 'rules', cinematic: { stage: 'rules', startedAt: Date.now(), mode }, introIndex: index });
+    publishSpeech(line('host', 'intro_rules', openingLines()[index]));
+  }
+  function runOpeningStage(stage: CinematicStage, mode: CinematicMode) {
+    const cinematic: CinematicState = { stage, startedAt: Date.now(), mode };
+    update({ phase: 'OPENING', storyStage: stage, cinematic, tiesCut: tiesForStage(cinematic) });
+    const duration = stageDurationMs(stage);
+    if (stage === 'hooded') { tableAudio.setHooded(true); tableAudio.playStory('hood'); tableAudio.playStory('sob'); }
+    if (stage === 'door-open') tableAudio.playStory('door-creak');
+    if (stage === 'guard-approach' || stage === 'guard-exit') tableAudio.playStory('boots');
+    if (stage === 'player-unhood') tableAudio.playStory('burlap-tug');
+    if (stage === 'player-focus') tableAudio.setHooded(false);
+    if (stage === 'opponent-unhood') {
+      tableAudio.playStory('burlap-tug');
+      later(() => tableAudio.playStory('gasp'), duration * .65, storyTimers.current);
+    }
+    if (stage === 'guard-exit') later(() => tableAudio.playStory('door-slam'), duration - 100, storyTimers.current);
+    if (stage === 'rules') { showOpeningLine(0); return; }
+    if (stage === 'cut-opponent') {
+      const speech = line('host', 'cut_ties', chooseHostLine('cut_ties', current.current.dialogue));
+      publishSpeech(speech);
+      const plan = createVoicePlan(speech.text, speech.category, false, 0, HOST.voice);
+      speechTimer.current = later(() => { speechTimer.current = null; if (current.current.speech?.id === speech.id) finishSpeech(); }, plan.duration + 500);
+    }
+    if (stage === 'cut-opponent' || stage === 'cut-player') later(() => tableAudio.playStory('snip'), duration * .6, storyTimers.current);
+    if (stage === 'complete') {
+      update({ cinematic: null, tiesCut: { player: true, ai: true }, storyStage: 'table' });
+      nextRound(); return;
+    }
+    const index = OPENING_STAGES.indexOf(stage as typeof OPENING_STAGES[number]);
+    if (index >= 0) later(() => runOpeningStage(OPENING_STAGES[index + 1], mode), duration, storyTimers.current);
   }
   function advanceOpening() {
-    if (current.current.phase !== 'OPENING' || speechGap.current !== null) return;
-    if (current.current.storyStage !== 'rules') {
-      clearGroup(storyTimers.current); showOpeningLine(0); return;
-    }
-    const count = current.current.introShort ? 1 : OPENING_LINES.length;
+    if (current.current.phase !== 'OPENING' || current.current.storyStage !== 'rules' || speechGap.current !== null) return;
+    const mode = current.current.cinematic?.mode ?? 'full';
     const next = current.current.introIndex + 1;
     tableAudio.stopVoice(); publishSpeech(null);
     speechGap.current = later(() => {
       speechGap.current = null;
-      if (next >= count) beginMatch(1, false); else showOpeningLine(next);
+      if (next >= openingLines().length) runOpeningStage('cut-opponent', mode); else showOpeningLine(next);
     }, 100);
   }
   function skipOpening() {
     if (current.current.phase !== 'OPENING') return;
-    clearGroup(storyTimers.current); clearSpeech();
+    clearGroup(storyTimers.current); clearSpeech(); tableAudio.setHooded(false);
+    update({ cinematic: null, tiesCut: { player: true, ai: true }, storyStage: 'table' });
     speechGap.current = later(() => { speechGap.current = null; pumpSpeech(); }, 100);
-    beginMatch(1, false);
+    nextRound();
   }
   function beginMatch(roomNumber: RoomNumber, arrival: boolean) {
     clearGroup(holdTimers.current); clearGroup(drainTimers.current);
@@ -199,34 +302,39 @@ export function useGame() {
     update({ roomNumber, round: null, roundNumber: 0, folds: CONFIG.MAX_FOLDS,
       revolver: roomNumber === 1 && state.stats.roundsPlayed === 0 ? state.revolver : createRevolver(),
       abilities: freshAbilities(), tell: null, feedDeaths: [], revealed: false, result: null,
-      suspense: false, awaitingTrigger: false, hasHit: false, dead: null, shotEffect: null,
+      suspense: false, awaitingTrigger: false, hasHit: false, dead: null, shotEffect: null, shotId: null,
       triggerHeld: false, triggerProgress: 0, spinning: null, peekActor: null, peekedCard: null,
-      phase: arrival ? 'TRANSITION' : 'SHUFFLING', storyStage: arrival ? 'arrival' : 'table' });
-    if (arrival) later(() => { hostSay('transition', ROOM_ARRIVAL[roomNumber]); nextRound(); }, 1100, storyTimers.current);
-    else nextRound();
+      distantShot: null, ambientEvent: null, aiShotStartedAt: null, aiShotDurationMs: null,
+      phase: 'OPENING', tiesCut: { player: false, ai: false } });
+    runOpeningStage('hooded', arrival ? 'arrival' : state.introShort ? 'short' : 'full');
+  }
+  function runTransferStage(index: number, leavingRoom: RoomNumber) {
+    const stage = TRANSFER_STAGES[index];
+    const cinematic: CinematicState = { stage, startedAt: Date.now(), mode: 'transfer' };
+    update({ phase: 'TRANSITION', storyStage: stage, cinematic });
+    if (stage === 'guards-enter') { tableAudio.playStory('door-creak'); tableAudio.playStory('boots'); }
+    if (stage === 'transfer-hood') { tableAudio.playStory('hood-cinch'); tableAudio.setHooded(true); }
+    if (stage === 'dragging') { tableAudio.playStory('drag'); tableAudio.playStory('boots'); }
+    if (stage === 'door') tableAudio.playStory('door-slam');
+    later(() => {
+      if (index + 1 < TRANSFER_STAGES.length) runTransferStage(index + 1, leavingRoom);
+      else beginMatch((leavingRoom + 1) as RoomNumber, true);
+    }, stageDurationMs(stage), storyTimers.current);
   }
   function transitionRoom() {
     const leavingRoom = current.current.roomNumber;
-    update({ phase: 'TRANSITION', storyStage: 'departure', suspense: false, awaitingTrigger: false });
+    update({ phase: 'TRANSITION', storyStage: 'departure', cinematic: null, suspense: false, awaitingTrigger: false });
     hostSay('transition');
-    const remaining = feedsForRoom(leavingRoom).filter(table => !current.current.feedDeaths.includes(table));
-    let flushed = remaining.length === 0;
-    remaining.forEach((table, index) => later(() => {
-      recordFeedDeath(table);
-      if (index === remaining.length - 1) { flushed = true; maybeSpeechIdle(); }
-    }, 450 * (index + 1), storyTimers.current));
+    for (const table of feedsForRoom(leavingRoom)) recordFeedDeath(table);
     speechIdle.current = () => {
-      if (!flushed) return;
-      speechIdle.current = null;
-      update({ storyStage: 'hooded' }); tableAudio.playStory('hood');
-      later(() => { update({ storyStage: 'dragging' }); tableAudio.playStory('drag'); }, 650, storyTimers.current);
-      later(() => { update({ storyStage: 'door' }); tableAudio.playStory('door'); }, 1900, storyTimers.current);
-      later(() => beginMatch((leavingRoom + 1) as RoomNumber, true), 2600, storyTimers.current);
+      if (pendingDeaths.current.some(pending => pending.room === leavingRoom)) return;
+      speechIdle.current = null; runTransferStage(0, leavingRoom);
     };
     maybeSpeechIdle();
   }
   function finishRun() {
     const finish = () => {
+      if (pendingDeaths.current.length) return;
       speechIdle.current = null;
       update({ phase: 'GAME_OVER', stats: finishRunStats(current.current.stats, current.current.stats.guestsRemainingWhenFell) });
     };
@@ -279,7 +387,7 @@ export function useGame() {
     cancel(impatient.current); impatient.current = null;
     update({ round: { player: [], ai: [], deck }, roundNumber: current.current.roundNumber + 1,
       phase: 'SHUFFLING', revealed: false, result: null, message: 'The Host shuffles.',
-      suspense: false, awaitingTrigger: false, hasHit: false, shotEffect: null,
+      suspense: false, awaitingTrigger: false, hasHit: false, shotEffect: null, shotId: null, aiShotStartedAt: null, aiShotDurationMs: null,
       triggerHeld: false, triggerProgress: 0, spinning: null, peekActor: null, peekedCard: null,
       storyStage: 'table', tell: opponentTell(current.current.roomNumber, handTotal(opening.ai)),
       stats: { ...current.current.stats, roundsPlayed: current.current.stats.roundsPlayed + 1 } });
@@ -312,14 +420,15 @@ export function useGame() {
     later(nextRound, 700);
   }
   function start() {
-    clearTimers(); tableAudio.init(); tableAudio.stopVoice();
+    clearTimers(); tableAudio.init(); tableAudio.stopVoice(); tableAudio.playAmbient(null);
+    pendingDeaths.current = []; queuedDeaths.current.clear(); lastDistantAt.current = -Infinity; localShotUntil.current = 0;
+    runSerial.current++; localShotSerial.current = ambientSerial.current = 0;
+    ambientDueAt.current = Date.now() + nextAmbientDelay();
     speechEntries.current = []; speechIdle.current = null; completedRounds.current.clear(); recordedHands.current.clear();
     const fresh = initial();
-    fresh.phase = 'OPENING'; fresh.storyStage = 'hooded'; fresh.introShort = openingSeen.current;
-    openingSeen.current = true; current.current = fresh; setGame(fresh);
-    tableAudio.playStory('hood');
-    later(() => update({ storyStage: 'unhood' }), 450, storyTimers.current);
-    later(() => showOpeningLine(0), 1250, storyTimers.current);
+    fresh.introShort = openingSeen.current; openingSeen.current = true;
+    current.current = fresh; setGame(fresh);
+    beginMatch(1, false);
   }
   function fold() {
     const state = current.current;
@@ -330,10 +439,13 @@ export function useGame() {
   }
 
   function resolveShot(shooter: Side) {
+    if (current.current.phase !== (shooter === 'ai' ? 'AI_SHOOTING' : 'PLAYER_SHOOTING')) return;
     cancel(impatient.current); impatient.current = null;
     clearGroup(holdTimers.current); clearGroup(drainTimers.current);
     const state = current.current;
     const fired = fireRevolver(state.revolver);
+    const shotId = `${instanceId}:${runSerial.current}:local:${++localShotSerial.current}`;
+    localShotUntil.current = Date.now() + (fired.fired ? 2400 : 1000);
     const guestsRemaining = state.guestsRemaining - (fired.fired ? 1 : 0);
     update({ guestsRemaining, stats: { ...state.stats,
       highestChamber: Math.max(state.stats.highestChamber, fired.fired ? state.revolver.currentChamber : Math.min(CONFIG.NUM_CHAMBERS, fired.revolver.currentChamber)),
@@ -341,9 +453,11 @@ export function useGame() {
       guestsRemainingWhenFell: fired.fired && shooter === 'player' ? guestsRemaining : state.stats.guestsRemainingWhenFell } });
     update({ revolver: fired.revolver, suspense: false, awaitingTrigger: false, triggerHeld: false,
       triggerProgress: shooter === 'player' ? 1 : 0, spinning: null,
-      shotEffect: fired.fired ? 'shot' : 'click', phase: 'ROUND_RESULT', dead: fired.fired ? shooter : null,
+      shotEffect: fired.fired ? 'shot' : 'click', shotId, phase: 'ROUND_RESULT', dead: fired.fired ? shooter : null,
+      aiShotStartedAt: null, aiShotDurationMs: null,
       message: fired.fired ? '' : 'Click. An empty chamber.' });
-    tableAudio.play(fired.fired ? 'shot' : 'click');
+    if (fired.fired) tableAudio.playShot({ id: shotId, kind: 'local', roomId: state.roomNumber });
+    else tableAudio.play('click');
     completeRound();
     if (fired.fired) {
       speechEntries.current = speechEntries.current.filter(entry => entry.line.speaker === 'host');
@@ -420,12 +534,15 @@ export function useGame() {
     performSpin('player');
   }
   function opponentShot() {
-    update({ phase: 'AI_SHOOTING', suspense: true, awaitingTrigger: false, triggerHeld: false, triggerProgress: 0 });
+    update({ phase: 'AI_SHOOTING', suspense: true, awaitingTrigger: false, triggerHeld: false, triggerProgress: 0, aiShotStartedAt: null, aiShotDurationMs: null });
     say('ai_loses_hand', true);
     function hesitate() {
       tableAudio.play('tension');
       const fired = Math.max(0, current.current.revolver.currentChamber - 1);
       const delay = Math.min(4000, 1500 + fired * 300 + cosmeticRandom() * 1000);
+      const startedAt = Date.now();
+      update({ aiShotStartedAt: startedAt, aiShotDurationMs: delay });
+      later(() => { if (current.current.phase === 'AI_SHOOTING' && current.current.aiShotStartedAt === startedAt && !current.current.spinning) tableAudio.play('hammer'); }, Math.min(900, delay * .55));
       later(() => { if (current.current.phase === 'AI_SHOOTING' && !current.current.spinning) resolveShot('ai'); }, delay);
     }
     function whenQuiet(callback: () => void) {

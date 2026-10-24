@@ -4,7 +4,7 @@ import type { RandomSource } from './game';
 import { cosmeticRandom } from './tension';
 
 export type HostCategory = 'intro_rules' | 'deal' | 'round_result' | 'other_room_death' |
-  'waiting_for_trigger' | 'transition' | 'ending_win' | 'ending_death';
+  'waiting_for_trigger' | 'transition' | 'ending_win' | 'ending_death' | 'cut_ties';
 export type SpeechLine = {
   id: number; speaker: Speaker; text: string; category: DialogueCategory | HostCategory;
   danger: boolean; chambersFired: number;
@@ -54,6 +54,12 @@ export const HOST_DIALOGUE: Record<HostCategory, readonly string[]> = {
     'The exit has been made available.',
     'You are the final active guest.',
     'See you next season.',
+  ],
+  cut_ties: [
+    'Keep your wrists still. The restraints will be removed.',
+    'Both guests will now be released from their restraints.',
+    'Do not move until the cutter is clear.',
+    'Your hands are required for the next procedure.',
   ],
   ending_death: [
     'Your participation has ended.',
@@ -208,6 +214,12 @@ export const OPPONENT_DIALOGUE: Record<RoomNumber, CaptiveBanks> = {
       'Knowing does not make your hands steadier.',
       'Please do not tell me what comes after.',
     ],
+    distant_shot: [
+      'Was that the room next to us?',
+      'I heard someone fall. I heard it.',
+      'Please do not tell me who that was.',
+      'There was a person breathing over there.',
+    ],
     short: ['Please, not me.', 'Someone stop this.', 'I cannot breathe.', 'My hands will not.'],
     broken: ['...please...', '[A thin, panicked breath]', '[Muffled sobbing]', '...no...'],
   },
@@ -338,6 +350,12 @@ export const OPPONENT_DIALOGUE: Record<RoomNumber, CaptiveBanks> = {
       'I used to pay good money for that look.',
       'You have information. Let us see if you have nerve.',
     ],
+    distant_shot: [
+      'That sounded expensive for somebody.',
+      'Another chair the house can put away.',
+      'I thought I had learned to ignore that sound.',
+      'That wall is thinner than I would like.',
+    ],
     short: ['Let it ride.', 'Hold that smile.', 'Not my chair.', 'Another bad bet.'],
     broken: ['...I misread it...', '[A smile without air]', 'That was not...', '[An uneven breath]'],
   },
@@ -467,6 +485,12 @@ export const OPPONENT_DIALOGUE: Record<RoomNumber, CaptiveBanks> = {
       'I cannot tell you whether knowing helps.',
       'I have seen people wish they had not looked.',
       'Keep what you saw to yourself. It is yours.',
+    ],
+    distant_shot: [
+      'They always wait for us to listen.',
+      'I remember the sound through that wall.',
+      'One less table. It never gets quieter.',
+      'Do not count the echoes. Count the people.',
     ],
     short: ['Not another season.', 'They said finished.', 'I was released.', 'The season ended.'],
     broken: ['They promised me this was the last season.', '...I already left...', '[A breath that catches]', '...not again...'],

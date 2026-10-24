@@ -6,7 +6,9 @@ import { tableAudio } from './audio';
 import { eventDoorPulse, type OpponentTell, type RoundEvent, type Side } from './tension';
 import { createActors } from './scene/actors';
 import { createCeilingFeed, createMonitorWall } from './scene/monitors';
-import { createLookKeys, createLookState, dragLook, shouldRecenter, updateKeyboardLook, updateLook } from './scene/camera';
+import { cameraRecenter, createLeanState, createLookKeys, createLookState, dragLook, updateKeyboardLook, updateLean, updateLook, wheelLean } from './scene/camera';
+import { cinematicProgress, focusRecovery, hoodCoverage, type CinematicState } from './cinematics';
+import type { AmbientEvent, DistantShot } from './roomLife';
 
 export type SceneProps = {
   phase: GamePhase;
@@ -35,6 +37,12 @@ export type SceneProps = {
   feedDeaths?: number[];
   feedDeathSerial?: number;
   guestsRemaining?: number;
+  cinematic?: CinematicState | null;
+  tiesCut?: { player: boolean; ai: boolean };
+  distantShot?: DistantShot | null;
+  ambientEvent?: AmbientEvent | null;
+  aiShotStartedAt?: number | null;
+  aiShotDurationMs?: number;
 };
 
 function splatterTexture() {
@@ -53,11 +61,35 @@ function splatterTexture() {
   return texture;
 }
 
-const retroFragment = `
+export function hoodPresentation(cinematic: CinematicState | null | undefined, now = Date.now()) {
+  const progress = cinematicProgress(cinematic, now), covered = hoodCoverage(cinematic, now);
+  const recovery = focusRecovery(cinematic, now);
+  const lifting = cinematic?.stage === 'player-unhood';
+  const dropping = cinematic?.stage === 'transfer-hood';
+  const focusing = cinematic?.stage === 'player-focus';
+  const elapsed = cinematic ? Math.max(0, (now - cinematic.startedAt) / 1000) : 0;
+  const tug = lifting ? Math.sin(Math.min(1, progress / .33) * Math.PI) : 0;
+  const drop = focusing ? Math.sin(Math.min(1, elapsed / .3) * Math.PI) : 0;
+  const carrying = cinematic?.mode === 'transfer' && ['lift', 'dragging', 'door'].includes(cinematic.stage);
+  const carry = carrying ? cinematic.stage === 'lift' ? progress : 1 : 0;
+  const drag = cinematic?.mode === 'transfer' ? cinematic.stage === 'dragging' ? progress : cinematic.stage === 'door' ? 1 : 0 : 0;
+  return { covered: lifting || dropping ? 1 : covered, lift: lifting ? progress : 0,
+    drop: dropping ? progress : 1, blur: focusing ? 1 - recovery : 0,
+    glare: focusing ? Math.exp(-elapsed * 5.5) : 0, squint: focusing ? (1 - recovery) * .68 : 0,
+    cameraX: drag * 2.7, cameraY: tug * .055 - drop * .016 + carry * .14, cameraZ: -tug * .045 - drag * 6.3, cameraPitch: -tug * .04 + drop * .016 };
+}
+
+export const retroFragment = `
   uniform sampler2D sceneTexture;
   uniform float time;
   uniform float triggerDarkening;
   uniform float heartbeatPulse;
+  uniform float hoodCovered;
+  uniform float hoodLift;
+  uniform float hoodDrop;
+  uniform float focusBlur;
+  uniform float glare;
+  uniform float squint;
   varying vec2 vUv;
   float noise(vec2 p) { return fract(sin(dot(p, vec2(12.9898,78.233)) + time * .29) * 43758.5453); }
   float bayer(vec2 p) {
@@ -68,7 +100,20 @@ const retroFragment = `
     return q.x < 1. ? 15. : q.x < 2. ? 7. : q.x < 3. ? 13. : 5.;
   }
   void main() {
+    vec2 pixel = vec2(1. / 640., 1. / 360.);
+    float radius = focusBlur * 7. + hoodCovered * 10.;
     vec3 color = texture2D(sceneTexture, vUv).rgb;
+    if (radius > .01) {
+      color *= .28;
+    color += texture2D(sceneTexture, vUv + pixel * vec2(radius, 0.)).rgb * .12;
+    color += texture2D(sceneTexture, vUv - pixel * vec2(radius, 0.)).rgb * .12;
+    color += texture2D(sceneTexture, vUv + pixel * vec2(0., radius)).rgb * .12;
+    color += texture2D(sceneTexture, vUv - pixel * vec2(0., radius)).rgb * .12;
+    color += texture2D(sceneTexture, vUv + pixel * vec2(radius, radius)).rgb * .06;
+    color += texture2D(sceneTexture, vUv - pixel * vec2(radius, radius)).rgb * .06;
+    color += texture2D(sceneTexture, vUv + pixel * vec2(radius, -radius)).rgb * .06;
+    color += texture2D(sceneTexture, vUv + pixel * vec2(-radius, radius)).rgb * .06;
+    }
     color = pow(max(color, vec3(0.)), vec3(1. / 2.2));
     color *= vec3(1.035, 1.015, .94);
     float ordered = (bayer(gl_FragCoord.xy) / 16. - .5) * .75;
@@ -79,7 +124,25 @@ const retroFragment = `
     float vignette = 1. - smoothstep(.16, .77, length(uv)) * .72;
     vignette *= 1. - smoothstep(.03, .72, length(uv)) * triggerDarkening * (.30 + heartbeatPulse * .12);
     float highlight = smoothstep(.88, 1., max(color.r, max(color.g, color.b)));
+    vignette *= 1. - smoothstep(.10, .66, length(uv)) * squint;
     color *= mix(vignette, 1., highlight * .85);
+    color += vec3(1.3, 1.2, 1.03) * glare * .85;
+    // Burlap is attached to the head. Its threads breathe, while real blurred
+    // room lights behind the weave shift with the player's seated look.
+    float breath = sin(time * 1.65) * .009 + sin(time * .83) * .004;
+    vec2 clothUV = (vUv - .5) * (1. + breath) + .5;
+    clothUV.y += hoodLift * .95;
+    clothUV.x += sin(vUv.y * 8.) * hoodLift * .035;
+    vec2 weave = fract(clothUV * vec2(112., 78.));
+    float gap = smoothstep(.36, .47, weave.x) * (1. - smoothstep(.53, .64, weave.x));
+    gap *= smoothstep(.32, .45, weave.y) * (1. - smoothstep(.55, .68, weave.y));
+    float strands = .72 + sin(clothUV.x * 704.) * .12 + cos(clothUV.y * 490.) * .10;
+    vec3 cloth = vec3(.021, .017, .011) * strands;
+    cloth += min(color, vec3(1.)) * (.007 + gap * .11);
+    float lifted = hoodLift < .001 ? 1. : smoothstep(hoodLift - .035, hoodLift + .035, vUv.y);
+    float dropped = hoodDrop > .999 ? 1. : hoodDrop < .001 ? 0. : smoothstep(1. - hoodDrop - .035, 1. - hoodDrop + .035, vUv.y);
+    float cover = hoodCovered * lifted * dropped;
+    color = mix(color, cloth, cover);
     gl_FragColor = vec4(max(color, vec3(0.)), 1.);
   }
 `;
@@ -131,18 +194,18 @@ export default function Scene(props: SceneProps) {
     const surveillancePlayer = new THREE.Group();
     surveillancePlayer.name = 'surveillance-player-body';
     surveillancePlayer.userData.actorRole = 'player';
-    surveillancePlayer.position.set(0, .86, 1.80);
+    surveillancePlayer.position.set(0, .68, 1.80);
     const playerCloth = new THREE.MeshStandardMaterial({ color: 0x354032, roughness: .9, flatShading: true });
     const playerSkin = new THREE.MeshStandardMaterial({ color: 0x9d9079, roughness: .9, flatShading: true });
     const playerHair = new THREE.MeshStandardMaterial({ color: 0x242b22, roughness: .95, flatShading: true });
-    const playerTorso = new THREE.Mesh(new THREE.BoxGeometry(.49, .68, .26), playerCloth);
-    playerTorso.position.y = .43;
+    const playerTorso = new THREE.Mesh(new THREE.BoxGeometry(.49, .56, .26), playerCloth);
+    playerTorso.position.y = .31;
     const playerShoulders = new THREE.Mesh(new THREE.BoxGeometry(.62, .15, .28), playerCloth);
-    playerShoulders.position.y = .75;
+    playerShoulders.position.y = .60;
     const playerHead = new THREE.Mesh(new THREE.SphereGeometry(1, 8, 6), playerSkin);
-    playerHead.scale.set(.185, .25, .17); playerHead.position.set(0, .97, .02);
+    playerHead.scale.set(.185, .23, .17); playerHead.position.set(0, .91, .02);
     const playerCrown = new THREE.Mesh(new THREE.SphereGeometry(1, 8, 4, 0, Math.PI * 2, 0, Math.PI * .48), playerHair);
-    playerCrown.scale.set(.19, .255, .175); playerCrown.position.copy(playerHead.position);
+    playerCrown.scale.set(.19, .235, .175); playerCrown.position.copy(playerHead.position);
     surveillancePlayer.add(playerTorso, playerShoulders, playerHead, playerCrown);
     surveillancePlayer.traverse(object => object.layers.set(1)); world.add(surveillancePlayer);
     const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -163,7 +226,7 @@ export default function Scene(props: SceneProps) {
     const postScene = new THREE.Scene();
     const postCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     const postMaterial = new THREE.ShaderMaterial({
-      uniforms: { sceneTexture: { value: target.texture }, time: { value: 0 }, triggerDarkening: { value: 0 }, heartbeatPulse: { value: 0 } },
+      uniforms: { sceneTexture: { value: target.texture }, time: { value: 0 }, triggerDarkening: { value: 0 }, heartbeatPulse: { value: 0 }, hoodCovered: { value: 0 }, hoodLift: { value: 0 }, hoodDrop: { value: 1 }, focusBlur: { value: 0 }, glare: { value: 0 }, squint: { value: 0 } },
       vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }',
       fragmentShader: retroFragment,
       depthTest: false, depthWrite: false, toneMapped: false,
@@ -182,6 +245,7 @@ export default function Scene(props: SceneProps) {
     let look = createLookState();
     if (latest.current.phase === 'START') look.yaw = look.targetYaw = .20;
     const keys = createLookKeys();
+    const lean = createLeanState();
     const keyBindings = { KeyA: 'left', KeyD: 'right', KeyW: 'up', KeyS: 'down' } as const;
     function clearKeys() {
       keys.left = keys.right = keys.up = keys.down = false;
@@ -203,14 +267,14 @@ export default function Scene(props: SceneProps) {
     window.addEventListener('blur', clearKeys);
     let dragging = false, lastX = 0, lastY = 0;
     function pointerDown(event: PointerEvent) {
-      if (event.button !== 0 || latest.current.lookDisabled || shouldRecenter(latest.current.phase, latest.current.suspense)) return;
+      if (event.button !== 0 || latest.current.lookDisabled || cameraRecenter(latest.current.phase, latest.current.suspense, latest.current.cinematic)) return;
       dragging = true; lastX = event.clientX; lastY = event.clientY;
       canvas.setPointerCapture(event.pointerId); canvas.classList.add('is-dragging');
       event.preventDefault();
     }
     function pointerMove(event: PointerEvent) {
       if (!dragging) return;
-      if (!latest.current.lookDisabled && !shouldRecenter(latest.current.phase, latest.current.suspense)) {
+      if (!latest.current.lookDisabled && !cameraRecenter(latest.current.phase, latest.current.suspense, latest.current.cinematic)) {
         dragLook(look, event.clientX - lastX, event.clientY - lastY, CONFIG.LOOK_SENSITIVITY);
       }
       lastX = event.clientX; lastY = event.clientY;
@@ -219,6 +283,13 @@ export default function Scene(props: SceneProps) {
       dragging = false; canvas.classList.remove('is-dragging');
       if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
     }
+    function wheel(event: WheelEvent) {
+      const state = latest.current;
+      if (state.lookDisabled || state.phase !== 'PLAYER_DECISION') return;
+      event.preventDefault();
+      wheelLean(lean, event.deltaY, CONFIG.LEAN_DISTANCE, true);
+    }
+    canvas.addEventListener('wheel', wheel, { passive: false });
     canvas.addEventListener('pointerdown', pointerDown);
     canvas.addEventListener('pointermove', pointerMove);
     canvas.addEventListener('pointerup', pointerUp);
@@ -230,7 +301,7 @@ export default function Scene(props: SceneProps) {
     let previousRound = -1, previousRevealed = false, previousEffect: SceneProps['shotEffect'] = null;
     let previousRecenter = latest.current.recenterToken, previousPhase = latest.current.phase;
     let previousRoom = latest.current.roomNumber ?? 1, previousStoryStage = latest.current.storyStage ?? '';
-    let storyStartedAt = 0, winPose = false, tablePeople = 0;
+    let storyStartedAt = 0, winPose = false;
     const finalCameraPosition = new THREE.Vector3(), finalCameraQuaternion = new THREE.Quaternion();
     let impulse = 0, flash = 0, deathProgress = 0, renderedFrames = 0;
     let fpsStart = performance.now(), fpsFrames = 0;
@@ -248,7 +319,7 @@ export default function Scene(props: SceneProps) {
       if ((state.storyStage ?? '') !== previousStoryStage) { previousStoryStage = state.storyStage ?? ''; storyStartedAt = time; }
       const stageElapsed = time - storyStartedAt;
       if (replay || enteringRoom) {
-        look = createLookState(); clearKeys(); impulse = flash = deathProgress = 0;
+        look = createLookState(); clearKeys(); lean.amount = lean.target = 0; impulse = flash = deathProgress = 0;
         blood.visible = false; previousEffect = null; room.reset(); monitors.reset(); ceilingFeed.reset();
         if (replay) winPose = false;
       }
@@ -260,7 +331,9 @@ export default function Scene(props: SceneProps) {
       if (state.recenterToken !== previousRecenter) {
         clearKeys(); look.targetYaw = look.targetPitch = 0; previousRecenter = state.recenterToken;
       }
-      const locked = shouldRecenter(state.phase, state.suspense);
+      const locked = cameraRecenter(state.phase, state.suspense, state.cinematic);
+      updateLean(lean, cameraDelta, CONFIG.LEAN_DISTANCE, state.phase !== 'PLAYER_DECISION' || !!state.lookDisabled);
+      const hood = hoodPresentation(state.cinematic, epoch);
       if (state.lookDisabled) clearKeys();
       updateKeyboardLook(look, keys, cameraDelta, CONFIG.LOOK_KEY_SPEED, locked || !!state.lookDisabled);
       updateLook(look, cameraDelta, locked);
@@ -276,14 +349,16 @@ export default function Scene(props: SceneProps) {
       else deathProgress = 0;
       const feedSlump = state.dead === 'player' && state.phase === 'ENDING_DEATH' && state.storyStage !== 'fall' ? 1 : deathProgress;
       surveillancePlayer.rotation.set(-feedSlump * 1.3, 0, -feedSlump * .14);
-      surveillancePlayer.position.y = .86 - feedSlump * .05;
+      surveillancePlayer.position.y = .68 - feedSlump * .05;
       blood.visible = state.dead === 'ai' && CONFIG.GORE_LEVEL !== 'low';
       const sway = Math.sin(time * 1.15) * .0025;
-      const doorShake = eventDoorPulse(event, epoch) * (motionPreference.matches ? .2 : 1);
-      camera.position.set(Math.sin(time * .7) * .005, 1.85 + Math.sin(time * 1.1) * .007 - deathProgress * .38, 2.65);
-      camera.position.x += Math.sin(time * 79) * doorShake * .006;
+      const distantAge = state.distantShot ? (epoch - state.distantShot.startedAt) / 1000 : -1;
+      const distantShake = distantAge >= 0 && distantAge < .65 ? Math.exp(-distantAge * 8) : 0;
+      const doorShake = (eventDoorPulse(event, epoch) + distantShake * .55) * (motionPreference.matches ? .2 : 1);
+      camera.position.set(Math.sin(time * .7) * .005, 1.45 + Math.sin(time * 1.1) * .007 - deathProgress * .38 - lean.amount * .16 + hood.cameraY * (motionPreference.matches ? .2 : 1), 2.65 - lean.amount + hood.cameraZ * (motionPreference.matches ? .2 : 1));
+      camera.position.x += Math.sin(time * 79) * doorShake * .006 + hood.cameraX;
       camera.rotation.set(-.173 + look.pitch + sway + Math.sin(time * 73) * impulse * .025, look.yaw + Math.sin(time * 61) * impulse * .018, -deathProgress * .62 + Math.cos(time * 82) * impulse * .012);
-      camera.rotation.x += Math.sin(time * 87 + .7) * doorShake * .005;
+      camera.rotation.x += Math.sin(time * 87 + .7) * doorShake * .005 + hood.cameraPitch * (motionPreference.matches ? .2 : 1);
       camera.rotation.z += Math.cos(time * 73) * doorShake * .003;
       if (isExitStage(state.phase, state.storyStage)) {
         const stage = state.storyStage ?? 'door';
@@ -305,17 +380,28 @@ export default function Scene(props: SceneProps) {
       camera.updateMatrixWorld(true);
       room.update(time, dt, state.danger, state.suspense, impulse, event, epoch, {
         roomNumber: state.roomNumber, phase: state.phase === 'GAME_OVER' && winPose ? 'ENDING_WIN' : state.phase,
-        storyStage: state.storyStage, stageElapsed,
+        storyStage: state.storyStage, stageElapsed, cinematic: state.cinematic, distantShot: state.distantShot, ambientEvent: state.ambientEvent,
       });
       const hostVoiceLevel = tableAudio.getVoiceLevel('host'), captiveVoiceLevel = tableAudio.getVoiceLevel('captive');
       const voiceLevel = captiveVoiceLevel;
       const heartbeat = tableAudio.getHeartbeatLevel();
       actors.update(time, dt, { ...state, roomNumber, event, voiceLevel, hostVoiceLevel, captiveVoiceLevel, reducedMotion: motionPreference.matches });
-      monitors.update(state, time);
+      monitors.update(state, time, epoch);
       const signalLost = (state.phase === 'ENDING_DEATH' && state.storyStage === 'no-signal') || (state.phase === 'GAME_OVER' && state.dead === 'player');
       monitors.setSignalLost(signalLost);
       postMaterial.uniforms.triggerDarkening.value = state.phase === 'PLAYER_SHOOTING' ? Math.max(0, Math.min(1, state.triggerProgress ?? 0)) : 0;
       postMaterial.uniforms.heartbeatPulse.value = heartbeat * (motionPreference.matches ? .2 : 1);
+      postMaterial.uniforms.hoodCovered.value = hood.covered;
+      postMaterial.uniforms.hoodLift.value = hood.lift;
+      postMaterial.uniforms.hoodDrop.value = hood.drop;
+      postMaterial.uniforms.focusBlur.value = hood.blur;
+      postMaterial.uniforms.glare.value = hood.glare;
+      postMaterial.uniforms.squint.value = hood.squint;
+      canvas.dataset.hoodCoverage = hood.covered.toFixed(3); canvas.dataset.hoodLift = hood.lift.toFixed(3);
+      canvas.dataset.focusBlur = hood.blur.toFixed(3); canvas.dataset.glare = hood.glare.toFixed(3);
+      canvas.dataset.lean = lean.amount.toFixed(4); canvas.dataset.targetLean = lean.target.toFixed(4);
+      canvas.dataset.distantShot = state.distantShot?.id ?? ''; canvas.dataset.ambientEvent = state.ambientEvent?.kind ?? '';
+      canvas.dataset.tiesCut = String(!!state.tiesCut?.player);
       canvas.dataset.voiceLevel = voiceLevel.toFixed(4);
       canvas.dataset.heartbeatLevel = heartbeat.toFixed(4);
       canvas.dataset.triggerProgress = (state.triggerProgress ?? 0).toFixed(4);
@@ -326,8 +412,13 @@ export default function Scene(props: SceneProps) {
       canvas.dataset.hostVoiceLevel = hostVoiceLevel.toFixed(4); canvas.dataset.captiveVoiceLevel = captiveVoiceLevel.toFixed(4);
       canvas.dataset.animatedSpeaker = hostVoiceLevel > 0 ? 'host' : captiveVoiceLevel > 0 ? 'captive' : '';
       canvas.dataset.shotTarget = state.phase === 'AI_SHOOTING' ? 'captive' : state.phase === 'PLAYER_SHOOTING' ? 'player' : '';
-      if (!tablePeople) { const roles = new Set<string>(); world.traverse(object => { if (object.userData.actorRole) roles.add(object.userData.actorRole); }); tablePeople = roles.size; }
-      canvas.dataset.tablePeople = String(tablePeople);
+      const castRoles = new Set<string>(); let visibleGuards = 0;
+      world.traverse(object => {
+        const role = object.userData.actorRole;
+        if (role === 'guard') { if (object.visible) visibleGuards++; }
+        else if (role) castRoles.add(role);
+      });
+      canvas.dataset.tablePeople = String(castRoles.size); canvas.dataset.guards = String(visibleGuards);
       canvas.dataset.monitorMode = monitors.group.userData.mode;
       canvas.dataset.monitorFeeds = String(monitors.group.userData.feedCount);
       canvas.dataset.doorPulse = doorShake.toFixed(4);
@@ -375,6 +466,7 @@ export default function Scene(props: SceneProps) {
       window.removeEventListener('keydown', keyDown);
       window.removeEventListener('keyup', keyUp);
       window.removeEventListener('blur', clearKeys);
+      canvas.removeEventListener('wheel', wheel);
       canvas.removeEventListener('pointerdown', pointerDown);
       canvas.removeEventListener('pointermove', pointerMove);
       canvas.removeEventListener('pointerup', pointerUp);

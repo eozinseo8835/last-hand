@@ -11,8 +11,10 @@ import type { DialogueCategory } from './dialogue';
 import { tableAudio } from './audio';
 import { createVoicePlan } from './voice';
 import { chooseRoundEvent, cosmeticRandom } from './tension';
+import { OPENING_STAGES, stageDurationMs, type CinematicStage } from './cinematics';
+import { DISTANT_SHOT_GAP_MS } from './roomLife';
 
-vi.mock('./audio', () => ({ tableAudio: { init: vi.fn(), play: vi.fn(), mute: vi.fn(), startVoice: vi.fn(), stopVoice: vi.fn(), getVoiceLevel: vi.fn(() => 0), setHeartbeat: vi.fn(), setEvent: vi.fn(), playStory: vi.fn(), getHeartbeatLevel: vi.fn(() => 0) } }));
+vi.mock('./audio', () => ({ tableAudio: { init: vi.fn(), play: vi.fn(), mute: vi.fn(), startVoice: vi.fn(), stopVoice: vi.fn(), getVoiceLevel: vi.fn(() => 0), setHeartbeat: vi.fn(), setEvent: vi.fn(), playStory: vi.fn(), getHeartbeatLevel: vi.fn(() => 0), playShot: vi.fn(() => true), setHooded: vi.fn(), playAmbient: vi.fn() } }));
 vi.mock('./tension', async importOriginal => {
   const actual = await importOriginal<typeof import('./tension')>();
   return { ...actual, chooseRoundEvent: vi.fn(() => null), cosmeticRandom: vi.fn(() => .5) };
@@ -44,6 +46,8 @@ const DEAL_COMPLETE = 500 + 4 * 650 + 600;
 const FOLD_TO_DECISION = 700 + DEAL_COMPLETE;
 const DEALER_BUST_MS = 950 + 650 + 2 * (CONFIG.DEAL_SPEED + 200);
 const AI_INITIAL_HESITATION = 2000;
+const GUARD_TO_RULES = OPENING_STAGES.slice(0, OPENING_STAGES.indexOf('rules')).reduce((sum, stage) => sum + stageDurationMs(stage), 0);
+const CUT_TO_DEAL = stageDurationMs('cut-opponent') + stageDurationMs('cut-player') + stageDurationMs('rub-wrists');
 
 let latest!: ReturnType<typeof useGame>;
 function Harness() { latest = useGame(); return null; }
@@ -71,7 +75,8 @@ function assertCaptiveLine(category: DialogueCategory) {
 function advanceStoryUntil(predicate: () => boolean, maxMs = 60000) {
   const deadline = Date.now() + maxMs;
   while (!predicate() && Date.now() < deadline) {
-    if (latest.game.speech && latest.game.phase !== 'OPENING') act(() => latest.finishSpeech());
+    if (latest.game.phase === 'OPENING') act(() => latest.skipOpening());
+    else if (latest.game.speech) act(() => latest.finishSpeech());
     advance(100);
   }
   expect(predicate()).toBe(true);
@@ -92,6 +97,8 @@ function showAppCaptiveLine(category: DialogueCategory) {
   }
   throw new Error(`No visible captive ${category} line`);
 }
+const localShots = () => vi.mocked(tableAudio.playShot).mock.calls.filter(([shot]) => shot.kind === 'local');
+const distantShots = () => vi.mocked(tableAudio.playShot).mock.calls.filter(([shot]) => shot.kind === 'distant');
 function holdTrigger() { act(() => latest.beginTriggerHold()); advance(CONFIG.TRIGGER_HOLD_MS); }
 function startPlayerShot() {
   vi.mocked(dealRound).mockImplementation(() => copy(playerLoses)); startDecision();
@@ -338,7 +345,7 @@ describe('rendered blackjack controls and hidden information', () => {
     act(() => root.unmount()); rootMounted = false;
     expect(vi.getTimerCount()).toBe(0); advance(10000);
     expect(tableAudio.play).not.toHaveBeenCalledWith('click');
-    expect(tableAudio.play).not.toHaveBeenCalledWith('shot');
+    expect(localShots()).toHaveLength(0);
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -389,7 +396,7 @@ describe('rendered blackjack controls and hidden information', () => {
     mount(<App/>); advance(1000);
     expect(tableAudio.init).not.toHaveBeenCalled(); expect(tableAudio.startVoice).not.toHaveBeenCalled();
     clickRaw('Sit down'); expect(tableAudio.init).toHaveBeenCalledTimes(1);
-    advance(1250);
+    advance(GUARD_TO_RULES);
     expect(tableAudio.startVoice).toHaveBeenLastCalledWith(createVoicePlan(OPENING_LINES[0], 'intro_rules', false, 0, HOST.voice), 'host');
     const introVoice = vi.mocked(tableAudio.startVoice).mock.calls.at(-1)![0];
     clickRaw('Skip introduction'); advance(DEAL_COMPLETE);
@@ -473,7 +480,7 @@ describe('trigger commitment and hesitation', () => {
     expect(vi.getTimerCount()).toBeGreaterThan(0);
     act(() => root.unmount()); rootMounted = false;
     expect(vi.getTimerCount()).toBe(0); advance(30000);
-    expect(tableAudio.play).not.toHaveBeenCalledWith('click'); expect(tableAudio.play).not.toHaveBeenCalledWith('shot');
+    expect(tableAudio.play).not.toHaveBeenCalledWith('click'); expect(localShots()).toHaveLength(0);
   });
 
   it('has the Host urge an idle shooter after ten seconds, with a fade gap and no auto-fire', () => {
@@ -710,7 +717,7 @@ describe('three-room campaign, bracket, and run statistics', () => {
       handsLost: 0, handsPushed: 0, hits: 0, busts: 0, foldsUsed: 0, highestChamber: 1,
       guestsRemainingWhenFell: null });
     expect(latest.game.stats.endedAt).toBe(Date.now()); expect(latest.game.stats.totalTimeMs).toBeGreaterThan(0);
-    expect(vi.mocked(tableAudio.play).mock.calls.filter(([sound]) => sound === 'shot')).toHaveLength(3);
+    expect(localShots()).toHaveLength(3);
     expect(latest.game.dead).toBe('ai');
   });
 
@@ -749,22 +756,22 @@ describe('three-room campaign, bracket, and run statistics', () => {
   it('stages the other three first-round table deaths after rounds 1, 3, and 5 without duplicates', () => {
     vi.mocked(dealRound).mockImplementation(() => copy(tied)); startDecision();
     for (let round = 1; round <= 5; round++) {
-      act(() => latest.stand()); advance(950 + 2000 + 350);
+      act(() => latest.stand()); advance(950 + 2000 + 351);
       expect(latest.game.feedDeaths).toEqual(round < 3 ? [2] : round < 5 ? [2, 3] : [2, 3, 4]);
       expect(latest.game.guestsRemaining).toBe(round < 3 ? 7 : round < 5 ? 6 : 5);
       expect(latest.game.feedDeathSerial).toBe(latest.game.feedDeaths.length);
       advance(350 + DEAL_COMPLETE); expect(latest.game.phase).toBe('PLAYER_DECISION');
     }
     expect(latest.game.stats.handsPushed).toBe(5); expect(latest.game.stats.foldsUsed).toBe(0);
-    expect(tableAudio.play).not.toHaveBeenCalledWith('shot'); expect(tableAudio.play).not.toHaveBeenCalledWith('click');
-    expect(vi.mocked(tableAudio.playStory).mock.calls.filter(([cue]) => cue === 'feed-shot')).toHaveLength(3);
+    expect(localShots()).toHaveLength(0); expect(tableAudio.play).not.toHaveBeenCalledWith('click');
+    expect(distantShots()).toHaveLength(3);
   });
 
   it('resolves the other semifinal during Room 2 and does not count it twice on transition', () => {
     enterRoom(2); expect(latest.game.guestsRemaining).toBe(4);
     vi.mocked(dealRound).mockImplementation(() => copy(tied));
     act(() => latest.fold()); advance(FOLD_TO_DECISION); expect(latest.game.guestsRemaining).toBe(4);
-    act(() => latest.stand()); advance(950 + 2000 + 350);
+    act(() => latest.stand()); advance(950 + 2000 + 351);
     expect(latest.game.feedDeaths).toEqual([2]); expect(latest.game.guestsRemaining).toBe(3);
     vi.mocked(dealRound).mockImplementation(() => copy(playerWins)); advance(350 + DEAL_COMPLETE);
     winCurrentRoom(); expect(latest.game.roomNumber).toBe(3); expect(latest.game.guestsRemaining).toBe(2);
@@ -797,18 +804,19 @@ describe('three-room campaign, bracket, and run statistics', () => {
 describe('campaign rules, personality policies, and serialized speakers', () => {
   it('presents six manual Host rules on the first run, handles repeated clicks safely, and uses one later line', () => {
     mount(); act(() => latest.start()); expect(latest.game.storyStage).toBe('hooded');
-    expect(latest.game.speech).toBeNull(); advance(450); expect(latest.game.storyStage).toBe('unhood');
-    advance(800); expect(latest.game.storyStage).toBe('rules'); expect(latest.game.introShort).toBe(false);
+    expect(latest.game.speech).toBeNull(); advance(stageDurationMs('hooded')); expect(latest.game.storyStage).toBe('door-open');
+    advance(GUARD_TO_RULES - stageDurationMs('hooded')); expect(latest.game.storyStage).toBe('rules'); expect(latest.game.introShort).toBe(false);
     for (let index = 0; index < OPENING_LINES.length; index++) {
       expect(latest.game.speech).toMatchObject({ speaker: 'host', category: 'intro_rules', text: OPENING_LINES[index], danger: false, chambersFired: 0 });
       advance(10000); expect(latest.game.introIndex).toBe(index); // no automatic advance
       act(() => { latest.advanceOpening(); latest.advanceOpening(); });
       expect(latest.game.speech).toBeNull(); advance(99); expect(latest.game.speech).toBeNull(); advance(1);
     }
-    expect(latest.game.phase).toBe('SHUFFLING'); expect(latest.game.stats.roundsPlayed).toBe(1);
-    act(() => latest.start()); advance(1250);
+    expect(latest.game.storyStage).toBe('cut-opponent'); expect(latest.game.stats.roundsPlayed).toBe(0);
+    advance(CUT_TO_DEAL); expect(latest.game.phase).toBe('SHUFFLING');
+    act(() => latest.start()); advance(GUARD_TO_RULES);
     expect(latest.game.introShort).toBe(true); expect(latest.game.speech?.text).toBe(SHORT_INTRO);
-    act(() => latest.advanceOpening()); advance(100); expect(latest.game.phase).toBe('SHUFFLING');
+    act(() => latest.advanceOpening()); advance(100 + CUT_TO_DEAL); expect(latest.game.phase).toBe('SHUFFLING');
   });
 
   it('can skip during the hood and cancels all old opening callbacks', () => {
@@ -899,5 +907,195 @@ describe('campaign rules, personality policies, and serialized speakers', () => 
       advance(650 + CONFIG.DEAL_SPEED + 200 + 1500); expect(latest.game.phase).toBe('AI_SHOOTING');
       finishQueuedSpeech(); expect(latest.game.spinning).toBe('ai'); expect(latest.game.abilities.ai.spin).toBe(false);
     } finally { Object.assign(OPPONENTS[1], config); }
+  });
+});
+
+function advanceOpeningTo(stage: CinematicStage) {
+  for (let index = 0; index < 50; index++) {
+    const cinematic = latest.game.cinematic;
+    if (cinematic?.stage === stage) return;
+    expect(latest.game.phase).toBe('OPENING');
+    expect(cinematic).not.toBeNull();
+    if (cinematic!.stage === 'rules') {
+      act(() => latest.advanceOpening()); advance(100);
+    } else advance(stageDurationMs(cinematic!.stage));
+  }
+  throw new Error(`Opening did not reach ${stage}`);
+}
+
+describe('guard hoods, restraints, and safe room arrivals', () => {
+  it('removes the player hood before the captive hood and keeps every game action locked until both ties are cut', () => {
+    mount(); act(() => latest.start());
+    const stages = OPENING_STAGES.slice(0, OPENING_STAGES.indexOf('rules'));
+    expect(latest.game.tiesCut).toEqual({ player: false, ai: false });
+    for (const stage of stages) {
+      expect(latest.game.phase).toBe('OPENING');
+      expect(latest.game.cinematic).toMatchObject({ stage, mode: 'full', startedAt: Date.now() });
+      expect(latest.game.tiesCut).toEqual({ player: false, ai: false });
+      act(() => { latest.hit(); latest.stand(); latest.fold(); latest.peek(); latest.spinCylinder(); latest.beginTriggerHold(); });
+      expect(latest.game.round).toBeNull(); expect(latest.game.folds).toBe(3);
+      expect(latest.game.abilities.player).toEqual({ spin: true, peek: true });
+      advance(stageDurationMs(stage) - 1); expect(latest.game.cinematic?.stage).toBe(stage);
+      advance(1);
+    }
+    expect(latest.game.cinematic?.stage).toBe('rules');
+    expect(tableAudio.setHooded).toHaveBeenCalledWith(true);
+    expect(tableAudio.setHooded).toHaveBeenLastCalledWith(false);
+    const cues = vi.mocked(tableAudio.playStory).mock.calls.map(([cue]) => cue);
+    expect(cues.indexOf('door-creak')).toBeLessThan(cues.indexOf('burlap-tug'));
+    expect(cues.filter(cue => cue === 'burlap-tug')).toHaveLength(2);
+    expect(cues).toContain('gasp'); expect(cues).toContain('door-slam');
+    advanceOpeningTo('cut-opponent');
+    expect(latest.game.tiesCut).toEqual({ player: false, ai: false });
+    expect(latest.game.round).toBeNull();
+    advance(stageDurationMs('cut-opponent'));
+    expect(latest.game.cinematic?.stage).toBe('cut-player');
+    expect(latest.game.tiesCut).toEqual({ player: false, ai: true });
+    act(() => latest.hit()); expect(latest.game.round).toBeNull();
+    advance(stageDurationMs('cut-player'));
+    expect(latest.game.cinematic?.stage).toBe('rub-wrists');
+    expect(latest.game.tiesCut).toEqual({ player: true, ai: true });
+    expect(latest.game.phase).toBe('OPENING');
+    advance(stageDurationMs('rub-wrists'));
+    expect(latest.game.phase).toBe('SHUFFLING'); expect(latest.game.roundNumber).toBe(1);
+    expect(vi.mocked(tableAudio.playStory).mock.calls.filter(([cue]) => cue === 'snip')).toHaveLength(2);
+    advance(DEAL_COMPLETE); expect(latest.game.phase).toBe('PLAYER_DECISION');
+  });
+
+  it.each(['player-unhood', 'opponent-unhood', 'guard-exit', 'cut-player'] as const)('Skip cancels pending hood and cutter callbacks during %s and goes directly to a cut state', stage => {
+    mount(); act(() => latest.start()); advanceOpeningTo(stage);
+    act(() => latest.skipOpening());
+    expect(latest.game.phase).toBe('SHUFFLING'); expect(latest.game.tiesCut).toEqual({ player: true, ai: true });
+    expect(tableAudio.setHooded).toHaveBeenLastCalledWith(false);
+    const snips = vi.mocked(tableAudio.playStory).mock.calls.filter(([cue]) => cue === 'snip').length;
+    advance(DEAL_COMPLETE);
+    expect(latest.game.phase).toBe('PLAYER_DECISION'); expect(latest.game.storyStage).toBe('table');
+    expect(latest.game.round?.player).toHaveLength(2); expect(latest.game.round?.ai).toHaveLength(2);
+    expect(vi.mocked(tableAudio.playStory).mock.calls.filter(([cue]) => cue === 'snip')).toHaveLength(snips);
+    expect(latest.game.tiesCut).toEqual({ player: true, ai: true });
+  });
+
+  it('runs a fresh guard and restraint opening in both later rooms rather than dealing into an uncovered arrival', () => {
+    vi.mocked(createRevolver).mockReturnValue({ bulletChamber: 1, currentChamber: 1 }); startDecision();
+    for (const room of [2, 3] as const) {
+      act(() => latest.stand()); advance(950 + 1500); finishQueuedSpeech(); advance(AI_INITIAL_HESITATION);
+      expect(latest.game.dead).toBe('ai');
+      advanceStoryUntil(() => latest.game.roomNumber === room && latest.game.phase === 'OPENING');
+      expect(latest.game.cinematic).toMatchObject({ mode: 'arrival', stage: 'hooded' });
+      expect(latest.game.tiesCut).toEqual({ player: false, ai: false });
+      expect(latest.game.round).toBeNull(); expect(latest.game.roundNumber).toBe(0);
+      advanceOpeningTo('rules');
+      expect(latest.game.speech?.speaker).toBe('host');
+      act(() => latest.advanceOpening()); advance(100);
+      expect(latest.game.cinematic?.stage).toBe('cut-opponent');
+      advance(CUT_TO_DEAL + DEAL_COMPLETE);
+      expect(latest.game.phase).toBe('PLAYER_DECISION'); expect(latest.game.roomNumber).toBe(room);
+      expect(latest.game.tiesCut).toEqual({ player: true, ai: true });
+    }
+  });
+
+  it('cancels every guard, tie, and ambience timer when unmounted under the hood', () => {
+    mount(); act(() => latest.start()); advanceOpeningTo('player-unhood');
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+    act(() => root.unmount()); rootMounted = false;
+    expect(vi.getTimerCount()).toBe(0);
+    const calls = vi.mocked(tableAudio.playStory).mock.calls.length;
+    advance(120000);
+    expect(tableAudio.playStory).toHaveBeenCalledTimes(calls);
+    expect(tableAudio.playShot).not.toHaveBeenCalled();
+  });
+});
+
+describe('single-id shots, synchronized monitor deaths, and ambient room life', () => {
+  it('sends one unique local bang per fatal pull, including after a fresh run, and never advances twice', () => {
+    vi.mocked(createRevolver).mockReturnValue({ bulletChamber: 1, currentChamber: 1 });
+    vi.mocked(dealRound).mockImplementation(() => copy(playerBusts)); startDecision();
+    for (let run = 0; run < 2; run++) {
+      act(() => latest.hit()); advance(CONFIG.DEAL_SPEED + 950 + 1500);
+      act(() => { latest.beginTriggerHold(); latest.beginTriggerHold(); }); advance(CONFIG.TRIGGER_HOLD_MS);
+      const id = latest.game.shotId;
+      expect(id).toBeTruthy(); expect(latest.game.revolver.currentChamber).toBe(2);
+      expect(localShots().filter(([shot]) => shot.id === id)).toHaveLength(1);
+      act(() => { latest.beginTriggerHold(); latest.pullTrigger(); latest.endTriggerHold(); }); advance(100);
+      expect(latest.game.revolver.currentChamber).toBe(2);
+      if (run === 0) { startMatch(); advance(DEAL_COMPLETE); }
+    }
+    const ids = localShots().map(([shot]) => shot.id);
+    expect(ids).toHaveLength(2); expect(new Set(ids).size).toBe(2);
+    expect(tableAudio.play).not.toHaveBeenCalledWith('shot');
+  });
+
+  it('flushes three other-table deaths with one matching bang each, at least three seconds apart and after the local shot', () => {
+    const played: { id: string; kind: 'local' | 'distant'; at: number }[] = [];
+    vi.mocked(tableAudio.playShot).mockImplementation(shot => { played.push({ id: shot.id, kind: shot.kind, at: Date.now() }); return true; });
+    vi.mocked(createRevolver).mockReturnValue({ bulletChamber: 1, currentChamber: 1 }); startDecision();
+    act(() => latest.stand()); advance(950 + 1500);
+    expect(latest.game.phase).toBe('AI_SHOOTING');
+    expect(distantShots()).toHaveLength(0); // protected local suspense
+    finishQueuedSpeech();
+    const untilPull = latest.game.aiShotDurationMs!;
+    expect(latest.game.aiShotStartedAt).toBe(Date.now()); expect(untilPull).toBeGreaterThanOrEqual(1500);
+    advance(untilPull); expect(latest.game.dead).toBe('ai');
+    expect(localShots()).toHaveLength(1); expect(distantShots()).toHaveLength(0);
+    advance(2399); expect(distantShots()).toHaveLength(0);
+    advanceStoryUntil(() => latest.game.roomNumber === 2 && latest.game.phase === 'OPENING');
+    const distant = played.filter(shot => shot.kind === 'distant'), local = played.find(shot => shot.kind === 'local')!;
+    expect(distant).toHaveLength(3); expect(new Set(distant.map(shot => shot.id)).size).toBe(3);
+    expect(distant[0].at - local.at).toBeGreaterThanOrEqual(2400);
+    for (let index = 1; index < distant.length; index++) expect(distant[index].at - distant[index - 1].at).toBeGreaterThanOrEqual(DISTANT_SHOT_GAP_MS);
+    expect(latest.game.guestsRemaining).toBe(4);
+    expect(vi.mocked(tableAudio.playStory).mock.calls.filter(([cue]) => cue === 'feed-shot')).toHaveLength(0);
+  });
+
+  it('publishes the feed death, guest count, reaction event, and sound id together', () => {
+    vi.mocked(dealRound).mockImplementation(() => copy(tied)); startDecision();
+    act(() => latest.stand()); advance(950 + 2000 + 351);
+    const event = latest.game.distantShot;
+    expect(event).toMatchObject({ table: 2, startedAt: Date.now(), duration: 3000 });
+    expect(latest.game.feedDeaths).toEqual([2]); expect(latest.game.feedDeathSerial).toBe(1);
+    expect(latest.game.guestsRemaining).toBe(7);
+    expect(distantShots()).toHaveLength(1);
+    expect(distantShots()[0][0]).toMatchObject({ id: event!.id, kind: 'distant', roomId: 2, direction: event!.direction });
+    expect(allSpeech().some(line => line.speaker === 'host' && line.category === 'other_room_death')).toBe(true);
+    expect(allSpeech().some(line => line.speaker === 'captive' && line.category === 'distant_shot')).toBe(true);
+    advance(100); expect(distantShots()).toHaveLength(1); expect(latest.game.guestsRemaining).toBe(7);
+  });
+
+  it('does not reuse distant shot ids when a new game hook mounts against the persistent audio service', () => {
+    vi.mocked(dealRound).mockImplementation(() => copy(tied)); startDecision();
+    act(() => latest.stand()); advance(950 + 2000 + 351);
+    const first = latest.game.distantShot!.id;
+    act(() => root.unmount()); rootMounted = false;
+    root = createRoot(container); rootMounted = true;
+    startDecision(); act(() => latest.stand()); advance(950 + 2000 + 351);
+    const second = latest.game.distantShot!.id;
+    expect(first).not.toBe(second);
+    expect(distantShots().map(([shot]) => shot.id)).toEqual([first, second]);
+    expect(latest.game.guestsRemaining).toBe(7);
+  });
+
+  it('starts ambient life after its cosmetic 15–30 second delay without consuming cards, chambers, folds, or gameplay RNG', () => {
+    startDecision(); const round = latest.game.round, revolver = latest.game.revolver;
+    const randomCalls = vi.mocked(Math.random).mock.calls.length;
+    advance(22500 - DEAL_COMPLETE - 1); expect(latest.game.ambientEvent).toBeNull();
+    advance(1);
+    expect(latest.game.ambientEvent).toMatchObject({ startedAt: Date.now() });
+    expect(tableAudio.playAmbient).toHaveBeenLastCalledWith(latest.game.ambientEvent);
+    expect(latest.game.phase).toBe('PLAYER_DECISION'); expect(latest.game.round).toBe(round);
+    expect(latest.game.revolver).toBe(revolver); expect(latest.game.folds).toBe(3);
+    expect(vi.mocked(Math.random).mock.calls.length).toBe(randomCalls);
+    act(() => latest.stand());
+    expect(latest.game.ambientEvent).toBeNull(); expect(tableAudio.playAmbient).toHaveBeenLastCalledWith(null);
+  });
+
+  it('defers overdue ambient events throughout a player shot and resumes them only in safe decision time', () => {
+    startPlayerShot(); advance(30000);
+    expect(latest.game.phase).toBe('PLAYER_SHOOTING'); expect(latest.game.ambientEvent).toBeNull();
+    expect(vi.mocked(tableAudio.playAmbient).mock.calls.filter(([event]) => event !== null)).toHaveLength(0);
+    holdTrigger(); expect(latest.game.shotEffect).toBe('click');
+    advance(1000); expect(latest.game.ambientEvent).toBeNull();
+    advanceStoryUntil(() => latest.game.ambientEvent !== null);
+    expect(latest.game.phase).toBe('PLAYER_DECISION'); expect(latest.game.ambientEvent!.startedAt).toBeGreaterThan(22500);
+    expect(latest.game.roundNumber).toBe(2); expect(latest.game.revolver.currentChamber).toBe(2);
   });
 });

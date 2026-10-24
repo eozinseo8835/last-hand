@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createLookState, createLookKeys, dragLook, LOOK_LIMITS, shouldRecenter, updateKeyboardLook, updateLook } from './camera';
+import { cameraRecenter, createLeanState, MAX_SAFE_LEAN, updateLean, wheelLean, createLookState, createLookKeys, dragLook, LOOK_LIMITS, shouldRecenter, updateKeyboardLook, updateLook } from './camera';
 import type { GamePhase } from '../game';
 
 const SENSITIVITY = .0035;
@@ -184,5 +184,42 @@ describe('WASD head look', () => {
       expect(state.targetYaw).toBeCloseTo(states[0].targetYaw, 12);
       expect(state.yawVelocity).toBeCloseTo(states[0].yawVelocity, 12);
     }
+  });
+});
+
+
+describe('seated table lean and hood camera timing', () => {
+  it('clamps wheel lean, ignores unavailable input and never exceeds the safe table clearance', () => {
+    const lean = createLeanState();
+    wheelLean(lean, -10000, .45, false); expect(lean.target).toBe(0);
+    wheelLean(lean, -10000, .45, true); expect(lean.target).toBe(.45);
+    updateLean(lean, 10, .45, false); expect(lean.amount).toBeCloseTo(.45);
+    wheelLean(lean, -10000, 50, true); expect(lean.target).toBe(MAX_SAFE_LEAN);
+    wheelLean(lean, 10000, .45, true); expect(lean.target).toBe(0);
+    wheelLean(lean, NaN, .45, true); expect(lean.target).toBe(0);
+  });
+  it('leans at the same speed at low and high FPS, then automatically backs out for a shot', () => {
+    const results = [5, 30, 120].map(fps => {
+      const lean = createLeanState(); wheelLean(lean, -200, .45, true);
+      for (let i = 0; i < fps; i++) updateLean(lean, 1 / fps, .45, false);
+      return lean;
+    });
+    const expected = results[0].amount;
+    for (const lean of results) {
+      expect(lean.amount).toBeCloseTo(expected, 12);
+      updateLean(lean, 1 / 60, .45, true); expect(lean.target).toBe(0);
+      updateLean(lean, 1, .45, true); expect(lean.amount).toBeLessThan(.00001);
+    }
+  });
+  it('allows covered head turns but locks the guard tug, focus, and every shot', () => {
+    for (const stage of ['hooded', 'door-open', 'guard-approach']) {
+      expect(cameraRecenter('OPENING', false, { stage, mode: 'full' })).toBe(false);
+      expect(cameraRecenter('OPENING', true, { stage, mode: 'full' })).toBe(true);
+    }
+    for (const stage of ['player-unhood', 'player-focus', 'opponent-unhood', 'rules', 'cut-player']) {
+      expect(cameraRecenter('OPENING', false, { stage, mode: 'full' })).toBe(true);
+    }
+    expect(cameraRecenter('PLAYER_SHOOTING', false)).toBe(true);
+    expect(cameraRecenter('AI_SHOOTING', false)).toBe(true);
   });
 });
