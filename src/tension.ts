@@ -85,10 +85,10 @@ export function eventDoorPulse(event: RoundEvent | null | undefined, now: number
   return pulse;
 }
 
-export function heartbeatSettings(chambersFired: number, pulling = false): { bpm: number; volume: number } {
+export function heartbeatSettings(chambersFired: number, pulling = false, urgency = 0): { bpm: number; volume: number } {
   const fired = firedCount(chambersFired);
   return {
-    bpm: CONFIG.HEARTBEAT_BASE_BPM + 15 * fired + (pulling ? 25 : 0),
+    bpm: CONFIG.HEARTBEAT_BASE_BPM + 15 * fired + (pulling ? 25 : 0) + Math.max(0, Math.min(1, urgency)) * 35,
     volume: (.09 + Math.min(6, fired) * .012) * (pulling ? 1.55 : 1),
   };
 }

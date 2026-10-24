@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { TableAudio } from './audio';
+import { TableAudio, type StoryCue } from './audio';
+import { AMBIENT_KINDS, type AmbientEvent } from './roomLife';
 import { CONFIG } from './game';
 import { createVoicePlan } from './voice';
 import { eventBangOffsets, type RoundEvent } from './tension';
@@ -43,7 +44,7 @@ beforeEach(() => {
   vi.stubGlobal('AudioContext', Context); audio = new TableAudio();
 });
 afterEach(() => {
-  audio.setHeartbeat({ active: false, chambersFired: 0, pulling: false }); audio.setEvent(null);
+  audio.setHeartbeat({ active: false, chambersFired: 0, pulling: false }); audio.setEvent(null); audio.setHooded(false); audio.playAmbient(null);
   vi.clearAllTimers(); vi.useRealTimers(); Object.assign(CONFIG, settings); vi.restoreAllMocks(); vi.unstubAllGlobals();
 });
 function context() { return Context.instances[0]; }
@@ -161,7 +162,7 @@ describe('Web Audio Stranger voice', () => {
     expect(ctx.nodes[1].gain.linearRampToValueAtTime).toHaveBeenLastCalledWith(1, ctx.currentTime + .06);
     expect(audio.getVoiceLevel()).toBe(0);
     sources.at(-1)!.onended!();
-    for (const node of ctx.nodes.slice(2)) expect(node.disconnect).toHaveBeenCalled();
+    for (const node of ctx.nodes.slice(3)) expect(node.disconnect).toHaveBeenCalled();
   });
 
   it('mutes an active voice immediately and unmutes at the current subtitle time without restarting it', () => {
@@ -218,7 +219,7 @@ describe('heartbeat, trigger mechanics and room events', () => {
     expect(envelope.gain.setValueAtTime.mock.calls.some(([volume, at]) => volume === 0 && at > contours[1][1] && at < contours[2][1])).toBe(true);
     const duration = breathing.stop.mock.calls[0][0]! - breathing.start.mock.calls[0][0]!;
     expect(duration).toBeGreaterThan(1); expect(duration).toBeLessThan(1.3);
-    const nodes = ctx.nodes.slice(2);
+    const nodes = ctx.nodes.slice(3);
     for (const source of nodes.filter(node => node.kind === 'source' || node.kind === 'oscillator')) source.onended?.();
     for (const node of nodes) expect(node.disconnect).toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
@@ -230,7 +231,7 @@ describe('heartbeat, trigger mechanics and room events', () => {
     expect(Context.instances).toHaveLength(0);
     audio.init(); audio.mute(true); const ctx = context();
     for (const kind of kinds) audio.playStory(kind);
-    expect(ctx.nodes).toHaveLength(2);
+    expect(ctx.nodes).toHaveLength(3);
     audio.mute(false);
     const random = vi.spyOn(Math, 'random').mockImplementation(() => { throw Error('Story cue changed gameplay randomness'); });
     for (const kind of kinds) {
@@ -296,7 +297,7 @@ describe('heartbeat, trigger mechanics and room events', () => {
 
   it('ducks the heartbeat through the same speaking bus and restores it when speech is skipped', () => {
     audio.init(); audio.setHeartbeat({ active: true, chambersFired: 0, pulling: false });
-    const ctx = context(), heartbeatBus = ctx.nodes[2];
+    const ctx = context(), heartbeatBus = ctx.nodes[3];
     expect(heartbeatBus.connect).toHaveBeenCalledWith(ctx.nodes[1]);
     audio.startVoice(plan());
     expect(ctx.nodes[1].gain.linearRampToValueAtTime).toHaveBeenCalledWith(.76, ctx.currentTime + .06);
@@ -327,7 +328,7 @@ describe('heartbeat, trigger mechanics and room events', () => {
     audio.setEvent(null);
     for (const source of ctx.nodes.filter(node => node.kind === 'oscillator' || node.kind === 'source')) expect(source.stop).toHaveBeenLastCalledWith(ctx.currentTime + .03);
     expect(vi.getTimerCount()).toBe(0);
-    const eventBus = ctx.nodes[2];
+    const eventBus = ctx.nodes[3];
     for (const source of ctx.nodes.filter(node => node.kind === 'oscillator' || node.kind === 'source')) source.onended?.();
     expect(eventBus.disconnect).toHaveBeenCalled();
   });
@@ -336,9 +337,9 @@ describe('heartbeat, trigger mechanics and room events', () => {
     audio.init(); audio.mute(true); const ctx = context();
     for (const sound of ['hammer', 'clack', 'spin'] as const) audio.play(sound);
     audio.setEvent({ kind: 'tv', startedAt: Date.now(), duration: 4000, seed: 3 });
-    expect(ctx.nodes).toHaveLength(2);
+    expect(ctx.nodes).toHaveLength(3);
     vi.setSystemTime(Date.now() + 5000); audio.mute(false);
-    expect(ctx.nodes).toHaveLength(2);
+    expect(ctx.nodes).toHaveLength(3);
     audio.play('spin');
     expect(ctx.nodes.filter(node => node.kind === 'source')).toHaveLength(12);
     expect(vi.getTimerCount()).toBe(0);
@@ -385,24 +386,24 @@ describe('physical revolver reports', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('separates a dry empty hammer strike from the shot crack, pressure body and concrete reflections', () => {
-    audio.init(); const ctx = context();
-    audio.play('click');
+  it('separates a dry empty strike from one composite bang, continuous room tail, and quiet ear ring', () => {
+    audio.init(); const ctx = context(); audio.play('click');
     expect(ctx.nodes.filter(node => node.kind === 'reverb')).toHaveLength(0);
     const drySources = ctx.nodes.filter(node => node.kind === 'source');
     expect(drySources).toHaveLength(1);
     expect(drySources[0].stop.mock.calls[0][0]! - drySources[0].start.mock.calls[0][0]!).toBeCloseTo(.031);
-
     const before = ctx.nodes.length; audio.play('shot');
     const shot = ctx.nodes.slice(before), start = ctx.currentTime + .002;
-    const starts = shot.filter(node => node.kind === 'source').map(node => node.start.mock.calls[0][0]!);
-    for (const delay of [.037, .081, .129]) expect(starts.some(at => Math.abs(at - start - delay) < .00001)).toBe(true);
-    expect(shot.some(node => node.type === 'highpass' && node.frequency.value === 1900)).toBe(true);
-    expect(shot.some(node => node.type === 'lowpass' && node.frequency.value === 1350)).toBe(true);
-    expect(shot.some(node => node.kind === 'oscillator' && node.frequency.setValueAtTime.mock.calls[0][0] === 170)).toBe(true);
+    const reports = shot.filter(node => node.kind === 'source' && node.buffer!.getChannelData(0).length > 1);
+    expect(reports).toHaveLength(1);
+    expect(reports[0].start).toHaveBeenCalledWith(start);
+    expect(reports[0].stop).toHaveBeenCalledWith(start + .20);
+    const ring = shot.find(node => node.kind === 'oscillator')!;
+    expect(ring.start).toHaveBeenCalledWith(start + .11);
+    expect(ring.frequency.setValueAtTime).toHaveBeenCalledWith(2920, start + .11);
     const room = shot.find(node => node.kind === 'reverb')!;
     expect(room.buffer!.getChannelData(0)).not.toEqual(room.buffer!.getChannelData(1));
-    expect(starts.at(-1)).toBeCloseTo(start + .52);
+    expect(shot.some(node => node.type === 'lowpass' && node.frequency.value <= ctx.sampleRate * .45)).toBe(true);
   });
 
   it('slows the cylinder detents and disconnects every one-shot graph after its final source ends', () => {
@@ -413,8 +414,149 @@ describe('physical revolver reports', () => {
     expect(detents[11] - ctx.currentTime).toBeLessThan(.8);
     audio.play('click'); audio.play('shot'); audio.play('card');
     for (const source of ctx.nodes.filter(node => node.kind === 'source' || node.kind === 'oscillator')) source.onended?.();
-    for (const node of ctx.nodes.slice(2)) expect(node.disconnect).toHaveBeenCalled();
+    for (const node of ctx.nodes.slice(3)) expect(node.disconnect).toHaveBeenCalled();
     expect(ctx.nodes[0].disconnect).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe('single-id shots, guard cues, and hooded room mixing', () => {
+  const ambient = (kind: AmbientEvent['kind'], id = kind): AmbientEvent => ({
+    id, kind, startedAt: Date.now(), duration: 4000, loud: true, direction: -1, seed: 741,
+  });
+  const reports = (nodes: Node[]) => nodes.filter(node => node.kind === 'source' && node.buffer && node.buffer.getChannelData(0).length > 1);
+
+  it('can store a hood and ambient cue before the first click without creating an AudioContext', () => {
+    audio.setHooded(true); audio.playAmbient(ambient('speaker'));
+    expect(audio.playShot({ id: 'pre-click', kind: 'local' })).toBe(false);
+    for (const cue of ['door-creak', 'boots', 'burlap-tug', 'snip'] as StoryCue[]) audio.playStory(cue);
+    expect(Context.instances).toHaveLength(0); expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('routes the entire room through one hood lowpass, then unmuffles and cancels close breathing', async () => {
+    audio.setHooded(true); audio.init(); await Promise.resolve(); await Promise.resolve();
+    const ctx = context(), filter = ctx.nodes[2];
+    expect(filter.kind).toBe('filter'); expect(filter.type).toBe('lowpass');
+    expect(filter.frequency.value).toBe(350);
+    expect(ctx.nodes[0].connect).toHaveBeenCalledExactlyOnceWith(filter);
+    expect(filter.connect).toHaveBeenCalledExactlyOnceWith(ctx.destination);
+    expect(ctx.nodes[0].connect).not.toHaveBeenCalledWith(ctx.destination);
+    expect(reports(ctx.nodes).length).toBeGreaterThan(0); expect(vi.getTimerCount()).toBe(1);
+    const nodes = ctx.nodes.length;
+    audio.setHooded(true); audio.init(); await Promise.resolve(); await Promise.resolve();
+    expect(ctx.nodes).toHaveLength(nodes); expect(vi.getTimerCount()).toBe(1);
+    audio.setHooded(false);
+    expect(filter.frequency.exponentialRampToValueAtTime).toHaveBeenLastCalledWith(19000, ctx.currentTime + .24);
+    expect(vi.getTimerCount()).toBe(0);
+    for (const source of ctx.nodes.filter(node => node.kind === 'source' || node.kind === 'oscillator')) {
+      expect(source.stop).toHaveBeenLastCalledWith(ctx.currentTime + .03); source.onended?.();
+    }
+    for (const node of ctx.nodes.slice(3)) expect(node.disconnect).toHaveBeenCalled();
+    expect(filter.disconnect).not.toHaveBeenCalled();
+  });
+
+  it('cancels a covered breath before losing ownership when the audio clock is suspended', async () => {
+    audio.init(); await Promise.resolve(); await Promise.resolve();
+    audio.setHooded(true); const ctx = context();
+    const oldSources = ctx.nodes.filter(node => node.kind === 'source' || node.kind === 'oscillator');
+    ctx.state = 'suspended';
+    vi.advanceTimersByTime(2900); await Promise.resolve();
+    for (const source of oldSources) expect(source.stop).toHaveBeenLastCalledWith(ctx.currentTime + .03);
+    audio.setHooded(false); const before = ctx.nodes.length;
+    ctx.state = 'running'; audio.init(); await Promise.resolve(); await Promise.resolve();
+    expect(ctx.nodes).toHaveLength(before); expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('accepts a shot identity only once across all delivery paths and creates one bang onset', () => {
+    audio.init(); const ctx = context();
+    expect(audio.playShot({ id: 'run1-room1-pull1', kind: 'local' })).toBe(true);
+    const count = ctx.nodes.length;
+    expect(audio.playShot({ id: 'run1-room1-pull1', kind: 'local' })).toBe(false);
+    expect(audio.playShot({ id: 'run1-room1-pull1', kind: 'distant', roomId: 3 })).toBe(false);
+    expect(ctx.nodes).toHaveLength(count); expect(reports(ctx.nodes)).toHaveLength(1);
+    expect(audio.playShot({ id: 'run1-room1-table3', kind: 'distant', roomId: 3 })).toBe(true);
+    expect(reports(ctx.nodes)).toHaveLength(2);
+    for (const report of reports(ctx.nodes)) expect(report.start).toHaveBeenCalledExactlyOnceWith(ctx.currentTime + .002);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('makes each distant shot one strong filtered report from the fixed wall direction without an ear ring', () => {
+    audio.init(); const ctx = context(); Object.assign(ctx, { createStereoPanner: () => ctx.make('stereo') });
+    for (const direction of [-1, 1]) {
+      const start = ctx.nodes.length;
+      audio.playShot({ id: `wall${direction}`, kind: 'distant', roomId: 2, direction });
+      const nodes = ctx.nodes.slice(start), body = reports(nodes);
+      expect(body).toHaveLength(1); expect(body[0].buffer!.getChannelData(0).some(sample => Math.abs(sample) > .4)).toBe(true);
+      expect(nodes.filter(node => node.kind === 'oscillator')).toHaveLength(0);
+      expect(nodes.find(node => node.kind === 'stereo')!.pan.value).toBe(direction * .72);
+      expect(nodes.some(node => node.type === 'lowpass' && node.frequency.value === 1350)).toBe(true);
+      for (const source of nodes.filter(node => node.kind === 'source')) source.onended?.();
+      for (const node of nodes) expect(node.disconnect).toHaveBeenCalled();
+    }
+  });
+
+  it('never replays muted shots, and bounds the dedupe history without allocating sound graphs', () => {
+    audio.init(); audio.mute(true); const ctx = context(), count = ctx.nodes.length;
+    for (let index = 0; index < 300; index++) audio.playShot({ id: `muted:${index}`, kind: 'local' });
+    expect(ctx.nodes).toHaveLength(count); audio.mute(false);
+    expect(audio.playShot({ id: 'muted:299', kind: 'local' })).toBe(false);
+    expect(audio.playShot({ id: 'muted:0', kind: 'local' })).toBe(true);
+    expect(reports(ctx.nodes)).toHaveLength(1);
+  });
+
+  it('deduplicates a shot while its click-authorized resume is pending', async () => {
+    audio.init(); const ctx = context(); let resume!: () => void;
+    ctx.state = 'suspended'; ctx.resume.mockImplementation(() => new Promise<void>(resolve => { resume = () => { ctx.state = 'running'; resolve(); }; }));
+    audio.init();
+    const event = { id: 'pending', kind: 'local' as const };
+    expect(audio.playShot(event)).toBe(true); expect(audio.playShot(event)).toBe(false);
+    expect(reports(ctx.nodes)).toHaveLength(0);
+    resume(); await Promise.resolve(); await Promise.resolve();
+    expect(reports(ctx.nodes)).toHaveLength(1);
+  });
+
+  it('synthesizes all guard and ambient cues with isolated randomness and cancels pending room activity', () => {
+    audio.init(); const ctx = context();
+    const random = vi.spyOn(Math, 'random').mockImplementation(() => { throw Error('Presentation consumed gameplay RNG'); });
+    const cues: StoryCue[] = ['door-creak', 'door-slam', 'boots', 'burlap-tug', 'hood-cinch', 'gasp', 'sob', 'snip'];
+    for (const cue of cues) expect(() => audio.playStory(cue)).not.toThrow();
+    for (const kind of AMBIENT_KINDS) {
+      const event = ambient(kind); audio.playAmbient(event); const count = ctx.nodes.length;
+      audio.playAmbient({ ...event }); expect(ctx.nodes).toHaveLength(count);
+      audio.playAmbient(null);
+    }
+    expect(random).not.toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
+    for (const source of ctx.nodes.filter(node => node.kind === 'source' || node.kind === 'oscillator')) source.onended?.();
+    for (const node of ctx.nodes.slice(3)) expect(node.disconnect).toHaveBeenCalled();
+  });
+
+  it('does not replay expired ambient sounds or missed footsteps when unmuting', () => {
+    audio.init(); const ctx = context(), event = ambient('footsteps');
+    audio.mute(true); audio.playAmbient(event); const count = ctx.nodes.length;
+    vi.setSystemTime(event.startedAt + 700); audio.mute(false);
+    const nodes = ctx.nodes.slice(count), steps = reports(nodes);
+    expect(steps).toHaveLength(3);
+    for (const [index, offset] of [.005, .355, .705].entries()) expect(steps[index].start.mock.calls[0][0]!).toBeCloseTo(ctx.currentTime + offset, 8);
+    audio.mute(true); vi.setSystemTime(event.startedAt + event.duration + 1);
+    const previous = ctx.nodes.length; audio.mute(false); expect(ctx.nodes).toHaveLength(previous);
+    audio.playAmbient(null);
+  });
+});
+
+describe('caught stings and captive contact sounds', () => {
+  it('keeps all new sounds click-gated and muted, then synthesizes them locally', () => {
+    audio.play('sting'); audio.playContact('heel',1); expect(Context.instances).toHaveLength(0);
+    audio.init(); const ctx=context(); audio.mute(true); const count=ctx.nodes.length;
+    audio.play('sting'); audio.playContact('knuckles',1); expect(ctx.nodes).toHaveLength(count);
+    audio.mute(false); audio.play('sting');
+    expect(ctx.nodes.slice(count).some(node=>node.kind==='oscillator')).toBe(true);
+    const next=ctx.nodes.length; audio.playContact('heel',.9); audio.playContact('fabric',.8); audio.playContact('knuckles',.7);
+    expect(ctx.nodes.slice(next).filter(node=>node.kind==='source').length).toBeGreaterThanOrEqual(2);
+  });
+  it('raises deadline heartbeat urgency without constructing another context or bypassing mute', () => {
+    audio.init(); const ctx=context();
+    audio.setHeartbeat({active:true,chambersFired:2,pulling:false,urgency:1});
+    expect(Context.instances).toHaveLength(1); expect(ctx.nodes.some(node=>node.kind==='oscillator')).toBe(true);
+    audio.mute(true); expect(audio.getHeartbeatLevel()).toBe(0);
   });
 });

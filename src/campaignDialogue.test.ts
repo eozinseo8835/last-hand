@@ -34,7 +34,7 @@ describe('the Host and three captive voices', () => {
   });
 
   it('keeps Host pools procedural and separate from the captive strength or bluff categories', () => {
-    expect(Object.keys(HOST_DIALOGUE).sort()).toEqual(['intro_rules', 'deal', 'round_result', 'other_room_death', 'waiting_for_trigger', 'transition', 'ending_win', 'ending_death'].sort());
+    expect(Object.keys(HOST_DIALOGUE).sort()).toEqual(['intro_rules', 'deal', 'round_result', 'other_room_death', 'waiting_for_trigger', 'transition', 'ending_win', 'ending_death', 'cut_ties', 'host_caught_player', 'trigger_warning', 'forced_shot'].sort());
     for (const lines of Object.values(HOST_DIALOGUE)) {
       expect(lines.length).toBeGreaterThanOrEqual(4); expect(new Set(lines).size).toBe(lines.length);
       for (const line of lines) expect(line).not.toMatch(/strong hand|weak hand|bluff|my cards|my hand|nervous/i);

@@ -2,10 +2,21 @@ import * as THREE from 'three';
 import { mergeStaticMeshes } from './merge';
 import type { GamePhase } from '../game';
 import { createTensionRandom, type RoundEvent } from '../tension';
+import { cinematicProgress, type CinematicState } from '../cinematics';
+import { shotSequenceActive, type AmbientEvent, type DistantShot } from '../roomLife';
+
+export function guardDoorProgress(cinematic: CinematicState | null | undefined, now = Date.now()): number {
+  if (!cinematic) return 0;
+  const stage = cinematic.stage, progress = cinematicProgress(cinematic, now);
+  if (stage === 'door-open' || stage === 'guards-enter') return Math.min(1, progress * 1.5);
+  if (stage === 'guard-exit') return 1 - THREE.MathUtils.smoothstep(progress, .6, 1);
+  if (cinematic.mode === 'transfer') return stage === 'door' ? 1 - progress : ['transfer-hood', 'lift', 'dragging'].includes(stage) ? 1 : 0;
+  return ['guard-approach', 'player-unhood', 'player-focus', 'opponent-unhood'].includes(stage) ? 1 : 0;
+}
 
 /** Presentation rejects a stale event as soon as play leaves the decision phase. */
 export function decisionEvent(phase: GamePhase, event: RoundEvent | null | undefined, now = Date.now()): RoundEvent | null {
-  if (phase !== 'PLAYER_DECISION' || !event || now < event.startedAt || now >= event.startedAt + event.duration) return null;
+  if (phase !== 'PLAYER_DECISION' && phase !== 'PLAYER_PEEKING' || !event || now < event.startedAt || now >= event.startedAt + event.duration) return null;
   return event;
 }
 
@@ -84,6 +95,9 @@ export type RoomCampaign = {
   phase?: GamePhase;
   storyStage?: string;
   stageElapsed?: number;
+  cinematic?: CinematicState | null;
+  distantShot?: DistantShot | null;
+  ambientEvent?: AmbientEvent | null;
 };
 
 /** The exit sequence waits at the table while the Host finishes announcing it. */
@@ -158,13 +172,25 @@ export function createRoom(scene: THREE.Scene): BunkerRoom {
   // A broad fourteen-sided wooden table, with layered worn rails and taut dirty felt.
   const table = new THREE.Group(); table.name = 'card-table'; root.add(table);
   const tableLayer = (radiusX: number, radiusZ: number, height: number, y: number, material: THREE.Material) => {
-    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, height, 16), material);
-    mesh.scale.set(radiusX, 1, radiusZ); mesh.position.y = y; mesh.rotation.y = Math.PI / 16; mesh.castShadow = true; mesh.receiveShadow = true; table.add(mesh); return mesh;
+    const geometry = new THREE.CylinderGeometry(1, 1, height, 16);
+    geometry.rotateY(Math.PI / 16);
+    const vertices = geometry.attributes.position;
+    for (let index=0;index<vertices.count;index++) if (vertices.getZ(index)>0) vertices.setZ(index,vertices.getZ(index)*.74);
+    geometry.computeVertexNormals();
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.scale.set(radiusX, 1, radiusZ); mesh.position.y = y; mesh.castShadow = true; mesh.receiveShadow = true; table.add(mesh); return mesh;
   };
-  tableLayer(1.8, 1.34, .15, .76, wood);
+  // A thin front rail and open steel support leave a real sight line to the
+  // captive's knees/shoes. Opaque felt and the original materials stay intact.
+  tableLayer(1.8, 1.34, .035, .850, wood);
   tableLayer(1.77, 1.31, .035, .85, mat(0x5c4c35));
   tableLayer(1.69, 1.23, .025, .874, felt);
-  tableLayer(1.75, 1.29, .045, .66, darkMetal);
+  const railPoints = Array.from({length:32},(_,i)=> {
+    const angle=i/32*Math.PI*2,z=Math.sin(angle)*1.29;
+    return new THREE.Vector3(Math.cos(angle)*1.75,.66,z>0?z*.74:z);
+  });
+  const underFrame = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(railPoints,true),32,.022,4,true),darkMetal);
+  table.add(underFrame);
   for (const x of [-1.2, 1.2]) for (const z of [-.85, .85]) {
     const leg = box(.1, .68, .1, darkMetal, x, .33, z, table, true); leg.rotation.z = x > 0 ? -.055 : .055;
   }
@@ -196,7 +222,11 @@ export function createRoom(scene: THREE.Scene): BunkerRoom {
   box(1.35, 2.57, .12, darkMetal, 0, 1.285, 0, doorPanel);
   box(1.18, 2.43, .06, mat(0x3c453a, { metalness: .35 }), 0, 1.26, .09, doorPanel);
   for (const y of [.34, 1.05, 1.86, 2.27]) box(1.1, .035, .035, metal, 0, y, .139, doorPanel);
-  box(.07, .27, .11, metal, -.4, 1.19, .2, doorPanel); box(.23, .05, .07, rust, -.33, 1.27, .27, doorPanel);
+  box(.07, .27, .11, metal, -.4, 1.19, .2, doorPanel);
+  const doorHandle = box(.23, .05, .07, rust, -.33, 1.27, .27, doorPanel); doorHandle.name = 'door-handle';
+  const slot = box(.48, .11, .018, black, 0, 1.99, .151, doorPanel); slot.name = 'guard-window-slot';
+  const guardEyes = new THREE.Group(); guardEyes.name = 'guard-window-eyes'; guardEyes.position.set(0, 1.99, .168); guardEyes.visible = false; doorPanel.add(guardEyes);
+  for (const x of [-.068, .068]) box(.045, .020, .008, new THREE.MeshBasicMaterial({ color: 0xb5c0a3 }), x, 0, 0, guardEyes);
   for (const y of [.35, 1.3, 2.2]) box(.13, .15, .08, metal, .59, y, .14, doorPanel);
   const doorway = new THREE.Mesh(new THREE.PlaneGeometry(1.28, 2.52), new THREE.MeshBasicMaterial({ color: 0x030504 }));
   doorway.name = 'exit-doorway'; doorway.position.set(0, 1.26, .08); doorway.visible = false; door.add(doorway);
@@ -320,7 +350,7 @@ export function createRoom(scene: THREE.Scene): BunkerRoom {
   const viewersScreen = new THREE.Mesh(new THREE.PlaneGeometry(.56, .41), new THREE.MeshBasicMaterial({ map: viewersTexture, color: 0xb8cdb0, toneMapped: false }));
   viewersScreen.name = 'viewers-counter'; viewersScreen.position.z = .101; stairMonitor.add(viewersScreen);
   mergeStaticMeshes(stairs, mesh => mesh !== viewersScreen);
-  mergeStaticMeshes(doorPanel);
+  mergeStaticMeshes(doorPanel, mesh => mesh !== doorHandle && mesh.parent !== guardEyes);
 
   // Only rigid room geometry is batched. Lamp descendants must retain their
   // local transforms for swinging, and the transparent haze keeps its own pass.
@@ -330,6 +360,14 @@ export function createRoom(scene: THREE.Scene): BunkerRoom {
     return true;
   });
 
+  const dustGeometry = new THREE.BufferGeometry();
+  const dustPositions = new Float32Array(48 * 3), dustRest = new Float32Array(48 * 3);
+  dustGeometry.setAttribute('position', new THREE.BufferAttribute(dustPositions, 3));
+  const dustMaterial = new THREE.PointsMaterial({ color: 0xb3b69a, size: .018, transparent: true, opacity: .55, depthWrite: false });
+  const dust = new THREE.Points(dustGeometry, dustMaterial); dust.name = 'distant-shot-dust'; dust.visible = false; scene.add(dust);
+  const drip = new THREE.Mesh(new THREE.SphereGeometry(.014, 4, 3), new THREE.MeshBasicMaterial({ color: 0x8faaa2 }));
+  drip.name = 'pipe-water-drop'; drip.visible = false; scene.add(drip);
+  let lastDistantId = '';
   const staticRandom = randomGenerator(1553);
   let nextStatic = 0, nextFlicker = 1.7, flickerUntil = 0, swing = 0, lastImpulse = 0, nextEventStatic = 0, nextViewers = 0;
   function restoreEvent() {
@@ -347,8 +385,9 @@ export function createRoom(scene: THREE.Scene): BunkerRoom {
       bulbLight.color.setHex(0xffdfb0); ambient.color.setHex(0x7d8c72);
       tvGlows[0].intensity = 1.45; tvGlows[1].intensity = 1.45 * .8;
       brokenSlat.position.z = .63; brokenSlat.rotation.y = .52; fallenLeg.position.x = -.51; fallenLeg.rotation.y = .7;
+      lastDistantId = ''; dust.visible = drip.visible = guardEyes.visible = false; doorHandle.rotation.z = 0; root.userData.distantReaction = null; root.userData.ambientEvent = null;
     },
-    dispose() { eventMaterial.dispose(); eventTexture.dispose(); },
+    dispose() { eventMaterial.dispose(); eventTexture.dispose(); dustGeometry.dispose(); dustMaterial.dispose(); dust.removeFromParent(); drip.geometry.dispose(); drip.material.dispose(); drip.removeFromParent(); },
     update(time, delta, danger, suspense, impulse, event = null, now = Date.now(), campaign = {}) {
       const active = event && now >= event.startedAt && now < event.startedAt + event.duration ? event : null;
       root.userData.event = active?.kind ?? null;
@@ -366,10 +405,12 @@ export function createRoom(scene: THREE.Scene): BunkerRoom {
       fallenLeg.position.x = number === 3 ? -.75 : -.51;
       const exiting = isExitStage(campaign.phase, campaign.storyStage);
       const stage = campaign.storyStage ?? '', elapsed = campaign.stageElapsed ?? 0;
-      stairs.visible = doorway.visible = exiting;
+      const guardOpening = guardDoorProgress(campaign.cinematic, now);
+      stairs.visible = exiting; doorway.visible = exiting || guardOpening > .005;
       const doorProgress = exiting ? stage === 'door' ? THREE.MathUtils.smoothstep(elapsed / 1.5, 0, 1) : 1 : 0;
-      doorHinge.rotation.y = doorProgress * 1.64;
+      doorHinge.rotation.y = Math.max(doorProgress, guardOpening) * 1.64;
       root.userData.exitOpen = doorProgress > .98;
+      root.userData.guardDoorOpen = guardOpening > .98;
       if (exiting && now >= nextViewers) {
         const progress = stage === 'viewers' ? Math.min(1, elapsed / 1.5) : stage === 'title' ? 1 : 0;
         const count = Math.floor(11980 + progress * 428);
@@ -378,6 +419,36 @@ export function createRoom(scene: THREE.Scene): BunkerRoom {
         viewersContext.fillText('VIEWERS:', 48, 27); viewersContext.font = 'bold 14px monospace'; viewersContext.fillText(count.toLocaleString('en-US'), 48, 48);
         viewersTexture.needsUpdate = true; viewersScreen.userData.viewers = count; nextViewers = now + 100;
       }
+      const distant = campaign.distantShot;
+      const distantAge = distant ? (now - distant.startedAt) / 1000 : -1;
+      if (distant && distant.id !== lastDistantId) {
+        lastDistantId = distant.id; swing = Math.max(swing, .095);
+        const random = randomGenerator(distant.table * 8191 + distant.startedAt % 65536);
+        for (let index = 0; index < 48; index++) {
+          dustRest[index * 3] = (random() - .5) * 4.2;
+          dustRest[index * 3 + 1] = 2.3 + random() * .8;
+          dustRest[index * 3 + 2] = -2.5 + random() * 3;
+        }
+        root.userData.distantReaction = distant.id;
+      }
+      dust.visible = distantAge >= 0 && distantAge < 2.8;
+      if (dust.visible) {
+        for (let index = 0; index < 48; index++) {
+          dustPositions[index * 3] = dustRest[index * 3] + Math.sin(time * .7 + index) * .025;
+          dustPositions[index * 3 + 1] = dustRest[index * 3 + 1] - distantAge * (.35 + index % 5 * .055);
+          dustPositions[index * 3 + 2] = dustRest[index * 3 + 2];
+        }
+        dustGeometry.attributes.position.needsUpdate = true; dustMaterial.opacity = .55 * Math.min(1, (2.8 - distantAge) * 1.4);
+      }
+      const ambientEvent = campaign.ambientEvent;
+      const ambientAge = ambientEvent ? (now - ambientEvent.startedAt) / 1000 : -1;
+      const ambientActive = !!ambientEvent && ambientAge >= 0 && ambientAge * 1000 < ambientEvent.duration && !shotSequenceActive(campaign.phase ?? 'PLAYER_DECISION', suspense);
+      root.userData.ambientEvent = ambientActive ? ambientEvent.kind : null;
+      doorHandle.rotation.z = ambientActive && ambientEvent.kind === 'handle' ? Math.sin(ambientAge * 33) * .23 : 0;
+      guardEyes.visible = ambientActive && ambientEvent.kind === 'guard' && ambientAge > .25 && ambientAge < 2.4;
+      guardEyes.position.x = guardEyes.visible ? Math.sin(ambientAge * 1.3) * .025 : 0;
+      drip.visible = ambientActive && ambientEvent.kind === 'drip';
+      if (drip.visible) drip.position.set(-3.17, 2.75 - (ambientAge * 1.8 % 2.6), -3.4);
       if (time >= nextStatic) {
         for (let i = 0; i < staticPixels.data.length; i += 4) {
           const row = Math.floor(i / (64 * 4));
@@ -395,7 +466,8 @@ export function createRoom(scene: THREE.Scene): BunkerRoom {
       swing = Math.max(0, swing - delta * .009);
       lamp.rotation.z = Math.sin(time * 2.8) * (.007 + swing);
       lamp.rotation.x = Math.cos(time * 2.1) * swing * .45;
-      const flicker = time < flickerUntil ? .4 + staticRandom() * .14 : 1;
+      let flicker = time < flickerUntil ? .4 + staticRandom() * .14 : 1;
+      if (ambientActive && ambientEvent.kind === 'bulb') flicker *= Math.sin(ambientAge * 29) > .35 ? .13 : 1;
       const dim = suspense ? .65 : 1;
       let power = 1;
       if (active?.kind === 'blackout') {

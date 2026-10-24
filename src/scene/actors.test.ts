@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { CONFIG, type Card, type Round } from '../game';
 import { createActors, type ActorState } from './actors';
+import { GUN_REST, CARD_WIDTH, CARD_HEIGHT } from '../tableLayout';
 
 const TABLE_Y = .8865;
 const card = (rank: string, suit: Card['suit']): Card => ({ rank, suit, id: `${suit}-${rank}` });
@@ -107,8 +108,10 @@ describe('physical blackjack cards and dealer scene', () => {
     actors.update(time, 0, { ...state, tell: { kind: 'avert', disposition: 'nervous' } });
     expect(actors.head.rotation.y - baseYaw).toBeGreaterThan(.1);
     actors.update(time, 0, { ...state, phase: 'REVEAL', tell: { kind: 'avert', disposition: 'nervous' } });
-    expect(actors.head.rotation.y).toBe(baseYaw);
-    const fingers = actors.leftHand.children.filter(child => child instanceof THREE.Group);
+    const revealYaw = actors.head.rotation.y;
+    actors.update(time, 0, { ...state, phase: 'REVEAL', tell: null });
+    expect(actors.head.rotation.y).toBe(revealYaw);
+    const fingers = actors.leftHand.children.filter(child => child instanceof THREE.Group && typeof child.userData.fingerIndex === 'number' && child.userData.fingerIndex < 4);
     for (const sample of [.3, .7, 1.1]) {
       actors.update(sample, 0, { ...state, tell: { kind: 'still', disposition: 'calm' } });
       expect(actors.head.rotation.y).toBe(0); expect(actors.head.rotation.z).toBe(0);
@@ -121,13 +124,13 @@ describe('physical blackjack cards and dealer scene', () => {
   it('raises and cocks progressively, advances the visible cylinder, and eases down after release', () => {
     settleOpening();
     advance(.7, { phase: 'PLAYER_SHOOTING', triggerHeld: true, triggerProgress: .2, chambersFired: 2 });
-    const low = actors.gun.position.y, lowHammer = actors.hammer.rotation.z;
+    const low = actors.gun.getWorldPosition(new THREE.Vector3()).y, lowHammer = actors.hammer.rotation.z;
     advance(.5, { triggerProgress: .85 });
-    expect(actors.gun.position.y).toBeGreaterThan(low + .2);
+    expect(actors.gun.getWorldPosition(new THREE.Vector3()).y).toBeGreaterThan(low + .2);
     expect(actors.hammer.rotation.z).toBeLessThan(lowHammer - .3);
     expect(actors.cylinder.rotation.x).toBeGreaterThan(.8);
     advance(.8, { triggerHeld: false, triggerProgress: 0 });
-    expect(actors.gun.position.y).toBeCloseTo(.962, 2);
+    expect(actors.gun.getWorldPosition(new THREE.Vector3()).y).toBeCloseTo(.962, 2);
     expect(actors.hammer.rotation.z).toBeCloseTo(-.6, 2);
     expect(actors.cylinder.rotation.x).toBeCloseTo(0, 2);
   });
@@ -157,11 +160,9 @@ describe('physical blackjack cards and dealer scene', () => {
     const screen = muzzle.clone().project(camera);
     expect(Math.abs(screen.x)).toBeLessThan(.002); expect(Math.abs(screen.y)).toBeLessThan(.002);
     advance(2, { phase: 'AI_SHOOTING', triggerHeld: false, triggerProgress: 0 });
-    expect(actors.gun.position.x).toBeCloseTo(.47, 3);
-    expect(actors.gun.position.y).toBeCloseTo(2, 3);
-    expect(actors.gun.position.z).toBeCloseTo(-1.48, 3);
-    const expected = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.PI - .3, -.03));
-    expect(actors.gun.quaternion.angleTo(expected)).toBeLessThan(.001);
+    const muzzleAtTemple = actors.gun.localToWorld(new THREE.Vector3(.315,.09,0));
+    expect(muzzleAtTemple.distanceTo(new THREE.Vector3(...actors.gun.userData.temple))).toBeLessThan(.025);
+    expect(actors.gun.parent).toBe(actors.rightHand);
   });
 
   it('finishes centering before the continuous hold fires, rather than only at completed progress', () => {
@@ -211,7 +212,7 @@ describe('physical blackjack cards and dealer scene', () => {
       const palm = hand.localToWorld(new THREE.Vector3(0, 0, .055));
       expect(palm.distanceTo(grip)).toBeLessThan(.09);
     }
-    const fingers = hand.children.filter(child => child instanceof THREE.Group);
+    const fingers = hand.children.filter(child => child instanceof THREE.Group && typeof child.userData.fingerIndex === 'number' && child.userData.fingerIndex < 4);
     expect(fingers).toHaveLength(4);
     expect(fingers.every(finger => finger.rotation.x <= -.5)).toBe(true);
     const muzzle = actors.gun.localToWorld(new THREE.Vector3(.315, .09, 0)).project(camera);
@@ -224,7 +225,7 @@ describe('physical blackjack cards and dealer scene', () => {
     settleOpening();
     const hand = actors.playerHands.getObjectByName('Player right gripping hand')!;
     const idle = hand.quaternion.clone(), idlePosition = hand.position.clone();
-    const fingers = hand.children.filter(child => child instanceof THREE.Group);
+    const fingers = hand.children.filter(child => child instanceof THREE.Group && typeof child.userData.fingerIndex === 'number' && child.userData.fingerIndex < 4);
     const spin = new THREE.Quaternion().setFromEuler(new THREE.Euler(-.8, Math.PI + .17, .6));
     advance(.5, { phase: 'PLAYER_SHOOTING', triggerHeld: true, triggerProgress: .9 });
     advance(1.8, { triggerHeld: false, triggerProgress: 0 });
@@ -261,22 +262,20 @@ describe('physical blackjack cards and dealer scene', () => {
     advance(.3); expect(actors.cylinder.rotation.x).toBe(0);
   });
 
-  it('shows a private peek face to the camera, lifts only a card back on the deck, and removes the secret on the next action', () => {
-    settleOpening(); const next = card('Q', 'hearts');
-    tick(.01, { peekActor: 'player', peekSerial: 1, peekedCard: next }); advance(.3);
-    expect(actors.peekCard.visible).toBe(true); expect(actors.deckCorner.visible).toBe(true);
-    expect(actors.deckCorner.rotation.x).toBeLessThan(-.2);
-    expect(actors.peekCard.userData.identity).toBe(next.id);
-    expect((actors.peekFront.material as THREE.MeshStandardMaterial).map).not.toBeNull();
-    scene.updateMatrixWorld(true);
-    const center = actors.peekFront.getWorldPosition(new THREE.Vector3());
-    const normal = new THREE.Vector3(0, 0, 1).transformDirection(actors.peekFront.matrixWorld);
-    expect(normal.dot(camera.getWorldPosition(new THREE.Vector3()).sub(center).normalize())).toBeGreaterThan(.8);
-    expect(normal.dot(actors.head.getWorldPosition(new THREE.Vector3()).sub(center).normalize())).toBeLessThan(0);
-    tick(.01, { phase: 'DEALER_PEEKING', peekActor: 'ai', peekSerial: 2, peekedCard: null }); advance(.3);
-    expect(actors.peekCard.visible).toBe(false);
+  it('exposes only a hinged corner attached to the deck and clears its face on completion', () => {
+    settleOpening(); const next = card('Q','hearts');
+    tick(.01,{phase:'PLAYER_PEEKING',peekActor:'player',peekSerial:1,peekedCard:next}); advance(.4);
+    expect(actors.deckCorner.visible).toBe(true);
+    expect(actors.deckCorner.userData.attachedToDeck).toBe(true);
+    expect(actors.peekFront.parent).toBe(actors.deckCorner);
+    expect(actors.peekFront.geometry.attributes.position.count).toBe(3);
+    expect(actors.deckCorner.parent).toBe(scene); // No card face in the camera rig.
+    const bounds = new THREE.Box3().setFromObject(actors.deckCorner);
+    expect(bounds.max.y-bounds.min.y).toBeLessThan(.19);
+    expect(actors.rightPlayerArm.pose.root.distanceTo(actors.rightPlayerArm.pose.joint)).toBeCloseTo(.42);
+    tick(.01,{phase:'PLAYER_DECISION',peekActor:null});
+    expect(actors.deckCorner.visible).toBe(false);
     expect((actors.peekFront.material as THREE.MeshStandardMaterial).map).toBeNull();
-    expect(actors.cardSlots.find(slot => slot.owner === 'ai' && slot.index === 1)!.front.userData.identity).toBe('unrevealed');
   });
 
   it('bases fear and hand tremble on fired chambers, reduces it for motion preferences, and amplifies it while pulling', () => {
@@ -304,14 +303,14 @@ describe('physical blackjack cards and dealer scene', () => {
     const door = { ...event, kind: 'door' as const, startedAt: Date.now() - 120 };
     actors.update(time, 0, { ...state, phase: 'PLAYER_DECISION', event: door });
     expect(actors.head.rotation.x).toBeLessThan(quietPitch - .07);
-    expect(actors.stranger.position.z).toBeLessThan(-1.67);
+    expect(actors.stranger.position.z).toBeLessThan(-1.37);
     actors.update(time, 0, { ...state, phase: 'HITTING', event: door });
-    expect(actors.head.rotation.x).toBe(quietPitch); expect(actors.stranger.position.z).toBe(-1.65);
+    expect(actors.head.rotation.x).toBe(quietPitch); expect(actors.stranger.position.z).toBe(-1.35);
   });
 
   it('has exactly one Host, one captive and the player, with a separate human face for each room', () => {
     settleOpening();
-    const roles: string[] = []; scene.traverse(object => { if (object.userData.actorRole) roles.push(object.userData.actorRole); });
+    const roles: string[] = []; scene.traverse(object => { if (object.userData.actorRole && object.visible) roles.push(object.userData.actorRole); });
     expect(roles.sort()).toEqual(['captive', 'host', 'player']);
     expect(actors.stranger).toBe(actors.captive); expect(actors.head).toBe(actors.captiveHead);
     expect(actors.host.position.x).toBeLessThan(-1.8); expect(actors.captive.position.x).toBe(0);
@@ -338,13 +337,13 @@ describe('physical blackjack cards and dealer scene', () => {
   it('keeps the Host upright and away from the shooting hand while the captive shoots and dies', () => {
     settleOpening();
     advance(.8, { phase: 'AI_SHOOTING', suspense: true });
-    expect(actors.rightHand.getWorldPosition(new THREE.Vector3()).distanceTo(actors.gun.position)).toBeLessThan(.3);
-    expect(actors.hostRightHand.getWorldPosition(new THREE.Vector3()).distanceTo(actors.gun.position)).toBeGreaterThan(1);
+    expect(actors.rightHand.getWorldPosition(new THREE.Vector3()).distanceTo(actors.gun.getWorldPosition(new THREE.Vector3()))).toBeLessThan(.3);
+    expect(actors.hostRightHand.getWorldPosition(new THREE.Vector3()).distanceTo(actors.gun.getWorldPosition(new THREE.Vector3()))).toBeGreaterThan(1);
     advance(1.2, { phase: 'GAME_OVER', dead: 'ai', suspense: false, shotEffect: 'shot' });
     expect(actors.captive.rotation.x).toBeGreaterThan(1.2);
     expect(actors.host.rotation.x).toBe(0); expect(actors.host.rotation.z).toBe(0);
     expect(actors.host.position.y).toBe(.86);
-    expect(actors.host.userData.canShoot).toBe(false); expect(actors.host.userData.canDie).toBe(false);
+    expect(actors.host.userData.canShoot).toBe(true); expect(actors.host.userData.canDie).toBe(false);
   });
 
   it('bobs only the active speaker even when both voice buses report levels', () => {
@@ -427,7 +426,7 @@ describe('physical blackjack cards and dealer scene', () => {
     const eye = camera.getWorldPosition(new THREE.Vector3()), stranger = actors.head.getWorldPosition(new THREE.Vector3());
     for (const slot of slots) {
       expect(slot.group.parent).toBe(actors.heldRig);
-      expect(slot.group.scale.x).toBeCloseTo(.54, 2);
+      expect(slot.group.scale.x).toBeCloseTo(.80, 2);
       const normal = faceNormal(slot), center = position(slot);
       expect(normal.dot(eye.clone().sub(center).normalize())).toBeGreaterThan(.95);
       expect(normal.dot(stranger.clone().sub(center).normalize())).toBeLessThan(0);
@@ -445,7 +444,7 @@ describe('physical blackjack cards and dealer scene', () => {
       actors.setCards({ player: cards.slice(0, count), ai: opening().ai, deck: [] }, false);
       advance(1.1, { phase: 'PLAYER_DECISION' });
       camera.updateProjectionMatrix(); scene.updateMatrixWorld(true);
-      for (const slot of activePlayerCards()) for (const x of [-.235,.235]) for (const y of [-.33,.33]) {
+      for (const slot of activePlayerCards()) for (const x of [-CARD_WIDTH / 2,CARD_WIDTH / 2]) for (const y of [-CARD_HEIGHT / 2,CARD_HEIGHT / 2]) {
         const corner = slot.front.localToWorld(new THREE.Vector3(x,y,0)).project(camera);
         // Action buttons begin at scene y=714/810; leave their rectangle clear.
         expect(corner.y).toBeGreaterThan(1 - 2 * 710 / 810);
@@ -474,7 +473,7 @@ describe('physical blackjack cards and dealer scene', () => {
     tick(CONFIG.DEAL_SPEED / 1000, { phase: 'PLAYER_DECISION' });
     for (const slot of activePlayerCards()) {
       expect(slot.group.parent).toBe(actors.heldRig);
-      expect(slot.group.scale.x).toBeCloseTo(.54);
+      expect(slot.group.scale.x).toBeCloseTo(.80);
       expect(slot.group.position.z).toBeLessThan(-1);
     }
     actors.setCards(round, true);
@@ -519,9 +518,80 @@ describe('physical blackjack cards and dealer scene', () => {
     actors.setCards(empty(), false);
     tick(.016, { phase: 'SHUFFLING', roundNumber: 1, revealed: false, suspense: false, dead: null, shotEffect: null });
     expect(actors.stranger.rotation.x).toBe(0);
-    expect(actors.gun.position.toArray()).toEqual([.12, .962, .02]);
+    expect(actors.gun.position.toArray()).toEqual([...GUN_REST]);
     expect(actors.cardSlots.filter(slot => slot.group.visible)).toHaveLength(0);
     const hole = actors.cardSlots.find(slot => slot.owner === 'ai' && slot.index === 1)!;
     expect((hole.front.material as THREE.MeshStandardMaterial).map).toBeNull();
   });
+});
+
+describe('Big Update 2 physical cast', () => {
+  it('keeps authored limb lengths in every reach, hold, guard and seated pose', () => {
+    settleOpening();
+    for (const phase of ['DEALING','PLAYER_DECISION','REVEAL','AI_SHOOTING','PLAYER_SHOOTING','OPENING','TRANSITION'] as const) {
+      advance(.2, { phase, triggerProgress: .8, cinematic: phase === 'OPENING' ? { stage: 'opponent-unhood', startedAt: Date.now() - 1000, mode: 'full' } : null });
+      scene.traverse(object => {
+        if (!(object instanceof THREE.Mesh) || !object.userData.anatomyBone) return;
+        const length = object.userData.restLength;
+        const bottom = object.localToWorld(new THREE.Vector3(0, -length / 2, 0));
+        const top = object.localToWorld(new THREE.Vector3(0, length / 2, 0));
+        expect(bottom.distanceTo(top), object.name).toBeCloseTo(length, 6);
+        expect(object.scale.toArray()).toEqual([1,1,1]);
+      });
+    }
+    expect(actors.captiveLegs.feet.every(foot => foot.getWorldPosition(new THREE.Vector3()).y < .15)).toBe(true);
+    expect(actors.chair.visible).toBe(true);
+  });
+  it('parents the captive gun to its palm, touches the temple, and releases after a click', () => {
+    settleOpening(); advance(2, { phase: 'AI_SHOOTING' });
+    expect(actors.gun.parent).toBe(actors.rightHand);
+    const muzzle = actors.gun.localToWorld(new THREE.Vector3(.315,.09,0));
+    expect(muzzle.distanceTo(new THREE.Vector3(...actors.gun.userData.temple))).toBeLessThan(.025);
+    advance(1.1, { phase: 'ROUND_RESULT', shotEffect: 'click' });
+    expect(actors.gun.parent).toBe(scene);
+    expect(actors.gun.position.distanceTo(new THREE.Vector3(...GUN_REST))).toBeLessThan(.01);
+  });
+  it('uses distinct rank/suit textures, flat upright captive cards and a separate gun zone', () => {
+    settleOpening(); actors.setCards(opening(), true); advance(1, { phase: 'REVEAL', revealed: true });
+    for (const slot of actors.cardSlots.filter(slot => slot.active)) {
+      const texture = (slot.front.material as THREE.MeshStandardMaterial).map!;
+      const expected = opening()[slot.owner][slot.index];
+      expect(texture.userData.rank).toBe(expected.rank); expect(texture.userData.suit).toBe(expected.suit);
+      expect(slot.group.position.x).toBeLessThan(1.1); expect(faceNormal(slot).y).toBeGreaterThan(.99);
+    }
+  });
+});
+
+describe('physical Host enforcement and attention', () => {
+  it('keeps the Host gun in its wrapped palm with fixed bones and returns it after an empty forced shot', () => {
+    settleOpening(); const epoch=50000; vi.spyOn(Date,'now').mockReturnValue(epoch);
+    tick(.1,{phase:'HOST_FORCE_SHOT',forceShotAt:epoch-2800});
+    expect(actors.gun.parent).toBe(actors.hostRightHand); expect(actors.gun.userData.holder).toBe('host');
+    const muzzle=actors.gun.localToWorld(new THREE.Vector3(.315,.09,0));
+    const target=camera.localToWorld(new THREE.Vector3(-.14,.015,-.12));
+    expect(muzzle.distanceTo(target)).toBeLessThan(.05);
+    expect(actors.hostRightArm.limb.pose.root.distanceTo(actors.hostRightArm.limb.pose.joint)).toBeCloseTo(.42);
+    vi.mocked(Date.now).mockReturnValue(epoch+3500);
+    advance(1,{phase:'ROUND_RESULT',shotEffect:'click'});
+    expect(actors.gun.parent).toBe(scene); expect(actors.gun.position.distanceTo(new THREE.Vector3(...GUN_REST))).toBeLessThan(.02);
+  });
+  it('uses attention only on the matching character, visibly turning back in the final 400ms', () => {
+    settleOpening(); const gaze={away:true,returning:false,amount:1,direction:-1};
+    tick(.01,{attention:{host:gaze,captive:{...gaze,direction:1},window:true}});
+    expect(actors.hostHead.rotation.y).toBeCloseTo(-.70); expect(actors.head.rotation.y).toBeCloseTo(.72);
+    tick(.01,{attention:{host:{...gaze,returning:true,amount:.25},captive:{...gaze,direction:1,returning:true,amount:.25},window:true}});
+    expect(Math.abs(actors.head.rotation.y)).toBeLessThan(.3); expect(Math.abs(actors.hostHead.rotation.y)).toBeLessThan(.3);
+  });
+});
+
+it('covers the lowered human head with burlap, then sends both cloth hoods away in the guard pocket', () => {
+  settleOpening(); const epoch=Date.now();
+  tick(.1,{phase:'OPENING',cinematic:{stage:'hooded',startedAt:epoch,mode:'full'},tiesCut:{player:false,ai:false}});
+  const cloth=new THREE.Box3().setFromObject(actors.captiveHood), face=actors.head.getWorldPosition(new THREE.Vector3());
+  expect(cloth.min.y).toBeLessThan(face.y-.18); expect(cloth.max.y).toBeGreaterThan(face.y+.18);
+  tick(.1,{cinematic:{stage:'guard-exit',startedAt:epoch,mode:'full'}});
+  expect(actors.guards[0].foldedHoods.visible).toBe(true);
+  expect(actors.guards[0].group.userData.hoodsCarried).toBe(2); expect(actors.captiveHood.visible).toBe(false);
+  tick(.1,{cinematic:{stage:'rules',startedAt:epoch,mode:'full'}});
+  expect(actors.guards.every(guard=>!guard.group.visible)).toBe(true);
 });

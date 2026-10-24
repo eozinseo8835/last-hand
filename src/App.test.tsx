@@ -107,11 +107,29 @@ describe('campaign speaker presentation', () => {
     expect(entries).toEqual({
       'ROOMS CLEARED': `${win ? 3 : room - 1} / 3`, 'ROUNDS PLAYED': '12',
       'HANDS WON / LOST / PUSHED': '7 / 4 / 1', 'HITS / BUSTS': '9 / 2', 'FOLDS USED': '5',
-      'HIGHEST CHAMBER': '6', 'YOUR SPIN / PEEK': '2 / 3', 'OPPONENT SPIN / PEEK': '1 / 2',
+      'HIGHEST CHAMBER': '6', 'FORCED SHOTS': '0', 'YOUR SPIN / PEEK': '2 / 3', 'OPPONENT SPIN / PEEK': '1 / 2',
       [win ? 'GUESTS REMAINING' : 'GUESTS WHEN YOU FELL']: room === 2 ? '3' : '1', 'TOTAL TIME': '2:05',
     });
     expect(container.querySelector('.end-content h2')?.textContent).toContain(win ? 'SURVIVED' : 'YOU DIED');
     expect(container.querySelectorAll('.dialogue')).toHaveLength(0); expect(tableAudio.startVoice).not.toHaveBeenCalled();
     act(() => button('Play Again').click()); expect(actions.start).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Big Update 2 decision and trigger HUD', () => {
+  it('lights PEEK only for a shared attention window and shows the successful corner note', () => {
+    Object.assign(game,{attention:{window:false}}); render(); expect(button('PEEK').disabled).toBe(true);
+    Object.assign(game,{attention:{window:true}}); render(); expect(button('PEEK').disabled).toBe(false);
+    expect(button('PEEK').classList.contains('peek-window')).toBe(true);
+    Object.assign(game,{peekedCard:{rank:'2',suit:'hearts',id:'hearts-2'}}); render();
+    expect(container.querySelector('.peek-note')?.textContent).toBe('You saw: 2♥');
+  });
+  it('shows a red countdown under five seconds and removes every shooting control during Host enforcement', () => {
+    Object.assign(game,{phase:'PLAYER_SHOOTING',awaitingTrigger:true,triggerRemainingMs:4999}); render();
+    expect(container.querySelector('.trigger-countdown.urgent')?.textContent).toBe('5s');
+    expect(button('HOLD TO PULL').disabled).toBe(false);
+    Object.assign(game,{phase:'HOST_FORCE_SHOT',awaitingTrigger:false}); render();
+    expect(container.querySelector('.host-enforcement')).not.toBeNull();
+    expect(container.querySelector('.spin-button')).toBeNull(); expect(container.querySelector('.trigger-countdown')).toBeNull();
   });
 });

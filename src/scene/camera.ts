@@ -76,7 +76,34 @@ export function updateLook(state: LookState, delta: number, recenter: boolean): 
 /** Presentation phases keep the deal, reveal, and trigger pull in the player's view. */
 export function shouldRecenter(phase: GamePhase, suspense: boolean): boolean {
   return suspense || phase === 'SHUFFLING' || phase === 'DEALING' || phase === 'PEEKING' ||
-    phase === 'HITTING' || phase === 'REVEAL' || phase === 'DEALER_TURN' || phase === 'DEALER_PEEKING' ||
+    phase === 'HITTING' || phase === 'REVEAL' || phase === 'PLAYER_PEEKING' || phase === 'HOST_FORCE_SHOT' ||
     phase === 'SWEEPING' || phase === 'AI_SHOOTING' || phase === 'PLAYER_SHOOTING' || phase === 'GAME_OVER' ||
     phase === 'OPENING' || phase === 'TRANSITION' || phase === 'ENDING_WIN' || phase === 'ENDING_DEATH';
+}
+
+
+export type LeanState = { amount: number; target: number };
+export const MAX_SAFE_LEAN = .65;
+export function createLeanState(): LeanState { return { amount: 0, target: 0 }; }
+function leanLimit(limit: number) { return Number.isFinite(limit) ? Math.min(MAX_SAFE_LEAN, Math.max(0, limit)) : 0; }
+
+/** Wheel movement leans the seated torso; it never turns into walking or unrestricted zoom. */
+export function wheelLean(state: LeanState, deltaY: number, limit: number, allowed: boolean): void {
+  if (!allowed || !Number.isFinite(deltaY)) return;
+  state.target = Math.max(0, Math.min(leanLimit(limit), state.target - deltaY * .0015));
+}
+
+export function updateLean(state: LeanState, delta: number, limit: number, locked: boolean): void {
+  const maximum = leanLimit(limit);
+  state.target = locked ? 0 : Math.max(0, Math.min(maximum, state.target));
+  state.amount += (state.target - state.amount) * (1 - Math.exp(-12 * Math.max(0, delta)));
+  state.amount = Math.max(0, Math.min(maximum, state.amount));
+}
+
+/** Covered players can turn their head before the guard takes hold of the hood. */
+export function cameraRecenter(phase: GamePhase, suspense: boolean, cinematic?: { stage: string; mode: string } | null): boolean {
+  const coveredLook = cinematic && (cinematic.mode === 'transfer'
+    ? ['transfer-hood', 'lift', 'dragging', 'door'].includes(cinematic.stage)
+    : ['hooded', 'door-open', 'guard-approach'].includes(cinematic.stage));
+  return !suspense && coveredLook ? false : shouldRecenter(phase, suspense);
 }

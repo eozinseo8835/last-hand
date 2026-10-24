@@ -12,6 +12,7 @@ export const CONFIG = {
   LOOK_SENSITIVITY: 0.0035,
   PIXEL_HEIGHT: 360,
   LOOK_KEY_SPEED: 1.25,
+  LEAN_DISTANCE: .45,
   DEAL_SPEED: 650,
   DEALER_STANDS_ON: 17,
   VOICE_ENABLED: true,
@@ -21,7 +22,10 @@ export const CONFIG = {
   TELL_ACCURACY: .7,
   HEARTBEAT_BASE_BPM: 60,
   TRIGGER_HOLD_MS: 3000,
-  RANDOM_EVENT_CHANCE: .35,
+  TRIGGER_TIMEOUT_MS: 15000,
+  PEEK_DURATION_MS: 1000,
+  PEEK_CAUGHT_PENALTY: 'trigger' as 'trigger' | 'folds',
+  RANDOM_EVENT_CHANCE: .6,
 };
 
 export type GamePhase =
@@ -33,6 +37,8 @@ export type GamePhase =
   | 'SHUFFLING'
   | 'DEALING'
   | 'PEEKING'
+  | 'PLAYER_PEEKING'
+  | 'HOST_FORCE_SHOT'
   | 'HITTING'
   | 'DEALER_TURN'
   | 'DEALER_PEEKING'

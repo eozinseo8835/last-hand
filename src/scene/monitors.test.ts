@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { createCeilingFeed, createMonitorWall } from './monitors';
+import { stageDurationMs } from '../cinematics';
 
 let scene: THREE.Scene, monitors: ReturnType<typeof createMonitorWall>;
 
@@ -176,5 +177,82 @@ describe('campaign surveillance feeds', () => {
     expect(scene.getObjectByName('campaign-monitor-wall')).toBeUndefined();
     monitors.dispose();
     for (const dispose of mapDispose) expect(dispose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('living tables on the monitor wall', () => {
+  it('gives every generated table one pale masked Host who deals to two distinct captive seats', () => {
+    monitors.update({ roomNumber: 1 }, 4);
+    for (const screen of monitors.screens) {
+      expect(screen.userData.hostVisible).toBe(true);
+      expect(screen.userData.hostMasked).toBe(true);
+      expect(screen.userData.captiveCount).toBe(2);
+      expect(screen.userData.hostAction).toBe('deal');
+      expect(screen.userData.activity).toBe('deal');
+    }
+    monitors.update({ roomNumber: 2 }, 4.2);
+    const active = monitors.screens.filter(screen => screen.parent?.visible);
+    expect(active).toHaveLength(1);
+    expect(active[0].userData.hostAction).toBe('deal');
+  });
+
+  it('shows a conspicuous gesture or glitch at least every twenty seconds without using gameplay RNG', () => {
+    const random = vi.spyOn(Math, 'random').mockImplementation(() => { throw Error('Feed consumed deck randomness'); });
+    for (const roomNumber of [1, 2] as const) {
+      const events = new Map<number, number>(), kinds = new Set<string>();
+      for (let time = 0; time < 180; time += .25) {
+        monitors.update({ roomNumber }, time);
+        for (const screen of monitors.screens.filter(screen => screen.parent?.visible)) {
+          if (screen.userData.activity !== 'deal') {
+            if (!events.has(screen.userData.activitySerial)) events.set(screen.userData.activitySerial, time);
+            kinds.add(screen.userData.activity);
+          }
+        }
+      }
+      const starts = [...events.values()];
+      expect(starts.length).toBeGreaterThan(10);
+      for (let index = 1; index < starts.length; index++) expect(starts[index] - starts[index - 1]).toBeLessThanOrEqual(20);
+      for (const kind of ['flinch', 'beg', 'slam', 'hide', 'glitch']) expect(kinds.has(kind)).toBe(true);
+      monitors.reset();
+    }
+    expect(random).not.toHaveBeenCalled();
+  });
+
+  it('removes the player hood before the opponent hood, keeps tied wrists still, and sends both hoods out with the guard', () => {
+    const cinematic = (stage: import('../cinematics').CinematicStage, startedAt = 1000) => ({ stage, startedAt, mode: 'arrival' as const });
+    const state = { roomNumber: 1 as const, phase: 'OPENING', tiesCut: { player: false, ai: false } };
+    monitors.update({ ...state, cinematic: cinematic('hooded') }, 0, 1000);
+    expect(monitors.screens[0].userData).toMatchObject({ playerHoodProgress: 0, opponentHoodProgress: 0, playerTied: true, opponentTied: true });
+    monitors.update({ ...state, cinematic: cinematic('player-unhood') }, 1, 1425);
+    expect(monitors.screens[0].userData).toMatchObject({ playerHoodProgress: .5, opponentHoodProgress: 0, guardVisible: true });
+    monitors.update({ ...state, cinematic: cinematic('player-focus') }, 2, 2000);
+    expect(monitors.screens[0].userData).toMatchObject({ playerHoodProgress: 1, opponentHoodProgress: 0, guardVisible: true });
+    monitors.update({ ...state, cinematic: cinematic('opponent-unhood') }, 3, 1000+stageDurationMs('opponent-unhood')*.4);
+    expect(monitors.screens[0].userData.opponentHoodProgress).toBe(0);
+    monitors.update({ ...state, cinematic: cinematic('opponent-unhood') }, 3.5, 1000+stageDurationMs('opponent-unhood')*.8);
+    expect(monitors.screens[0].userData).toMatchObject({ playerHoodProgress: 1, guardVisible: true });
+    expect(monitors.screens[0].userData.opponentHoodProgress).toBeGreaterThan(.5);
+    expect(monitors.screens[0].userData.opponentHoodProgress).toBeLessThan(.6);
+    monitors.update({ ...state, cinematic: cinematic('guard-exit') }, 4, 2000);
+    expect(monitors.screens[0].userData).toMatchObject({ playerHoodProgress: 1, opponentHoodProgress: 1, guardVisible: true });
+    monitors.update({ ...state, cinematic: cinematic('rules') }, 5, 2000);
+    expect(monitors.screens[0].userData.guardVisible).toBe(false);
+    monitors.update({ ...state, cinematic: cinematic('cut-opponent') }, 6, 2000);
+    expect(monitors.screens[0].userData.hostAction).toBe('cut-ties');
+    monitors.update({ ...state, tiesCut: { player: false, ai: true }, cinematic: cinematic('cut-player') }, 7, 2000);
+    expect(monitors.screens[0].userData).toMatchObject({ playerTied: true, opponentTied: false, hostAction: 'cut-ties' });
+    monitors.update({ ...state, tiesCut: { player: true, ai: true }, cinematic: cinematic('complete') }, 8, 2000);
+    expect(monitors.screens[0].userData).toMatchObject({ playerTied: false, opponentTied: false, guardVisible: false });
+  });
+
+  it('keeps room-three activity on the real ceiling map rather than painting generated actors over it', () => {
+    const ceiling = new THREE.Texture(); monitors.setCeilingTexture(ceiling);
+    monitors.update({ roomNumber: 3 }, 45);
+    expect(monitors.group.userData.mode).toBe('ceiling');
+    for (const screen of monitors.screens) {
+      expect(screen.material.map).toBe(ceiling);
+      expect(screen.userData.status).toBe('ceiling');
+    }
+    ceiling.dispose();
   });
 });

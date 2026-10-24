@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { createRoom, decisionEvent, isExitStage, type BunkerRoom } from './room';
 import type { GamePhase } from '../game';
 import type { RoundEvent } from '../tension';
+import { stageDurationMs } from '../cinematics';
 
 let scene: THREE.Scene, room: BunkerRoom;
 let fillText: ReturnType<typeof vi.fn>;
@@ -141,4 +142,71 @@ describe('temporary room tension events', () => {
     room.update(.7, .016, false, false, 0, null, 1700, { roomNumber: 3, phase: 'ENDING_WIN', storyStage: 'stairs', stageElapsed: 0 });
     expect(hinge.rotation.y).toBeGreaterThan(1.5);
   });
+});
+
+
+describe('guard access and noticeable room life', () => {
+  it('opens the real door for the guard, leaves it open for both unhoodings, then closes before rules and play', () => {
+    const hinge = scene.getObjectByName('exit-door-hinge')!;
+    const update = (stage: import('../cinematics').CinematicStage, elapsed: number, mode: import('../cinematics').CinematicMode = 'full') => {
+      room.update(1, .016, false, false, 0, null, 1000 + elapsed,
+        { phase: mode === 'transfer' ? 'TRANSITION' : 'OPENING', cinematic: { stage, startedAt: 1000, mode } });
+    };
+    update('hooded', 400); expect(hinge.rotation.y).toBe(0);
+    update('door-open', 800); expect(hinge.rotation.y).toBeGreaterThan(1.6);
+    for (const stage of ['guard-approach', 'player-unhood', 'player-focus', 'opponent-unhood'] as const) {
+      update(stage, 400); expect(hinge.rotation.y).toBeGreaterThan(1.6);
+    }
+    update('guard-exit', stageDurationMs('guard-exit')); expect(hinge.rotation.y).toBe(0);
+    update('rules', 500); expect(hinge.rotation.y).toBe(0);
+    update('transfer-hood', 500, 'transfer'); expect(hinge.rotation.y).toBeGreaterThan(1.6);
+    expect(scene.getObjectByName('exit-stairwell')?.visible).toBe(false);
+    update('door', 700, 'transfer'); expect(hinge.rotation.y).toBe(0);
+  });
+  it('sways the bulb and drops bounded dust for one distant event without adding meshes or consuming gameplay RNG', () => {
+    let objects = 0; scene.traverse(() => objects++);
+    const shot = { id: 'run1:room1:table2', table: 2, startedAt: 1000, duration: 3000, direction: -1 };
+    const random = vi.spyOn(Math, 'random').mockImplementation(() => { throw Error('Room life consumed gameplay randomness'); });
+    room.update(1, .016, false, false, 0, null, 1100, { phase: 'PLAYER_DECISION', distantShot: shot });
+    const dust = scene.getObjectByName('distant-shot-dust') as THREE.Points;
+    expect(dust.visible).toBe(true); expect(dust.geometry.getAttribute('position').count).toBe(48);
+    const first = dust.geometry.getAttribute('position').getY(0);
+    expect(Math.abs(room.lamp.rotation.x) + Math.abs(room.lamp.rotation.z)).toBeGreaterThan(.01);
+    room.update(1.5, .016, false, false, 0, null, 1600, { phase: 'PLAYER_DECISION', distantShot: shot });
+    expect(dust.geometry.getAttribute('position').getY(0)).toBeLessThan(first);
+    room.update(4, .016, false, false, 0, null, 4100, { phase: 'PLAYER_DECISION', distantShot: shot });
+    expect(dust.visible).toBe(false); expect(random).not.toHaveBeenCalled();
+    let after = 0; scene.traverse(() => after++); expect(after).toBe(objects);
+    room.reset(); expect(dust.visible).toBe(false);
+  });
+  it('shows eyes in the slot and a rattling handle only while their ambient events are active, with no shot-time events', () => {
+    const eyes = scene.getObjectByName('guard-window-eyes')!, handle = scene.getObjectByName('door-handle')!;
+    const ambientEvent = { id: 'ambient1', kind: 'guard' as const, startedAt: 1000, duration: 2800, loud: false, direction: 1, seed: 31 };
+    room.update(1, .016, false, false, 0, null, 1600, { phase: 'PLAYER_DECISION', ambientEvent });
+    expect(eyes.visible).toBe(true);
+    room.update(1.2, .016, false, false, 0, null, 1800, { phase: 'PLAYER_SHOOTING', ambientEvent });
+    expect(eyes.visible).toBe(false);
+    room.update(1.3, .016, false, false, 0, null, 1900, { phase: 'PLAYER_DECISION', ambientEvent: { ...ambientEvent, kind: 'handle', loud: true } });
+    expect(Math.abs(handle.rotation.z)).toBeGreaterThan(.05);
+    room.update(4, .016, false, false, 0, null, 4100, { phase: 'PLAYER_DECISION', ambientEvent });
+    expect(eyes.visible).toBe(false); expect(handle.rotation.z).toBe(0);
+    expect(scene.getObjectByName('procedural-bunker')?.userData.ambientEvent).toBeNull();
+  });
+});
+
+it('keeps the opaque felt and an actual clear view of captive shoes below the front rail', () => {
+  scene.updateMatrixWorld(true);
+  const eye=new THREE.Vector3(0,1.45,2.65);
+  for (const x of [-.17,.17]) {
+    const foot=new THREE.Vector3(x,.055,-.83), direction=foot.clone().sub(eye);
+    const ray=new THREE.Raycaster(eye,direction.clone().normalize(),0,direction.length()-.03);
+    const hits=ray.intersectObjects(scene.children,true).filter(hit=>hit.object instanceof THREE.Mesh&&hit.object.visible&&!(hit.object.material as THREE.Material).transparent);
+    expect(hits.map(hit=>hit.object.name)).toEqual([]);
+  }
+});
+
+it('keeps the current blackout visible during the one-second player PEEK',()=>{
+ const blackout=event('blackout');
+ expect(decisionEvent('PLAYER_PEEKING',blackout,1500)).toBe(blackout);
+ expect(decisionEvent('PLAYER_PEEKING',blackout,6000)).toBeNull();
 });

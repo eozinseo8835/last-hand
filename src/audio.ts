@@ -2,9 +2,13 @@ import { CONFIG } from './game';
 import type { Speaker } from './campaign';
 import { voiceRandom, type VoicePlan } from './voice';
 import { eventBangOffsets, heartbeatSettings, type RoundEvent } from './tension';
+import type { AmbientEvent } from './roomLife';
 
-type Sound = 'card' | 'click' | 'shot' | 'tension' | 'hammer' | 'clack' | 'spin';
-export type HeartbeatState = { active: boolean; chambersFired: number; pulling: boolean };
+type Sound = 'card' | 'click' | 'shot' | 'tension' | 'hammer' | 'clack' | 'spin' | 'sting';
+export type ShotSoundEvent = { id: string; kind: 'local' | 'distant'; roomId?: number; direction?: number };
+export type StoryCue = 'hood' | 'drag' | 'door' | 'feed-shot' | 'escape' |
+  'door-creak' | 'door-slam' | 'boots' | 'burlap-tug' | 'hood-cinch' | 'gasp' | 'sob' | 'snip';
+export type HeartbeatState = { active: boolean; chambersFired: number; pulling: boolean; urgency?: number };
 type AudioLayer = { gain: GainNode; sources: Set<AudioScheduledSourceNode>; nodes: Set<AudioNode>; closed: boolean };
 type SpeakingVoice = {
   plan: VoicePlan; speaker: Speaker; start: number; end: number; gain: GainNode;
@@ -30,26 +34,43 @@ export class TableAudio {
   private eventLayer: AudioLayer | null = null;
   private eventRequest = 0;
   private revolverSerial = 0;
+  private readonly shotIds = new Set<string>();
+  private hoodFilter: BiquadFilterNode | null = null;
+  private hooded = false;
+  private hoodLayer: AudioLayer | null = null;
+  private hoodTimer: ReturnType<typeof setTimeout> | null = null;
+  private hoodRequest = 0;
+  private ambient: AmbientEvent | null = null;
+  private ambientLayer: AudioLayer | null = null;
+  private ambientRequest = 0;
   init() {
     // Only the Sit Down / Play Again click calls init. Constructing this object is silent.
     if (typeof AudioContext === 'undefined') return;
     try { this.context ??= new AudioContext(); } catch { return; }
-    if (!this.master) { this.master = this.context.createGain(); this.master.connect(this.context.destination); }
+    if (!this.master) this.master = this.context.createGain();
     if (!this.tensionDuck) {
       this.tensionDuck = this.context.createGain(); this.tensionDuck.connect(this.master);
+    }
+    if (!this.hoodFilter) {
+      this.hoodFilter = this.context.createBiquadFilter();
+      this.hoodFilter.type = 'lowpass'; this.hoodFilter.Q.value = .65;
+      this.hoodFilter.frequency.value = this.hooded ? 350 : 19000;
+      this.master.connect(this.hoodFilter); this.hoodFilter.connect(this.context.destination);
     }
     this.master.gain.value = this.muted ? 0 : .6;
     this.unlock = this.context.resume().catch(() => { /* An unavailable audio device leaves the table playable. */ });
     void this.unlock.then(() => {
       this.startHeartbeat();
       this.startEvent();
+      this.startHood();
+      this.startAmbient();
     });
   }
   mute(value: boolean) {
     this.muted = value;
     if (this.context && this.master) this.master.gain.setValueAtTime(value ? 0 : .6, this.context.currentTime);
-    if (value) { this.stopHeartbeat(); this.stopEvent(); }
-    else { this.startHeartbeat(); this.startEvent(); }
+    if (value) { this.stopHeartbeat(); this.stopEvent(); this.stopHood(); this.stopAmbient(); }
+    else { this.startHeartbeat(); this.startEvent(); this.startHood(); this.startAmbient(); }
     if (this.context && this.voice) {
       const now = this.context.currentTime;
       this.duckTension(value || this.voice.end <= now ? 1 : .76, now);
@@ -209,11 +230,11 @@ export class TableAudio {
     return level;
   }
   /** Story cues share the existing click-unlocked master and never touch gameplay RNG. */
-  playStory(kind: 'hood' | 'drag' | 'door' | 'feed-shot' | 'escape') {
+  playStory(kind: StoryCue) {
+    if (kind === 'feed-shot') { this.playShot({ id: `legacy-feed:${++this.revolverSerial}`, kind: 'distant' }); return; }
     if (!this.context || !this.master || this.muted) return;
     const layer = this.makeLayer(this.master), now = this.context.currentTime + .005;
-    const seeds = { hood: 0x400d, drag: 0xd4a6, door: 0xd004, 'feed-shot': 0xfead, escape: 0xe5ca9e };
-    const random = voiceRandom(seeds[kind]);
+    const random = voiceRandom(this.soundSeed(kind));
     if (kind === 'hood') {
       this.noise(layer, now, .62, .07, 360, random, 'lowpass', true);
       this.resonance(layer, now + .05, .38, .018, 80, 45);
@@ -225,13 +246,30 @@ export class TableAudio {
         this.noise(layer, start, .16, .09, 650, random, 'lowpass');
         this.resonance(layer, start, .16, .045, 90, 42);
       }
-    } else if (kind === 'door') {
+    } else if (kind === 'door' || kind === 'door-slam') {
       this.noise(layer, now, .48, .19, 720, random, 'lowpass');
       this.resonance(layer, now, .62, .09, 145, 38);
       this.noise(layer, now + .1, .12, .07, 1850, random, 'bandpass');
-    } else if (kind === 'feed-shot') {
-      this.noise(layer, now, .34, .18, 390, random, 'lowpass');
-      this.resonance(layer, now, .42, .1, 85, 27);
+    } else if (kind === 'door-creak') {
+      this.noise(layer, now, 1.1, .075, 730, random, 'bandpass', true);
+      this.resonance(layer, now + .02, 1.2, .028, 97, 44, 'sawtooth');
+    } else if (kind === 'boots') {
+      for (let step = 0; step < 4; step++) {
+        const at = now + step * .31;
+        this.noise(layer, at, .14, .12, 700, random, 'lowpass');
+        this.resonance(layer, at, .15, .055, 104, 47);
+      }
+    } else if (kind === 'burlap-tug' || kind === 'hood-cinch') {
+      this.noise(layer, now, kind === 'burlap-tug' ? .72 : .45, .13, 950, random, 'bandpass', true);
+      this.noise(layer, now + .04, .18, .045, 2400, random, 'highpass');
+    } else if (kind === 'gasp') {
+      this.noise(layer, now, .46, .105, 1050, random, 'bandpass', true);
+      this.resonance(layer, now + .04, .28, .023, 143, 91);
+    } else if (kind === 'sob') {
+      this.sob(layer, now, random);
+    } else if (kind === 'snip') {
+      this.impact(layer, now, .026, .15, 2650, random, 'highpass');
+      this.resonance(layer, now + .003, .035, .024, 1927, 1927);
     } else {
       this.noise(layer, now, 1.5, .035, 900, random, 'lowpass', true);
       for (let step = 0; step < 4; step++) {
@@ -241,6 +279,120 @@ export class TableAudio {
       }
     }
     layer.closed = true;
+  }
+  private soundSeed(text: string) {
+    let value = 2166136261;
+    for (const character of text) value = Math.imul(value ^ character.charCodeAt(0), 16777619);
+    return value >>> 0;
+  }
+  /** This stores the hood state before the click without constructing any audio nodes. */
+  setHooded(value: boolean) {
+    if (value === this.hooded) return;
+    this.hooded = value;
+    if (this.context && this.hoodFilter) {
+      const now = this.context.currentTime, frequency = this.hoodFilter.frequency;
+      frequency.cancelScheduledValues(now); frequency.setValueAtTime(frequency.value, now);
+      frequency.exponentialRampToValueAtTime(value ? 350 : 19000, now + (value ? .12 : .24));
+    }
+    if (value) this.startHood(); else this.stopHood();
+  }
+  private startHood() {
+    const ctx = this.context;
+    if (!ctx || !this.master || !this.hooded || this.muted || this.hoodLayer || this.hoodTimer !== null) return;
+    if (ctx.state !== 'running') {
+      const request = this.hoodRequest;
+      void this.unlock?.then(() => { if (request === this.hoodRequest && ctx.state === 'running') this.startHood(); });
+      return;
+    }
+    const now = ctx.currentTime + .01, layer = this.makeLayer(this.master);
+    const random = voiceRandom(0xb4ea7 ^ this.hoodRequest);
+    this.hoodLayer = layer;
+    this.hoodBreath(layer, now, random); this.hoodBreath(layer, now + 1.36, random);
+    this.sob(layer, now + 1.9, random, .24);
+    layer.closed = true;
+    this.hoodTimer = setTimeout(() => {
+      this.hoodTimer = null;
+      // A suspended audio clock can leave the previous breath unfinished even
+      // after this wall-clock timer fires. Cancel it before replacing its owner.
+      if (this.hoodLayer === layer) { this.stopLayer(layer); this.hoodLayer = null; }
+      this.startHood();
+    }, 2900);
+  }
+  private stopHood() {
+    this.hoodRequest++;
+    if (this.hoodTimer !== null) clearTimeout(this.hoodTimer);
+    this.hoodTimer = null;
+    if (this.hoodLayer) this.stopLayer(this.hoodLayer);
+    this.hoodLayer = null;
+  }
+  private sob(layer: AudioLayer, start: number, random: () => number, volume = 1) {
+    this.noise(layer, start, .74, .027 * volume, 620, random, 'bandpass', true);
+    for (let breath = 0; breath < 3; breath++) {
+      const at = start + breath * .19;
+      this.resonance(layer, at, .16, .012 * volume, 142 + random() * 8, 110 + random() * 7, 'triangle');
+    }
+  }
+  /** Ambient cues are cancelable and resume only the still-active part of an event. */
+  playAmbient(event: AmbientEvent | null) {
+    if (this.ambient?.id === event?.id) return;
+    this.stopAmbient(); this.ambient = event; this.startAmbient();
+  }
+  private startAmbient() {
+    const ctx = this.context, event = this.ambient;
+    if (!ctx || !this.master || !event || this.muted || this.ambientLayer) return;
+    if (ctx.state !== 'running') {
+      const request = this.ambientRequest;
+      void this.unlock?.then(() => { if (request === this.ambientRequest && ctx.state === 'running') this.startAmbient(); });
+      return;
+    }
+    const elapsed = Math.max(0, Date.now() - event.startedAt);
+    if (elapsed >= event.duration) return;
+    // Brief onsets must not replay merely because mute was toggled afterward.
+    if (event.kind === 'bulb' && elapsed > 150) return;
+    const layer = this.makeLayer(this.master), now = ctx.currentTime + .005, random = voiceRandom(event.seed);
+    this.ambientLayer = layer;
+    this.positionLayer(layer, event.direction);
+    const at = (offset: number) => now + Math.max(0, offset - elapsed / 1000);
+    const upcoming = (offset: number) => offset * 1000 >= elapsed;
+    if (event.kind === 'bulb') {
+      this.noise(layer, now, .15, .055, 1800, random, 'bandpass');
+      this.resonance(layer, now, .22, .018, 95, 61, 'sawtooth');
+    } else if (event.kind === 'pipe') {
+      for (const offset of [0, .22]) if (upcoming(offset)) {
+        this.impact(layer, at(offset), .08, .11, 850, random, 'bandpass');
+        this.resonance(layer, at(offset), .34, .04, 174, 135);
+      }
+    } else if (event.kind === 'drip') {
+      for (const offset of [0, .62, 1.55]) if (upcoming(offset)) {
+        this.noise(layer, at(offset), .025, .016, 3100, random, 'highpass');
+        this.resonance(layer, at(offset), .055, .021, 1350, 780);
+      }
+    } else if (event.kind === 'footsteps' || event.kind === 'guard') {
+      for (let step = 0; step < 5; step++) if (upcoming(step * .35)) {
+        this.noise(layer, at(step * .35), .13, .065, 520, random, 'lowpass');
+        this.resonance(layer, at(step * .35), .15, .035, 86, 42);
+      }
+      if (event.kind === 'guard') this.noise(layer, now, .65, .018, 420, random, 'lowpass', true);
+    } else if (event.kind === 'handle') {
+      for (let turn = 0; turn < 4; turn++) if (upcoming(turn * .11)) {
+        this.impact(layer, at(turn * .11), .04, .075, 2150, random, 'bandpass');
+        this.resonance(layer, at(turn * .11), .09, .017, 731, 731);
+      }
+    } else {
+      const remaining = Math.min(1.65, (event.duration - elapsed) / 1000);
+      if (remaining >= .02) this.noise(layer, now, remaining, .035, 1650, random, 'highpass', true);
+      for (let syllable = 0; syllable < 5; syllable++) if (upcoming(.14 + syllable * .27)) {
+        this.noise(layer, at(.14 + syllable * .27), .12, .018, 430 + random() * 180, random, 'bandpass');
+        this.resonance(layer, at(.14 + syllable * .27), .13, .014, 71 + random() * 3, 69 + random() * 3, 'sawtooth');
+      }
+    }
+    layer.closed = true;
+    if (layer.sources.size === 0) this.disposeLayer(layer);
+  }
+  private stopAmbient() {
+    this.ambientRequest++;
+    if (this.ambientLayer) this.stopLayer(this.ambientLayer);
+    this.ambientLayer = null;
   }
   /** A cloth-muffled inhale, pause, and longer exhale under the opening hood. */
   private hoodBreath(layer: AudioLayer, start: number, random: () => number) {
@@ -265,7 +417,7 @@ export class TableAudio {
   /** Callers describe the current phase; this method never unlocks browser audio. */
   setHeartbeat(state: HeartbeatState) {
     const next = { ...state, chambersFired: Math.max(0, Math.floor(state.chambersFired)) };
-    if (next.active === this.heartbeatState.active && next.chambersFired === this.heartbeatState.chambersFired && next.pulling === this.heartbeatState.pulling) return;
+    if (next.active === this.heartbeatState.active && next.chambersFired === this.heartbeatState.chambersFired && next.pulling === this.heartbeatState.pulling && next.urgency === this.heartbeatState.urgency) return;
     this.heartbeatState = next;
     this.stopHeartbeat();
     this.startHeartbeat();
@@ -288,7 +440,7 @@ export class TableAudio {
   private pumpHeartbeat() {
     const ctx = this.context, layer = this.heartbeatLayer;
     if (!ctx || !layer || layer.closed) return;
-    const now = ctx.currentTime, settings = heartbeatSettings(this.heartbeatState.chambersFired, this.heartbeatState.pulling);
+    const now = ctx.currentTime, settings = heartbeatSettings(this.heartbeatState.chambersFired, this.heartbeatState.pulling, this.heartbeatState.urgency);
     // A backgrounded tab resumes with one new beat, never a burst of missed beats.
     if (this.heartbeatNextBeat < now - .1) this.heartbeatNextBeat = now + .015;
     const period = 60 / settings.bpm;
@@ -323,7 +475,7 @@ export class TableAudio {
   getHeartbeatLevel() {
     const ctx = this.context;
     if (!ctx || ctx.state !== 'running' || this.muted || !this.heartbeatLayer) return 0;
-    const period = 60 / heartbeatSettings(this.heartbeatState.chambersFired, this.heartbeatState.pulling).bpm;
+    const period = 60 / heartbeatSettings(this.heartbeatState.chambersFired, this.heartbeatState.pulling, this.heartbeatState.urgency).bpm;
     let level = 0;
     for (const start of this.heartbeatBeats) {
       const age = ctx.currentTime - start;
@@ -407,42 +559,97 @@ export class TableAudio {
     source.connect(filter); filter.connect(envelope); envelope.connect(layer.gain);
     this.ownSource(layer, source, [filter, envelope]); source.start(start); source.stop(start + duration);
   }
+  /** One identity is accepted once, even if two React effects deliver the same event. */
+  playShot(event: ShotSoundEvent): boolean {
+    if (!event.id || this.shotIds.has(event.id)) return false;
+    this.shotIds.add(event.id);
+    if (this.shotIds.size > 256) this.shotIds.delete(this.shotIds.values().next().value!);
+    if (!this.context || !this.master || this.muted) return false;
+    if (this.tension) { this.tension.stop(); this.tension = null; }
+    if (this.context.state !== 'running') {
+      void this.unlock?.then(() => {
+        if (this.context?.state === 'running' && !this.muted) this.shotReport(event);
+      });
+      return true;
+    }
+    this.shotReport(event);
+    return true;
+  }
+  private shotReport(event: ShotSoundEvent) {
+    const ctx = this.context!, now = ctx.currentTime + .002, distant = event.kind === 'distant';
+    const layer = this.makeLayer(this.master!);
+    const destination = distant ? this.positionLayer(layer, event.direction ?? (event.roomId === 3 ? 1 : -1)) : this.master!;
+    const random = voiceRandom(this.soundSeed(event.id) ^ (distant ? 0xfead : 0x5a07));
+    // A single audio buffer combines crack and pressure body at the SAME onset.
+    // Its energy decays continuously: no delayed copy can sound like another bang.
+    const duration = distant ? .24 : .20;
+    const buffer = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * duration), ctx.sampleRate);
+    const samples = buffer.getChannelData(0);
+    let lastNoise = 0, lowNoise = 0, phase = 0;
+    for (let index = 0; index < samples.length; index++) {
+      const age = index / ctx.sampleRate, grain = random() * 2 - 1;
+      const highNoise = grain - lastNoise * .82; lastNoise = grain;
+      lowNoise += .12 * (grain - lowNoise);
+      phase += Math.PI * 2 * (distant ? 46 + 84 * Math.exp(-age * 24) : 48 + 122 * Math.exp(-age * 28)) / ctx.sampleRate;
+      const pressure = Math.sin(phase) * Math.exp(-age * (distant ? 20 : 28));
+      const attack = Math.min(1, age / .00065);
+      const signal = highNoise * Math.exp(-age * 74) * (distant ? .7 : 1.15)
+        + lowNoise * Math.exp(-age * 24) * .55 + pressure * (distant ? .7 : .55);
+      samples[index] = Math.tanh(signal * 1.35) * attack;
+    }
+    const source = ctx.createBufferSource(), tone = ctx.createBiquadFilter(), envelope = ctx.createGain();
+    source.buffer = buffer; tone.type = 'lowpass'; tone.Q.value = .65;
+    tone.frequency.value = Math.min(ctx.sampleRate * .45, distant ? 1350 : 6500);
+    envelope.gain.setValueAtTime(distant ? .94 : 1.15, now);
+    envelope.gain.exponentialRampToValueAtTime(.0001, now + duration);
+    source.connect(tone); tone.connect(envelope); envelope.connect(layer.gain);
+    this.ownSource(layer, source, [tone, envelope]); source.start(now); source.stop(now + duration);
+    const room = ctx.createConvolver(), wet = ctx.createGain();
+    const impulse = ctx.createBuffer(2, Math.ceil(ctx.sampleRate * .36), ctx.sampleRate);
+    for (let channel = 0; channel < 2; channel++) {
+      const tail = impulse.getChannelData(channel);
+      for (let index = 0; index < tail.length; index++) {
+        const age = index / ctx.sampleRate;
+        tail[index] = (random() * 2 - 1) * Math.min(1, age / .016) * Math.exp(-age * 24) * .32;
+      }
+    }
+    room.buffer = impulse; wet.gain.value = distant ? .20 : .16;
+    layer.gain.connect(room); room.connect(wet); wet.connect(destination);
+    layer.nodes.add(room); layer.nodes.add(wet);
+    if (!distant) {
+      // This sustained quiet sine is ear ringing, never a second impact.
+      this.resonance(layer, now + .11, 1.05, .023, 2920, 2670);
+    }
+    const finish = ctx.createBufferSource(); finish.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+    this.ownSource(layer, finish, []); finish.connect(layer.gain); finish.start(now + .68);
+    layer.closed = true;
+  }
+  private positionLayer(layer: AudioLayer, direction: number): AudioNode {
+    const ctx = this.context!, pan = Math.max(-.9, Math.min(.9, direction * .72));
+    try {
+      if (typeof ctx.createStereoPanner === 'function') {
+        const position = ctx.createStereoPanner(); position.pan.value = pan;
+        layer.gain.disconnect(); layer.gain.connect(position); position.connect(this.master!);
+        layer.nodes.add(position); return position;
+      }
+      if (typeof ctx.createPanner === 'function') {
+        const position = ctx.createPanner(); position.panningModel = 'equalpower';
+        if (position.positionX) {
+          position.positionX.value = pan * 2; position.positionY.value = 0; position.positionZ.value = -1;
+        } else position.setPosition(pan * 2, 0, -1);
+        layer.gain.disconnect(); layer.gain.connect(position); position.connect(this.master!);
+        layer.nodes.add(position); return position;
+      }
+    } catch { /* Devices without positioning keep the same single report. */ }
+    return this.master!;
+  }
   private playRevolver(sound: 'click' | 'shot') {
+    if (sound === 'shot') { this.playShot({ id: `legacy-shot:${++this.revolverSerial}`, kind: 'local' }); return; }
     const ctx = this.context!, now = ctx.currentTime + .002, layer = this.makeLayer(this.master!);
-    const random = voiceRandom((sound === 'shot' ? 0x5a07 : 0xc11c) ^ ++this.revolverSerial);
-    if (sound === 'click') {
-      // Hammer against an empty chamber: a hard pin strike and brief frame ring.
-      this.impact(layer, now, .031, .38, 3300, random, 'highpass');
-      for (const [frequency, volume, duration] of [[1469, .050, .028], [2953, .027, .040], [4313, .012, .019]]) {
-        this.resonance(layer, now + .001, duration, volume, frequency, frequency);
-      }
-    } else {
-      layer.gain.gain.value = .8;
-      // Separate the high pressure front, low report, and barrel/body vibration.
-      // None of these random samples consume the deck/cylinder's RNG stream.
-      this.impact(layer, now, .046, .92, 1900, random, 'highpass');
-      this.impact(layer, now + .002, .13, .62, 1350, random, 'lowpass');
-      this.resonance(layer, now, .12, .42, 170, 48);
-      this.resonance(layer, now + .002, .035, .055, 2471, 2471);
-      // Concrete early reflections lose high frequencies with every bounce.
-      for (const [delay, volume, cutoff] of [[.037, .17, 2400], [.081, .105, 1700], [.129, .060, 1100]]) {
-        this.impact(layer, now + delay, .085, volume, cutoff, random, 'lowpass');
-      }
-      const room = ctx.createConvolver(), wet = ctx.createGain();
-      const impulse = ctx.createBuffer(2, Math.ceil(ctx.sampleRate * .30), ctx.sampleRate);
-      for (let channel = 0; channel < 2; channel++) {
-        const samples = impulse.getChannelData(channel);
-        for (let index = 0; index < samples.length; index++) {
-          const age = index / ctx.sampleRate;
-          samples[index] = age < .014 ? 0 : (random() * 2 - 1) * Math.exp(-age * 22) * .45;
-        }
-      }
-      room.buffer = impulse; wet.gain.value = .14;
-      layer.gain.connect(room); room.connect(wet); wet.connect(this.master!);
-      layer.nodes.add(room); layer.nodes.add(wet);
-      // Keep the graph alive for its bounded room tail, then disconnect it all.
-      const finish = ctx.createBufferSource(); finish.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
-      this.ownSource(layer, finish, []); finish.connect(layer.gain); finish.start(now + .52);
+    const random = voiceRandom(0xc11c ^ ++this.revolverSerial);
+    this.impact(layer, now, .031, .38, 3300, random, 'highpass');
+    for (const [frequency, volume, duration] of [[1469, .050, .028], [2953, .027, .040], [4313, .012, .019]]) {
+      this.resonance(layer, now + .001, duration, volume, frequency, frequency);
     }
     layer.closed = true;
   }
@@ -469,6 +676,8 @@ export class TableAudio {
   private disposeLayer(layer: AudioLayer) {
     layer.nodes.forEach(node => node.disconnect()); layer.nodes.clear(); layer.gain.disconnect();
     if (this.eventLayer === layer) this.eventLayer = null;
+    if (this.ambientLayer === layer) this.ambientLayer = null;
+    if (this.hoodLayer === layer) this.hoodLayer = null;
   }
   private noise(layer: AudioLayer, start: number, duration: number, volume: number, cutoff: number, random: () => number, type: BiquadFilterType, flutter = false) {
     const ctx = this.context!, buffer = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * duration), ctx.sampleRate), samples = buffer.getChannelData(0);
@@ -488,7 +697,26 @@ export class TableAudio {
     source.connect(envelope); envelope.connect(layer.gain);
     this.ownSource(layer, source, [envelope]); source.start(start); source.stop(start + duration);
   }
+  playContact(kind: string, stress: number) {
+    const ctx = this.context;
+    if (!ctx || this.muted || ctx.state !== 'running' || !this.master) return;
+    const layer = this.makeLayer(this.master), now = ctx.currentTime;
+    const random = voiceRandom(this.soundSeed(`contact:${kind}:${this.revolverSerial++}`));
+    const level = .009 + Math.max(0, Math.min(1, stress)) * .012;
+    if (kind === 'knuckles') this.impact(layer, now, .035, level, 2400, random, 'highpass');
+    else if (kind === 'heel' || kind === 'drum' || kind === 'square') this.resonance(layer, now, .09, level, kind === 'heel' ? 80 : 180, 48);
+    else this.noise(layer, now, .22, level * .65, kind === 'chair' ? 340 : 900, random, 'lowpass');
+    setTimeout(() => this.disposeLayer(layer), 500);
+  }
   play(sound: Sound) {
+    if (sound === 'sting') {
+      const ctx = this.context;
+      if (!ctx || this.muted || ctx.state !== 'running' || !this.master) return;
+      const layer = this.makeLayer(this.master);
+      this.resonance(layer, ctx.currentTime, .45, .12, 115, 51, 'sawtooth');
+      this.noise(layer, ctx.currentTime, .20, .13, 1900, voiceRandom(this.soundSeed('caught')), 'bandpass');
+      setTimeout(() => this.disposeLayer(layer), 700); return;
+    }
     if (!this.context || !this.master || this.muted) return;
     if (sound === 'hammer' || sound === 'clack' || sound === 'spin') {
       if (!this.muted) this.playMechanism(sound);

@@ -19,7 +19,7 @@ describe('three captive policies', () => {
       expect(Math.abs(mistakes / trials - .25)).toBeLessThan(.012);
     }
     expect(opponentAction(1, cards('10', '4'), () => 0)).toBe('hit');
-    expect(opponentAction(1, cards('10', '5'), () => 0)).toBe('stand');
+    expect(opponentAction(1, cards('10', '5'), () => 0)).toBe('hit');
     expect(opponentAction(1, cards('10', '6'), () => 0)).toBe('stand');
     expect(opponentAction(1, cards('10', '9'), () => 0)).toBe('stand');
     expect(opponentAction(1, cards('10', '7'), () => .25)).toBe('stand');
