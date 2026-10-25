@@ -1,3 +1,4 @@
+import type {WorldSound,WorldPosition} from './worldSound';
 import { SoundStage, type MixState } from './soundStage';
 import { CONFIG } from './game';
 import type { Speaker } from './campaign';
@@ -6,7 +7,7 @@ import { eventBangOffsets, heartbeatSettings, type RoundEvent } from './tension'
 import type { AmbientEvent } from './roomLife';
 
 type Sound = 'card' | 'click' | 'shot' | 'tension' | 'hammer' | 'clack' | 'spin' | 'sting' | 'slide';
-export type ShotSoundEvent = { id: string; kind: 'local' | 'distant'; roomId?: number; direction?: number };
+export type ShotSoundEvent = { id: string; kind: 'local' | 'distant'; roomId?: number; direction?: number; position?:WorldPosition; source?:'local'|'distant'|'cutscene' };
 export type StoryCue = 'host-step' | 'hood' | 'drag' | 'door' | 'feed-shot' | 'escape' |
   'door-creak' | 'door-slam' | 'boots' | 'burlap-tug' | 'hood-cinch' | 'gasp' | 'sob' | 'snip';
 export type HeartbeatState = { active: boolean; chambersFired: number; pulling: boolean; urgency?: number };
@@ -17,6 +18,12 @@ type SpeakingVoice = {
 };
 
 export class TableAudio {
+  readonly shotLog:Array<{id:string;source:string;time:number;accepted:boolean}>=[];
+  private worldSounds:WorldSound[]=[];private worldSerial=0;private emitters:Record<string,WorldPosition>={gun:[0,.78,0]};
+  setEmitter(name:string,position:WorldPosition){this.emitters[name]=position;}
+  getWorldSound(){const now=Date.now();return this.worldSounds.reduce<WorldSound|null>((latest,s)=>s.at<=now&&(!latest||s.at>=latest.at)?s:latest,null);}
+  emitWorldSound(source:string,position:WorldPosition,loudness=.3,at=Date.now()){const sound={id:`world:${++this.worldSerial}`,at,source,position,loudness};this.worldSounds.push(sound);if(this.worldSounds.length>64)this.worldSounds.shift();}
+  private logShot(event:ShotSoundEvent,accepted:boolean){const entry={id:event.id,source:event.source??event.kind,time:this.context?.currentTime??0,accepted};this.shotLog.push(entry);if(this.shotLog.length>256)this.shotLog.shift();if(import.meta.env.DEV&&typeof location!=='undefined'&&new URLSearchParams(location.search).has('shots'))console.debug('[LAST HAND shot]',entry);}
   private stage:SoundStage|null=null;
   private levels={master:1,effects:1,voice:1};
   setVolumes(levels:{master:number;effects:number;voice:number}){this.levels={master:Math.max(0,Math.min(1,levels.master)),effects:Math.max(0,Math.min(1,levels.effects)),voice:Math.max(0,Math.min(1,levels.voice))};this.stage?.volumes(this.levels,this.muted);if(!this.stage&&this.master&&this.context)this.master.gain.setValueAtTime(this.muted?0:.6*this.levels.master,this.context.currentTime);}
@@ -239,7 +246,8 @@ export class TableAudio {
   }
   /** Story cues share the existing click-unlocked master and never touch gameplay RNG. */
   playStory(kind: StoryCue) {
-    if (kind === 'feed-shot') { this.playShot({ id: `legacy-feed:${++this.revolverSerial}`, kind: 'distant' }); return; }
+    this.emitWorldSound(kind,['boots','drag','door','door-slam','door-creak'].includes(kind)?[2.7,1,-3.7]:[-.6,.9,-.1],kind==='door-slam'?.9:.25);
+    if (kind === 'feed-shot') { this.playShot({ id: `legacy-feed:${++this.revolverSerial}`, kind: 'distant',source:'cutscene' }); return; }
     if (!this.context || !this.master || this.muted) return;
     const layer = this.makeLayer(this.master), now = this.context.currentTime + .005;
     if(this.stage&&typeof this.context.createPanner==='function'){const rear=['boots','drag','door','door-creak','door-slam'].includes(kind);layer.gain.disconnect();const p=this.stage.position(layer.gain,rear?0:-.7,rear?2:-1.4,this.stage.effects);if(kind==='host-step'){p.positionX.linearRampToValueAtTime(-.9,now+1.1);p.positionZ.linearRampToValueAtTime(.2,now+1.1);}layer.nodes.add(p);}
@@ -344,6 +352,7 @@ export class TableAudio {
   /** Ambient cues are cancelable and resume only the still-active part of an event. */
   playAmbient(event: AmbientEvent | null) {
     if (this.ambient?.id === event?.id) return;
+    if(event)this.emitWorldSound(event.kind,event.position??[event.direction*3,1,-1],event.loud?.8:.25);
     this.stopAmbient(); this.ambient = event; this.startAmbient();
   }
   private startAmbient() {
@@ -360,7 +369,7 @@ export class TableAudio {
     if (event.kind === 'bulb' && elapsed > 150) return;
     const layer = this.makeLayer(this.stage?.ambient??this.master), now = ctx.currentTime + .005, random = voiceRandom(event.seed);
     this.ambientLayer = layer;
-    this.positionLayer(layer, event.direction,this.stage?.ambient);
+    this.positionLayer(layer, event.direction,this.stage?.ambient,event.position);
     const at = (offset: number) => now + Math.max(0, offset - elapsed / 1000);
     const upcoming = (offset: number) => offset * 1000 >= elapsed;
     if (event.kind === 'bulb') {
@@ -496,6 +505,8 @@ export class TableAudio {
   }
   setEvent(event: RoundEvent | null) {
     if (this.event?.kind === event?.kind && this.event?.startedAt === event?.startedAt && this.event?.seed === event?.seed && this.event?.duration === event?.duration) return;
+    this.worldSounds=this.worldSounds.filter(s=>!s.source.startsWith('event:')||s.at<=Date.now());
+    if(event){if(event.kind==='door')for(const offset of eventBangOffsets(event))this.emitWorldSound('event:door',[2.7,1,-3.7],.9,event.startedAt+offset);else this.emitWorldSound(`event:${event.kind}`,event.kind==='tv'?[-3,1.4,-1.2]:[0,2.4,0],.4,event.startedAt);}
     this.stopEvent(); this.event = event;
     this.startEvent();
   }
@@ -511,7 +522,7 @@ export class TableAudio {
     }
     const elapsed = Math.max(0, Date.now() - event.startedAt);
     if (elapsed >= event.duration) return;
-    const layer = this.makeLayer(this.stage?.ambient??this.master!); this.eventLayer = layer;
+    const layer = this.makeLayer(this.stage?.ambient??this.master!); this.eventLayer = layer;if(this.stage&&typeof ctx.createPanner==='function')this.positionLayer(layer,event.kind==='door'?1:-1,this.stage.ambient,event.kind==='door'?[2.7,1,-3.7]:[-3,1.4,-1.2]);
     const now = ctx.currentTime, random = voiceRandom(event.seed ^ 0x9e3779b9);
     const at = (offset: number) => now + Math.max(.005, (offset - elapsed) / 1000);
     if (event.kind === 'door') {
@@ -570,9 +581,10 @@ export class TableAudio {
   }
   /** One identity is accepted once, even if two React effects deliver the same event. */
   playShot(event: ShotSoundEvent): boolean {
-    if (!event.id || this.shotIds.has(event.id)) return false;
+    if (!event.id || this.shotIds.has(event.id)){this.logShot(event,false);return false;}this.logShot(event,true);
     this.shotIds.add(event.id);
     if (this.shotIds.size > 256) this.shotIds.delete(this.shotIds.values().next().value!);
+    this.emitWorldSound(event.kind==='local'?'local-shot':'distant-shot',event.position??(event.kind==='local'?this.emitters.gun:[(event.direction??-1)*3,1,-1.5]),1);
     if (!this.context || !this.master || this.muted) return false;
     if (this.tension) { this.tension.stop(); this.tension = null; }
     if (this.context.state !== 'running') {
@@ -587,7 +599,7 @@ export class TableAudio {
   private shotReport(event: ShotSoundEvent) {
     const ctx = this.context!, now = ctx.currentTime + .002, distant = event.kind === 'distant';
     const layer = this.makeLayer(this.master!);
-    const destination = distant ? this.positionLayer(layer, event.direction ?? (event.roomId === 3 ? 1 : -1)) : this.stage?.effects??this.master!;
+    const destination = distant ? this.positionLayer(layer, event.direction ?? (event.roomId === 3 ? 1 : -1),undefined,event.position) : this.stage?.effects??this.master!;
     const random = voiceRandom(this.soundSeed(event.id) ^ (distant ? 0xfead : 0x5a07));
     const variation=distant?1:.96+random()*.08;
     // A single audio buffer combines crack and pressure body at the SAME onset.
@@ -629,16 +641,15 @@ export class TableAudio {
     if (!distant) {
       // This sustained quiet sine is ear ringing, never a second impact.
       this.resonance(layer,ctx.currentTime,.009,.055,2600,1600,'triangle');
-      this.resonance(layer,now+.08,.4,.035,1760,1700);
-      for(const delay of [.013,.026,.039]){const d=ctx.createDelay(.1),g=ctx.createGain(),f=ctx.createBiquadFilter();d.delayTime.value=delay;g.gain.value=.045;f.type='lowpass';f.frequency.value=2800;tone.connect(d);d.connect(f);f.connect(g);g.connect(destination);layer.nodes.add(d);layer.nodes.add(f);layer.nodes.add(g);}
+      this.resonance(layer,now,.4,.035,1760,1700);
       this.stage?.deafen();
     }
     const finish = ctx.createBufferSource(); finish.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
     this.ownSource(layer, finish, []); finish.connect(layer.gain); finish.start(now + (distant?.68:2.6));
     layer.closed = true;
   }
-  private positionLayer(layer: AudioLayer, direction: number,destination:AudioNode=this.stage?.effects??this.master!): AudioNode {
-    if(this.stage&&this.context&&typeof this.context.createPanner==='function'){layer.gain.disconnect();const p=this.stage.position(layer.gain,direction*2.5,direction===0?-1.9:1,destination);layer.nodes.add(p);return p;}
+  private positionLayer(layer: AudioLayer, direction: number,destination:AudioNode=this.stage?.effects??this.master!,world?:WorldPosition): AudioNode {
+    if(this.stage&&this.context&&typeof this.context.createPanner==='function'){layer.gain.disconnect();const p=this.stage.position(layer.gain,world?.[0]??direction*2.5,(world?.[2]??(direction===0?-1.9:1))-1.05,destination);p.positionY.value=(world?.[1]??1.2)-1.2;layer.nodes.add(p);return p;}
     const ctx = this.context!, pan = Math.max(-.9, Math.min(.9, direction * .72));
     try {
       if (typeof ctx.createStereoPanner === 'function') {
@@ -726,6 +737,7 @@ export class TableAudio {
     setTimeout(() => this.disposeLayer(layer), 500);
   }
   play(sound: Sound) {
+    if(['card','slide','click','hammer','clack'].includes(sound))this.emitWorldSound(sound,sound==='card'?[-.43,.78,-.24]:this.emitters.gun,.20);
     if (sound === 'slide') {
       const ctx = this.context;
       if (!ctx || !this.master || this.muted || ctx.state !== 'running') return;

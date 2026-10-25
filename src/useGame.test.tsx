@@ -1049,11 +1049,11 @@ describe('single-id shots, synchronized monitor deaths, and ambient room life', 
     expect(latest.game.aiShotStartedAt).toBe(Date.now()); expect(untilPull).toBeGreaterThanOrEqual(1500);
     advance(untilPull); expect(latest.game.dead).toBe('ai');
     expect(localShots()).toHaveLength(1); expect(distantShots()).toHaveLength(0);
-    advance(2399); expect(distantShots()).toHaveLength(0);
+    advance(3999); expect(distantShots()).toHaveLength(0);
     advanceStoryUntil(() => latest.game.roomNumber === 2 && latest.game.phase === 'OPENING');
     const distant = played.filter(shot => shot.kind === 'distant'), local = played.find(shot => shot.kind === 'local')!;
     expect(distant).toHaveLength(3); expect(new Set(distant.map(shot => shot.id)).size).toBe(3);
-    expect(distant[0].at - local.at).toBeGreaterThanOrEqual(2400);
+    expect(distant[0].at - local.at).toBeGreaterThanOrEqual(4000);
     for (let index = 1; index < distant.length; index++) expect(distant[index].at - distant[index - 1].at).toBeGreaterThanOrEqual(DISTANT_SHOT_GAP_MS);
     expect(latest.game.guestsRemaining).toBe(4);
     expect(vi.mocked(tableAudio.playStory).mock.calls.filter(([cue]) => cue === 'feed-shot')).toHaveLength(0);
@@ -1063,7 +1063,7 @@ describe('single-id shots, synchronized monitor deaths, and ambient room life', 
     vi.mocked(dealRound).mockImplementation(() => copy(tied)); startDecision();
     act(() => latest.stand()); advance(950 + 2000 + 351);
     const event = latest.game.distantShot;
-    expect(event).toMatchObject({ table: 2, startedAt: Date.now(), duration: 3000 });
+    expect(event).toMatchObject({ table: 2, startedAt: Date.now(), duration: 1800 });
     expect(latest.game.feedDeaths).toEqual([2]); expect(latest.game.feedDeathSerial).toBe(1);
     expect(latest.game.guestsRemaining).toBe(7);
     expect(distantShots()).toHaveLength(1);
@@ -1101,7 +1101,7 @@ describe('single-id shots, synchronized monitor deaths, and ambient room life', 
   });
 
   it('defers overdue ambient events throughout a player shot and resumes them only in safe decision time', () => {
-    startPlayerShot(); advance(CONFIG.TRIGGER_TIMEOUT_MS + 3499);
+    startPlayerShot(); advance(CONFIG.TRIGGER_TIMEOUT_MS + 4199);
     expect(latest.game.phase).toBe('HOST_FORCE_SHOT'); expect(latest.game.ambientEvent).toBeNull();
     expect(vi.mocked(tableAudio.playAmbient).mock.calls.filter(([event]) => event !== null)).toHaveLength(0);
     advance(1); expect(latest.game.shotEffect).toBe('click');
@@ -1192,9 +1192,9 @@ describe('Big Update 2 Host trigger deadline', () => {
     act(()=>{latest.spinCylinder(); latest.beginTriggerHold(); latest.forceShot();});
     expect(vi.mocked(createRevolver).mock.calls).toHaveLength(calls); expect(latest.game.stats.forcedShots).toBe(1);
     vi.mocked(tableAudio.playContact).mockClear();vi.mocked(tableAudio.play).mockClear();
-    advance(1099);expect(tableAudio.playContact).not.toHaveBeenCalled();
+    advance(2199);expect(tableAudio.playContact).not.toHaveBeenCalled();
     advance(1);expect(tableAudio.playContact).toHaveBeenCalledWith('metal',1);
-    advance(999);expect(tableAudio.play).not.toHaveBeenCalledWith('hammer');
+    advance(599);expect(tableAudio.play).not.toHaveBeenCalledWith('hammer');
     advance(1);expect(tableAudio.play).toHaveBeenCalledWith('hammer');
     advance(1399); expect(latest.game.revolver.currentChamber).toBe(3);
     advance(1); expect(latest.game.revolver.currentChamber).toBe(4); expect(latest.game.shotEffect).toBe('click');
@@ -1206,12 +1206,11 @@ describe('Big Update 2 Host trigger deadline', () => {
     expect(latest.game.triggerDeadline).toBe(deadline); advance(4999); expect(latest.game.phase).toBe('PLAYER_SHOOTING');
     advance(1); expect(latest.game.phase).toBe('HOST_FORCE_SHOT');
   });
-  it('lets a hold active at zero finish normally without a forced-shot statistic', ()=>{
+  it('locks input at zero even during an unfinished hold', ()=>{
     startPlayerShot(); advance(CONFIG.TRIGGER_TIMEOUT_MS-1000); act(()=>latest.beginTriggerHold());
-    advance(1000); expect(latest.game.triggerRemainingMs).toBe(0); expect(latest.game.phase).toBe('PLAYER_SHOOTING');
-    expect(latest.game.triggerHeld).toBe(true); advance(CONFIG.TRIGGER_HOLD_MS-1000);
-    expect(latest.game.shotEffect).toBe('click'); expect(latest.game.revolver.currentChamber).toBe(2);
-    expect(latest.game.stats.forcedShots).toBe(0);
+    advance(1000); expect(latest.game.phase).toBe('HOST_FORCE_SHOT');expect(latest.game.triggerHeld).toBe(false);
+    act(()=>{latest.beginTriggerHold();latest.pullTrigger();});advance(4199);expect(latest.game.shotEffect).toBeNull();
+    advance(1);expect(latest.game.shotEffect).toBe('click');expect(latest.game.revolver.currentChamber).toBe(2);expect(latest.game.stats.forcedShots).toBe(1);
   });
   it('enforces immediately if a hold is released after zero instead of granting a fresh timer', ()=>{
     startPlayerShot(); advance(CONFIG.TRIGGER_TIMEOUT_MS-500); act(()=>latest.beginTriggerHold()); advance(1000);
@@ -1219,20 +1218,20 @@ describe('Big Update 2 Host trigger deadline', () => {
   });
   it('uses the normal player death sequence when enforcement reaches the loaded chamber', ()=>{
     vi.mocked(createRevolver).mockReturnValue({bulletChamber:1,currentChamber:1}); startPlayerShot();
-    advance(CONFIG.TRIGGER_TIMEOUT_MS+3500);
+    advance(CONFIG.TRIGGER_TIMEOUT_MS+4200);
     expect(latest.game.dead).toBe('player'); expect(latest.game.phase).toBe('ENDING_DEATH');
     expect(latest.game.stats.forcedShots).toBe(1); expect(localShots()).toHaveLength(1);
   });
   it('applies the same timeout to a caught PEEK penalty and resumes that hand after an empty forced shot', ()=>{
     timedGazes(1500,5000); startDecision(); const hand=latest.game.round; advance(1000); act(()=>latest.peek()); advance(500);
     advance(GUN_SLIDE_MS + CONFIG.TRIGGER_TIMEOUT_MS); expect(latest.game.phase).toBe('HOST_FORCE_SHOT');
-    advance(3500+3400); expect(latest.game.phase).toBe('PLAYER_DECISION'); expect(latest.game.round).toBe(hand);
+    advance(4200+3400); expect(latest.game.phase).toBe('PLAYER_DECISION'); expect(latest.game.round).toBe(hand);
     expect(latest.game.stats.forcedShots).toBe(1); expect(latest.game.stats.handsLost).toBe(0);
   });
 });
 
-describe('Host revolver transfers before a reachable pickup', () => {
-  it('slides once before enabling either player input or the absolute deadline', () => {
+describe('shared centered revolver pickup and controlled return', () => {
+  it('finishes pickup before enabling either player input or the absolute deadline', () => {
     vi.mocked(dealRound).mockImplementation(()=>copy(playerLoses)); startDecision();
     act(()=>latest.stand()); advance(950+1500);
     const transfer=latest.game.gunTransfer;
@@ -1245,9 +1244,9 @@ describe('Host revolver transfers before a reachable pickup', () => {
     advance(1); expect(latest.game.gunTransfer).toBeNull(); expect(latest.game.awaitingTrigger).toBe(true);
     expect(latest.game.triggerDeadline).toBe(Date.now()+CONFIG.TRIGGER_TIMEOUT_MS);
     expect(latest.game.revolver).toBe(chamber); expect(vi.mocked(Math.random).mock.calls).toHaveLength(randomCalls);
-    expect(vi.mocked(tableAudio.play).mock.calls.filter(([sound])=>sound==='slide')).toHaveLength(1);
+    expect(vi.mocked(tableAudio.play).mock.calls.filter(([sound])=>sound==='slide')).toHaveLength(0);
   });
-  it('waits for the entire slide even if the captive finishes its pre-shot line immediately', () => {
+  it('waits for the entire pickup even if the captive finishes its pre-shot line immediately', () => {
     startDecision(); act(()=>latest.stand()); advance(950+1500);
     const started=latest.game.gunTransfer!.startedAt;
     for(let i=0;i<20&&(latest.game.speech||latest.game.speechQueue.length);i++) {
@@ -1260,13 +1259,13 @@ describe('Host revolver transfers before a reachable pickup', () => {
     advance(1); expect(latest.game.aiShotStartedAt).toBe(Date.now());
     expect(latest.game.revolver.currentChamber).toBe(1);
   });
-  it('sets down for 700ms, then slides back once, without advancing a second chamber or delaying the next round', () => {
+  it('starts a controlled return after 200ms, without advancing a second chamber or delaying the next round', () => {
     startPlayerShot(); holdTrigger(); const shotAt=Date.now(), chamber=latest.game.revolver;
     expect(latest.game.gunTransfer).toBeNull();
     advance(GUN_SET_DOWN_MS-1); expect(latest.game.gunTransfer).toBeNull();
     advance(1); expect(latest.game.gunTransfer).toMatchObject({stage:'return',side:'player',startedAt:Date.now(),duration:GUN_SLIDE_MS});
     advance(GUN_SLIDE_MS); expect(latest.game.gunTransfer).toBeNull(); expect(latest.game.revolver).toBe(chamber);
-    expect(vi.mocked(tableAudio.play).mock.calls.filter(([sound])=>sound==='slide')).toHaveLength(2);
+    expect(vi.mocked(tableAudio.play).mock.calls.filter(([sound])=>sound==='slide')).toHaveLength(0);
     advance(shotAt+3400-Date.now()); expect(latest.game.phase).toBe('SWEEPING');
   });
   it('cancels an in-flight delivery on replay and never enables an old trigger or consumes the fresh cylinder', () => {

@@ -72,6 +72,7 @@ export function useGame() {
   const distantTimer = useRef<Timer | null>(null), ambientTimer = useRef<Timer | null>(null);
   const lastDistantAt = useRef(-Infinity), localShotUntil = useRef(0), ambientDueAt = useRef(Infinity);
   const attentionPlan = useRef<AttentionPlan | null>(null), opponentInView = useRef(true);
+  const localPending = useRef<Timer|null>(null);
   const penaltyShot = useRef(false), timeoutTimers = useRef(new Set<Timer>()), gunTimers = useRef(new Set<Timer>());
   const stressClock = useRef(Date.now()), loudAt = useRef(-Infinity), reliefAt = useRef(-Infinity);
   const seenLoud = useRef(new Set<string>()), glanced = useRef(false);
@@ -108,6 +109,7 @@ export function useGame() {
   function clearTimers() {
     timers.current.forEach(clearTimeout); timers.current.clear(); holdTimers.current.clear(); drainTimers.current.clear();
     storyTimers.current.clear(); timeoutTimers.current.clear(); gunTimers.current.clear();
+    localPending.current=null;
     eventStart.current = eventEnd.current = impatient.current = speechTimer.current = speechGap.current = distantTimer.current = ambientTimer.current = null;
   }
   useEffect(() => {
@@ -164,9 +166,9 @@ export function useGame() {
   }
   function slideGun(side: Side, stage: GunTransfer['stage'], after?: () => void) {
     clearGroup(gunTimers.current);
-    const gunTransfer: GunTransfer = { stage, side, startedAt: Date.now(), duration: GUN_SLIDE_MS };
+    const gunTransfer: GunTransfer = { stage, side, startedAt: Date.now(), duration: stage==='to-shooter'&&side==='ai'?(current.current.roomNumber===1?1500:1450):GUN_SLIDE_MS,owner:current.current.forceShotAt!=null?'host':side };
     update({ gunTransfer });
-    tableAudio.play('slide');
+    // The gun stays at center; the shooter reaches it instead of receiving a slide.
     later(() => {
       if (current.current.gunTransfer !== gunTransfer) return;
       update({ gunTransfer: null });
@@ -192,21 +194,21 @@ export function useGame() {
     later(() => {
       if (current.current.phase !== 'PLAYER_SHOOTING' || current.current.triggerDeadline !== deadline) return;
       update({ triggerRemainingMs: 0 });
-      if (!current.current.triggerHeld) forceShot();
+      forceShot();
     }, CONFIG.TRIGGER_TIMEOUT_MS, timeoutTimers.current);
   }
   /** The Host enforces this exact chamber; it never spins or compares the hand. */
   function forceShot() {
     const state = current.current;
-    if (state.phase !== 'PLAYER_SHOOTING' || !state.awaitingTrigger || state.triggerHeld || state.triggerDeadline === null || Date.now() < state.triggerDeadline) return;
+    if (state.phase !== 'PLAYER_SHOOTING' || !state.awaitingTrigger || state.triggerDeadline === null || Date.now() < state.triggerDeadline) return;
     clearGroup(holdTimers.current); clearGroup(drainTimers.current); clearGroup(timeoutTimers.current);
     update({ phase: 'HOST_FORCE_SHOT', forceShotAt: Date.now(), awaitingTrigger: false, suspense: true,
       spinning: null, triggerHeld: false, triggerProgress: 0, triggerRemainingMs: 0,
       stats: { ...state.stats, forcedShots: state.stats.forcedShots + 1 }, message: 'The Host will complete the procedure.' });
-    hostSay('forced_shot', 'Your time has elapsed.', true);tableAudio.playStory('host-step');
-    later(() => { if (current.current.phase === 'HOST_FORCE_SHOT') tableAudio.playContact('metal',1); }, 1100, timeoutTimers.current);
-    later(() => { if (current.current.phase === 'HOST_FORCE_SHOT') tableAudio.play('hammer'); }, 2100, timeoutTimers.current);
-    later(() => { if (current.current.phase === 'HOST_FORCE_SHOT') resolveShot('player'); }, 3500, timeoutTimers.current);
+    hostSay('forced_shot', 'Your time has elapsed.', true);
+    later(() => { if (current.current.phase === 'HOST_FORCE_SHOT') tableAudio.playContact('metal',1); }, 2200, timeoutTimers.current);
+    later(() => { if (current.current.phase === 'HOST_FORCE_SHOT') tableAudio.play('hammer'); }, 2800, timeoutTimers.current);
+    later(() => { if (current.current.phase === 'HOST_FORCE_SHOT') resolveShot('player'); }, 4200, timeoutTimers.current);
   }
 
   function voiceFired(room: RoomNumber, fired: number) {
@@ -293,11 +295,11 @@ export function useGame() {
     const state = current.current;
     if (state.roomNumber !== pending.room || state.feedDeaths.includes(pending.table)) return;
     const direction = pending.table === 2 ? -1 : pending.table === 3 ? .6 : 1;
-    const distantShot: DistantShot = { id: pending.id, table: pending.table, startedAt: Date.now(), duration: 3000, direction };
+    const distantShot: DistantShot = { id: pending.id, table: pending.table, startedAt: Date.now(), duration: 1800, direction,position:[direction*3,1.2,-1.5] };
     lastDistantAt.current = distantShot.startedAt;
     update({ feedDeaths: [...state.feedDeaths, pending.table], feedDeathSerial: state.feedDeathSerial + 1,
       guestsRemaining: state.guestsRemaining - 1, distantShot });
-    tableAudio.playShot({ id: pending.id, kind: 'distant', roomId: pending.table, direction });
+    tableAudio.playShot({ id: pending.id, kind: 'distant', roomId: pending.table, direction,position:distantShot.position });
     if (pending.announce && state.phase !== 'ENDING_DEATH' && state.phase !== 'ENDING_WIN' && state.phase !== 'GAME_OVER') {
       hostSay('other_room_death', `Table ${['zero', 'one', 'two', 'three', 'four'][pending.table]}. ${chooseHostLine('other_room_death', current.current.dialogue)}`);
       if (!state.dead) say('distant_shot');
@@ -553,6 +555,7 @@ export function useGame() {
 
   function resolveShot(shooter: Side) {
     if (shooter === 'ai' ? current.current.phase !== 'AI_SHOOTING' : !['PLAYER_SHOOTING','HOST_FORCE_SHOT'].includes(current.current.phase)) return;
+    const wait=lastDistantAt.current+4000-Date.now();if(wait>0){if(localPending.current===null){clearGroup(holdTimers.current);clearGroup(timeoutTimers.current);update({awaitingTrigger:false,triggerHeld:false,triggerProgress:1});localPending.current=later(()=>{localPending.current=null;resolveShot(shooter);},wait);}return;}
     cancel(impatient.current); impatient.current = null;
     clearGroup(holdTimers.current); clearGroup(drainTimers.current);
     const state = current.current;
@@ -561,7 +564,7 @@ export function useGame() {
     clearGroup(timeoutTimers.current);
     const fired = fireRevolver(state.revolver);
     const shotId = `${instanceId}:${runSerial.current}:local:${++localShotSerial.current}`;
-    localShotUntil.current = Date.now() + (fired.fired ? 2400 : 1000);
+    localShotUntil.current = Date.now() + (fired.fired ? 4000 : 1000);
     const guestsRemaining = state.guestsRemaining - (fired.fired ? 1 : 0);
     update({ guestsRemaining, stats: { ...state.stats,
       highestChamber: Math.max(state.stats.highestChamber, fired.fired ? state.revolver.currentChamber : Math.min(CONFIG.NUM_CHAMBERS, fired.revolver.currentChamber)),
@@ -572,6 +575,7 @@ export function useGame() {
       shotEffect: fired.fired ? 'shot' : 'click', shotId, gunTransfer: null, phase: 'ROUND_RESULT', dead: fired.fired ? shooter : null,
       aiShotStartedAt: null, aiShotDurationMs: null, triggerDeadline: null, triggerRemainingMs: null,
       message: fired.fired ? '' : 'Click. An empty chamber.' });
+    later(()=>{if(current.current.shotId===shotId)slideGun(shooter,'return');},GUN_SET_DOWN_MS,gunTimers.current);
     if (fired.fired) tableAudio.playShot({ id: shotId, kind: 'local', roomId: state.roomNumber });
     else { tableAudio.play('click'); if(shooter==='ai') tableAudio.playStory('gasp'); }
     if (!penaltyShot.current) completeRound();
@@ -584,9 +588,6 @@ export function useGame() {
       else later(() => current.current.roomNumber < 3 ? transitionRoom() : endingWin(), 2400, storyTimers.current);
     }
     else {
-      later(() => {
-        if (current.current.phase === 'ROUND_RESULT' && current.current.shotId === shotId) slideGun(shooter, 'return');
-      }, GUN_SET_DOWN_MS, gunTimers.current);
       later(() => wasForced ? hostSay('forced_shot') : say(current.current.revolver.currentChamber >= CONFIG.DANGER_CHAMBER ? 'danger' : shooter === 'ai' ? 'ai_survives_click' : 'player_survives_click'), 1000);
       later(() => {
         update({ forceShotAt: null });

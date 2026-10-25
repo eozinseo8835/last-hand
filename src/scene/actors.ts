@@ -1,3 +1,5 @@
+import {pickupPose,smooth} from '../pickup';
+import {soundReaction,type WorldSound} from '../worldSound';
 import {lookAtTarget} from './gaze';
 import { createBurlapHood } from './hood';
 import { restoreNearCameraHiding, applyNearCameraHiding } from './visibility';
@@ -6,14 +8,14 @@ import { CONFIG, type Card, type GamePhase, type Round } from '../game';
 import { mergeStaticMeshes } from './merge';
 import { cinematicProgress, type CinematicState } from '../cinematics';
 import { bodyLanguage } from '../bodyLanguage';
-import { eventDoorPulse, type OpponentTell, type RoundEvent, type Side } from '../tension';
-import { reactionLevel, type AmbientEvent, type DistantShot } from '../roomLife';
+import { type OpponentTell, type RoundEvent, type Side } from '../tension';
+import { type AmbientEvent, type DistantShot } from '../roomLife';
 import type { Attention } from '../attention';
 import { OPPONENTS } from '../campaign';
 import { CARD_WIDTH, CARD_HEIGHT, DECK_POSITION, GUN_REST, GUN_PICKUP, tableCardPosition, playerPeekDeck } from '../tableLayout';
 import { gunTransferProgress, type GunTransfer } from '../gunTransfer';
 import { createCharacter } from './skeleton';
-import { FORCED_SHOT, type PoseName, type DebugPoseName } from './poses';
+import { type PoseName, type DebugPoseName } from './poses';
 import { createRevolverModel, MUZZLE_LOCAL, GRIP_SOCKET } from './revolver';
 import { routePoint } from './choreography';
 export type ActorState = {
@@ -36,6 +38,7 @@ export type ActorState = {
   peekedCard?: Card | null;
   event?: RoundEvent | null;
   roomNumber?: 1 | 2 | 3;
+  worldSound?:WorldSound|null;
   addressedTo?: 'host'|'captive'|'player';
   speaker?: 'host' | 'captive' | null;
   hostVoiceLevel?: number;
@@ -165,7 +168,7 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
   const captiveRig=createCharacter('captive',1), hostRig=createCharacter('host',1), playerRig=createCharacter('player',1);
   const guardRigs=[createCharacter('guard',1),createCharacter('guard',1)];
   const captive=captiveRig.group, host=hostRig.group, playerHands=playerRig.group;
-  captive.position.set(0,.45,-.90); host.position.set(-.70,.90,-.35);
+  captive.position.set(0,.45,-.80); host.position.set(-.72,.45,.12);host.rotation.y=Math.PI/2;
   scene.add(captive,host); view.add(playerHands); playerHands.position.set(0,-.75,0);
   captive.userData={actorRole:'captive',canShoot:true,canDie:true};
   host.userData={actorRole:'host',canShoot:true,canDie:false}; playerHands.userData.actorRole='player';
@@ -180,13 +183,16 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
   const armMeshes=new Set<THREE.Object3D>();
   for(const arm of [playerRig.arms.left,playerRig.arms.right]) arm.shoulder.traverse(object=>armMeshes.add(object));
   playerHands.traverse(object=>{if(object instanceof THREE.Mesh && !armMeshes.has(object))object.visible=false;});
+  const aiHeldRig=new THREE.Group();aiHeldRig.name='Captive held card fan';leftHand.add(aiHeldRig);aiHeldRig.position.set(0,.015,.105);aiHeldRig.rotation.set(-Math.PI/2+.25,0,Math.PI);
   const heldRig=new THREE.Group(); heldRig.name='Hand-held player card fan'; view.add(heldRig);
-  const chair=new THREE.Group();chair.name='Captive chair';chair.position.set(0,0,-.90);scene.add(chair);
+  const chair=new THREE.Group();chair.name='Captive chair';chair.position.set(0,0,-.80);scene.add(chair);
   const chairMaterial=surface(0x252e26,.25,.8);
   box(chair,[.43,.045,.38],[0,.4275,0],chairMaterial);
   box(chair,[.43,.47,.035],[0,.71,-.18],chairMaterial);
   for(const x of [-.175,.175])for(const z of [-.15,.15]) box(chair,[.026,.43,.026],[x,.215,z],chairMaterial);
   mergeStaticMeshes(chair);
+  const hostChair=chair.clone();hostChair.name='Host chair';hostChair.position.set(-.72,0,.12);hostChair.rotation.y=Math.PI/2;scene.add(hostChair);
+  const rim=new THREE.PointLight(0xa3c6df,.22,2,2);rim.position.set(-1.1,1.45,-.5);scene.add(rim);
   const hoodMaterial=surface(0x514630,0,1);
   const hood=createBurlapHood(),captiveHood=hood.group;head.add(captiveHood);captiveHood.visible=false;
   const zipMaterial=surface(0xccc6a6);
@@ -204,10 +210,9 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
   const gunRest=new THREE.Vector3(...GUN_REST),gunRestQuaternion=gun.quaternion.clone();
   const socketPosition=new THREE.Vector3(...GRIP_SOCKET.position),socketQuaternion=new THREE.Quaternion(...GRIP_SOCKET.quaternion);
   const muzzlePoint=new THREE.Vector3(...MUZZLE_LOCAL);
-  let gunHolder:'player'|'ai'|'host'|null=null,latchedShooter:Side|null=null;
-  let shotAt=-Infinity,dropAt=-Infinity,priorShotEffect:ActorState['shotEffect']=null;
-  const shotPosition=new THREE.Vector3(),shotQuaternion=new THREE.Quaternion();
-  let debugPose:DebugPoseName|null=null,debugRoom:1|2|3=1,currentRoom=1;
+  let gunHolder:'player'|'ai'|'host'|null=null,latchedShooter:Side|'host'|null=null;
+  let shotAt=-Infinity,priorShotEffect:ActorState['shotEffect']=null;
+  let debugSound:WorldSound|null=null;let debugPose:DebugPoseName|null=null,debugRoom:1|2|3=1,currentRoom=1;
   let lastSpinSerial=0,spinStartedAt=-1,spinFrom=0,lastPeekSerial=0,peekStartedAt=-1,peekIdentity='';
   const cardSlots: CardSlot[] = [];
   const backTexture = cardBackTexture();
@@ -253,6 +258,7 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
   let currentRound: Round | null = null, cardRevealed = false;
   let actorTime = 0, lastRound = 0, lastPhase: GamePhase = 'START';
   let hostGestureAt=-Infinity,lastSpeaker:ActorState['speaker']=null;
+  let shootingLayStartedAt=-1;
   let elapsedShoot = 0, phaseStartedAt = 0, showdownStartedAt = -1, sweepStartedAt = -1;
   let serial = 0, newest: CardSlot | null = null, slump = 0;
 
@@ -322,7 +328,7 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     }
     if (revealed && !previousReveal) {
       showdownStartedAt = actorTime;
-      cardSlots.filter(slot => slot.active && slot.owner === 'player').forEach(rememberWorld);
+      cardSlots.filter(slot => slot.active).forEach(rememberWorld);
     }
     if (!revealed) showdownStartedAt = -1;
   }
@@ -336,9 +342,9 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
   function fanHome(slot: CardSlot, out: THREE.Vector3) {
     const count = (currentRound ?? {player:[],ai:[],deck:[]}).player.length;
     const offset = slot.index - (count - 1) / 2;
-    const spacing = Math.min(.043, .20 / Math.max(1,count-1));
-    const fanY = -.060 - Math.abs(offset)*.001;
-    out.set(offset*spacing,fanY,-.37+slot.index*.0008);
+    const spacing = Math.min(.028, .22 / Math.max(1,count-1));
+    const fanY = -.13 - Math.abs(offset)*.004;
+    out.set(-.18-Math.max(0,count-4)*.008+offset*spacing,fanY,-.50+slot.index*.0005);
     return offset;
   }
   function animateCards(time: number, dt: number, state: ActorState) {
@@ -363,21 +369,23 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
         group.userData.held = false; group.userData.tableFaceUp = false;
         continue;
       }
-      if (slot.owner === 'player' && cardRevealed) {
+      if (cardRevealed||slot.owner==='player'&&shootingLayStartedAt>=0) {
+        if(group.parent!==scene)rememberWorld(slot);
         tableHome(slot, targetPosition);
-        const eased = 1 - Math.pow(1 - layProgress, 3);
+        const progress=cardRevealed?layProgress:Math.min(1,(time-shootingLayStartedAt)/.35),eased = 1 - Math.pow(1 - progress, 3);
         group.position.lerpVectors(slot.fromPosition, targetPosition, eased);
-        group.position.y += Math.sin(layProgress * Math.PI) * .13;
-        targetQuaternion.setFromEuler(angle.set(-Math.PI / 2, 0, 0));
+        group.position.y += Math.sin(progress * Math.PI) * .13;
+        const down=slot.owner==='player'&&['PLAYER_SHOOTING','AI_SHOOTING','HOST_FORCE_SHOT','ROUND_RESULT'].includes(state.phase);
+        targetQuaternion.setFromEuler(angle.set(-Math.PI / 2,down?Math.PI*smooth(0,.25,elapsedShoot):0,0));
         group.quaternion.slerpQuaternions(slot.fromQuaternion, targetQuaternion, eased);
         group.scale.setScalar(THREE.MathUtils.lerp(slot.fromScale, 1, eased));
-        group.userData.held = false; group.userData.tableFaceUp = layProgress >= .98;
+        group.userData.held = false; group.userData.tableFaceUp = !down&&layProgress >= .98;
         continue;
       }
       if (slot.owner === 'player') {
         const progress = THREE.MathUtils.clamp(slot.age / (CONFIG.DEAL_SPEED / 1000), 0, 1);
         const offset = fanHome(slot, targetPosition);
-        targetQuaternion.setFromEuler(angle.set(-.08, offset * .018, THREE.MathUtils.clamp(-offset*.10,-.22,.22)));
+        targetQuaternion.setFromEuler(angle.set(-.35, 0, THREE.MathUtils.clamp(-offset*.17,-.90,.90)));
         if (progress >= 1) {
           if (group.parent !== heldRig) {
             // Respect the deal deadline even if a slow frame skipped the pickup arc.
@@ -412,17 +420,12 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
         // Delivery stays back-up on the felt. A face appears only as it is lifted.
         group.userData.tableFaceUp = false;
       } else {
-        const progress = THREE.MathUtils.clamp(slot.age / (CONFIG.DEAL_SPEED / 1000), 0, 1);
-        tableHome(slot, targetPosition);
-        group.position.lerpVectors(deckStart, targetPosition, 1 - Math.pow(1 - progress, 3));
-        group.position.y += Math.sin(progress * Math.PI) * .025;
-        const hidden = slot.index === 1 && !cardRevealed;
-        const flipProgress = showdownStartedAt < 0 ? 0 : THREE.MathUtils.clamp((time - showdownStartedAt) / .65, 0, 1);
-        slot.flip = hidden ? Math.PI : slot.index === 1 ? Math.PI * Math.pow(1 - flipProgress, 3) : 0;
-        const peek = state.phase === 'PEEKING' && hidden ? Math.sin(Math.min(1, elapsedShoot / .60) * Math.PI) : 0;
-        group.rotation.set(-Math.PI / 2 + peek*.07, slot.flip, (0) + peek * .08);
-        group.position.y += Math.abs(Math.sin(slot.flip)) * CARD_HEIGHT/2 + peek*.01;
-        group.userData.held = false; group.userData.tableFaceUp = !hidden && progress >= .98;
+        const progress=THREE.MathUtils.clamp(slot.age/(CONFIG.DEAL_SPEED/1000),0,1),count=currentRound?.ai.length??2,offset=slot.index-(count-1)/2;
+        const heldPosition=new THREE.Vector3(offset*Math.min(.028,.22/Math.max(1,count-1)),-Math.abs(offset)*.004,slot.index*.0005),heldQ=new THREE.Quaternion().setFromEuler(new THREE.Euler(0,0,-offset*.17));
+        if(progress>=1){if(group.parent!==aiHeldRig)aiHeldRig.add(group);group.position.copy(heldPosition);group.quaternion.copy(heldQ);group.scale.setScalar(1);group.userData.held=true;}
+        else {if(group.parent!==scene)scene.attach(group);const to=aiHeldRig.localToWorld(heldPosition.clone()),q=aiHeldRig.getWorldQuaternion(new THREE.Quaternion()).multiply(heldQ);group.position.lerpVectors(deckStart,to,smooth(0,1,progress));group.position.y+=Math.sin(progress*Math.PI)*.035;backQuaternion.setFromEuler(new THREE.Euler(-Math.PI/2,slot.index===1?Math.PI:0,0));group.quaternion.slerpQuaternions(backQuaternion,q,smooth(.3,1,progress));group.userData.held=false;}
+        group.userData.tableFaceUp=false;
+
       }
     }
   }
@@ -431,59 +434,77 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
   const skeletons={captive:captiveRig,host:hostRig,guards:guardRigs,player:playerRig};
   const working=new THREE.Vector3();
   function flatGun(position:THREE.Vector3) { scene.attach(gun);gun.position.copy(position);gun.quaternion.copy(gunRestQuaternion);gun.scale.set(1,1,1);gunHolder=null; }
-  function grip(rig:typeof captiveRig,side:'left'|'right') {rig.arms[side].hand.add(gun);gun.position.copy(socketPosition);gun.quaternion.copy(socketQuaternion);gun.scale.set(1,1,1);}
-  function solveWorld(rig:typeof captiveRig,side:'left'|'right',target:THREE.Vector3,palm?:THREE.Quaternion,raised=false) {
+  // The opposite seat approaches the exposed side of the grip; its wrist
+  // uses the other palm roll, with the wood still inside the same palm.
+  function gripSocket(rig:typeof captiveRig){return rig===captiveRig?{position:new THREE.Vector3(-.057,.025,.150),quaternion:new THREE.Quaternion(.5,-.5,.5,.5)}:{position:socketPosition,quaternion:socketQuaternion};}
+  function grip(rig:typeof captiveRig,side:'left'|'right') {const socket=gripSocket(rig);rig.arms[side].hand.add(gun);gun.position.copy(socket.position);gun.quaternion.copy(socket.quaternion);gun.scale.set(1,1,1);}
+  function solveWorld(rig:typeof captiveRig,side:'left'|'right',target:THREE.Vector3,palm?:THREE.Quaternion,raised=false,fullGrip=false) {
     const local=rig.group.worldToLocal(target.clone()),localQ=palm?rig.group.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(palm):undefined;
-    return rig.solveHand(side,local,raised?new THREE.Vector3(.5,.2,-.25):undefined,{allowRaisedElbow:raised,palmQuaternion:localQ});
+    return rig.solveHand(side,local,raised?new THREE.Vector3(.5,.2,-.25):undefined,{allowRaisedElbow:raised,palmQuaternion:localQ,fullGrip});
   }
   function pointGun(rig:typeof captiveRig,side:'left'|'right',muzzle:THREE.Vector3,orientation:THREE.Quaternion,raised=false) {
-    const palm=orientation.clone().multiply(socketQuaternion.clone().invert());
-    const offset=socketPosition.clone().add(muzzlePoint.clone().applyQuaternion(socketQuaternion));
+    const socket=gripSocket(rig),palm=orientation.clone().multiply(socket.quaternion.clone().invert());
+    const offset=socket.position.clone().add(muzzlePoint.clone().applyQuaternion(socket.quaternion));
     const target=muzzle.clone().sub(offset.applyQuaternion(palm));
     for(let pass=0;pass<4;pass++) {
-      solveWorld(rig,side,target,palm,raised);grip(rig,side);scene.updateMatrixWorld(true);
+      solveWorld(rig,side,target,palm,raised,true);grip(rig,side);scene.updateMatrixWorld(true);
       target.add(muzzle.clone().sub(model.muzzlePoint.getWorldPosition(new THREE.Vector3())));
     }
     rig.setGrip(side,1,1,.8);
     gun.userData.muzzleError=model.muzzlePoint.getWorldPosition(new THREE.Vector3()).distanceTo(muzzle);
   }
   function atCamera(x:number,y:number,z:number) {return view.localToWorld(new THREE.Vector3(x,y,z));}
-  function forcedShotPose(age:number) {
-    const destination=atCamera(...FORCED_SHOT.root),walk=THREE.MathUtils.clamp(age/FORCED_SHOT.walkSeconds,0,1);
-    host.position.lerpVectors(new THREE.Vector3(-1.05,.9,-.1),destination,walk);
-    host.rotation.y=FORCED_SHOT.turn;
-    hostRig.setStandingHeight(host.position.y);
-    if(age<FORCED_SHOT.walkSeconds)flatGun(new THREE.Vector3(...GUN_PICKUP.player));
-    else {
-      const aspect=view instanceof THREE.PerspectiveCamera?view.aspect:16/9;
-      const tremble=Math.sin(actorTime*29)*.0004;
-      const target=atCamera(-.96*Math.tan(34*Math.PI/180)*aspect*.15,.012+tremble,-.15);
-      const orientation=view.getWorldQuaternion(new THREE.Quaternion()).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1),0));
-      pointGun(hostRig,'right',target,orientation);
-      gun.userData.forcedMuzzleTarget=target.toArray();
-      hostRig.setGrip('right',1,THREE.MathUtils.smoothstep(age,3.1,3.5),THREE.MathUtils.smoothstep(age,1.8,2.1));gunHolder='host';
-    }
-    gun.userData.shotStage=age<1?'take':age<3.2?'temple':'squeeze';
+  function handGunTarget(rig:typeof captiveRig,side:'left'|'right',muzzle:THREE.Vector3,orientation:THREE.Quaternion){
+    const socket=gripSocket(rig),palm=orientation.clone().multiply(socket.quaternion.clone().invert()),offset=socket.position.clone().add(muzzlePoint.clone().applyQuaternion(socket.quaternion));return{wrist:muzzle.clone().sub(offset.applyQuaternion(palm)),palm};
   }
-  function hideHostBody(forceActive:boolean) {
-    const permitted=new Set<THREE.Object3D>();hostRig.arms.right.forearm.traverse(o=>{if(o instanceof THREE.Mesh && /Hollow .38 barrel|muzzle|Muzzle|Barrel front sight|Sight highlight|Finger|Thumb|Sleeve cuff/.test(o.name))permitted.add(o);});
-    (forceActive?host:scene).traverse(object=>{
-      if(!(object instanceof THREE.Mesh))return;
-      if(forceActive&&!permitted.has(object)){object.layers.disable(0);object.layers.enable(1);object.userData.forcedHidden=true;}
-      else if(object.userData.forcedHidden){object.layers.set(0);delete object.userData.forcedHidden;}
-    });
+  function playerAim(){const q=view.getWorldQuaternion(new THREE.Quaternion());return{muzzle:atCamera(.05,.015,-.36),q:q.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),Math.PI))};}
+  function finalAim(rig:typeof captiveRig){
+    if(rig===playerRig)return playerAim();
+    if(rig===hostRig){const muzzle=new THREE.Vector3(-.20,1.10,.33),direction=view.getWorldPosition(new THREE.Vector3()).sub(muzzle).normalize();return{muzzle,q:new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(1,0,0),direction)};}
+    const muzzle=head.localToWorld(new THREE.Vector3(.092,0,.012));return{muzzle,q:captive.getWorldQuaternion(new THREE.Quaternion()).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI/6,Math.PI,0)))};
   }
+  function pickupGun(rig:typeof captiveRig,progress:number,returning=false){
+    const k=pickupPose(progress),player=rig===playerRig;
+    if(player){scene.attach(playerHands);playerHands.scale.set(1,1,1);playerHands.position.set(-.025*k.lean,.45,.78);playerHands.rotation.set(0,0,0);playerHands.scale.set(1,1,1);}
+    rig.pose(rig===hostRig?'host-idle':'seated-resting');
+    if(rig===captiveRig){captive.position.x=-.18*k.lean;captive.position.z=-.80+.10*k.lean;}
+    rig.spine.rotation.x=(player?-.90:rig===captiveRig?.90:.78)*k.lean+(rig===hostRig?.15*k.lift:0);
+    rig.group.updateWorldMatrix(true,true);
+    const socket=gripSocket(rig),flatPalm=gunRestQuaternion.clone().multiply(socket.quaternion.clone().invert());
+    const contact=gunRest.clone().sub(socket.position.clone().applyQuaternion(flatPalm));
+    const arm=rig.arms.right,rest=arm.hand.getWorldPosition(new THREE.Vector3()),aim=finalAim(rig),finish=handGunTarget(rig,'right',aim.muzzle,aim.q);
+    const wrist=rest.clone().lerp(contact,k.reach);wrist.y+=Math.sin(k.reach*Math.PI)*.035;
+    const palm=flatPalm.clone();
+    if(k.contact){wrist.copy(contact).lerp(finish.wrist,k.lift);wrist.y+=Math.sin(k.lift*Math.PI)*.045-.008*Math.sin(k.grip*Math.PI);palm.slerp(finish.palm,k.lift);}
+    if(!returning&&rig===captiveRig&&(currentRoom===1)){wrist.x+=Math.sin(actorTime*33)*.0009;}
+    const shoulder=rig.arms.right.shoulder.getWorldPosition(new THREE.Vector3()),v=wrist.clone().sub(shoulder);if(v.length()<.16)wrist.copy(shoulder).add(v.setLength(.16));
+    const local=rig.group.worldToLocal(wrist.clone()),q=rig.group.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(palm);
+    rig.solveHand('right',local,new THREE.Vector3(-.60,.10,-.30),{lean:false,palmQuaternion:q,allowRaisedElbow:k.lift>.8&&rig===captiveRig,fullGrip:true});
+    if(player){rig.solveHand('left',rig.group.worldToLocal(new THREE.Vector3(-.18,.78,.61)),undefined,{lean:false,palmQuaternion:new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI,0,0))});rig.setGrip('left',.20);}
+    rig.setGrip('right',k.contact?.12+k.grip*.88:.12);
+    arm.fingers.forEach((chain,i)=>chain.forEach((joint,j)=>joint.rotation.x=-Math.min(1.4,(i===0?.25:.75+j*.15)*smooth(.5+i*.022,.64+i*.022,progress))));
+    if(k.contact){grip(rig,'right');gunHolder=rig===hostRig?'host':player?'player':'ai';}else flatGun(gunRest);
+    gun.userData.pickupPhase=k.phase;gun.userData.pickupContact=k.contact;gun.userData.pickupProgress=progress;
+    rig.updateCoat();rig.constrainFingers();
+  }
+  function forcedShotPose(age:number){
+    host.position.set(-.72,.45,.12);host.rotation.set(0,Math.PI/2,0);
+    if(age<.9){pickupGun(playerRig,1-smooth(0,.9,age),true);hostRig.pose('host-idle');}
+    else if(age<2.4)pickupGun(hostRig,smooth(.9,2.4,age));
+    else {hostRig.pose('host-idle');hostRig.spine.rotation.x=.15;const aim=finalAim(hostRig);pointGun(hostRig,'right',aim.muzzle,aim.q);hostRig.setGrip('right',1,smooth(3.9,4.2,age));gunHolder='host';gun.userData.forcedMuzzleTarget=aim.muzzle.toArray();}
+    gun.userData.shotStage=age<2.4?'pickup':'aim';
+  }
+  function hideHostBody(_forceActive:boolean){scene.traverse(object=>{if(object.userData.forcedHidden){object.layers.set(0);delete object.userData.forcedHidden;}});}
   function playerPose(holding=false,progress=0) {
     playerRig.pose(holding?'player-hold-to-pull':'player-card-hand');
     const q=view.getWorldQuaternion(new THREE.Quaternion());
-    solveWorld(playerRig,'left',atCamera(-.09,-.205,-.39),q.clone().multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI/2,0,-.12))));
-    playerRig.setGrip('left',.8);playerRig.arms.left.thumb[0].rotation.x=-.55;playerRig.arms.left.thumb[1].rotation.x=-.30;
+    solveWorld(playerRig,'left',atCamera(-.18-Math.max(0,(currentRound?.player.length??2)-4)*.008,-.28,-.53),q.clone().multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI/2,Math.PI,0))));
+    playerRig.setGrip('left',.15);playerRig.arms.left.fingers.forEach(c=>c.forEach(j=>j.rotation.x=-.025));playerRig.arms.left.thumb[0].rotation.x=-1.15;playerRig.arms.left.thumb[1].rotation.x=-.60;
+    const newest=cardSlots.filter(s=>s.active&&s.owner==='player').at(-1),regrip=newest?Math.sin(Math.min(1,Math.max(0,(actorTime-newest.born)/.5))*Math.PI):0;playerRig.arms.left.thumb[0].rotation.x+=regrip*.18;
     solveWorld(playerRig,'right',atCamera(.23,-.28,-.28),q);
     if(holding) {
-      const lift=THREE.MathUtils.smoothstep(progress,0,.65);
-      const muzzle=atCamera(.20*(1-lift),-.26*(1-lift),-.24-.12*(1-lift));
-      const orientation=q.clone().multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),-Math.PI/2));
-      pointGun(playerRig,'right',muzzle,orientation);
+      solveWorld(playerRig,'left',atCamera(-.20,-.42,-.40),q.clone().multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI,0,0))),false,true);playerRig.setGrip('left',.35);
+      const aim=playerAim();pointGun(playerRig,'right',aim.muzzle,aim.q);
       playerRig.setGrip('right',1,progress,THREE.MathUtils.smoothstep(progress,.30,.7));gunHolder='player';
     }
   }
@@ -495,19 +516,23 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
   }
   function hideExcept(target:THREE.Object3D) {
     for(const object of [captive,host,playerHands,...guardRigs.map(r=>r.group)])object.visible=object===target;
-    chair.visible=target===captive;deck.visible=false;gun.visible=false;heldRig.visible=false;captiveHood.visible=false;cutter.visible=false;
+    hostChair.visible=target===host;chair.visible=target===captive;deck.visible=false;gun.visible=false;heldRig.visible=false;captiveHood.visible=false;cutter.visible=false;
     for(const slot of cardSlots)slot.group.visible=false;
   }
   function debugUpdate(time:number) {
     hideHostBody(false);
     const pose=debugPose!;
-    if(['host-forced-shot','player-peek','host-dealing','hood-on','hood-mid-removal','hood-off','player-empty-hand','host-open-hand','host-speaking'].includes(pose)) {
+    if(['host-forced-shot','player-peek','host-dealing','hood-on','hood-mid-removal','hood-off','player-empty-hand','host-open-hand','host-speaking','host-seated','opponent-card-hand','gaze-test','pickup-player','pickup-ai','pickup-host'].includes(pose)) {
       const saved=debugPose;debugPose=null;
+      const isPickup=pose.startsWith('pickup-'),isCapGrip=pose==='opponent-card-hand'||pose==='gaze-test',pickupOwner=pose==='pickup-ai'?'ai':pose==='pickup-host'?'host':'player';
+      if(isCapGrip||isPickup)setCards(demo,false);
       const peek=pose==='player-peek',forced=pose==='host-forced-shot',hoodPose=pose.startsWith('hood-'),empty=pose==='player-empty-hand',gesture=pose==='host-open-hand'||pose==='host-speaking',age=peek?.50:2.8;
-      update(time,.5,{phase:hoodPose?'OPENING':empty||gesture?'PLAYER_DECISION':peek?'PLAYER_PEEKING':forced?'HOST_FORCE_SHOT':'DEALING',roundNumber:1,revealed:false,suspense:false,dead:null,shotEffect:null,
+      update(time,.5,{worldSound:debugSound,gunTransfer:isPickup?{stage:'to-shooter',side:pickupOwner==='ai'?'ai':'player',owner:pickupOwner,startedAt:Date.now()-((time%2)/1.5)*1500,duration:1500}:null,phase:isPickup?pickupOwner==='ai'?'AI_SHOOTING':'PLAYER_SHOOTING':hoodPose?'OPENING':empty||gesture||isCapGrip||pose==='host-seated'?'PLAYER_DECISION':peek?'PLAYER_PEEKING':forced?'HOST_FORCE_SHOT':'DEALING',roundNumber:1,revealed:false,suspense:false,dead:null,shotEffect:null,
         forceShotAt:forced?Date.now()-age*1000:null,peekActor:peek?'player':null,peekStartedAt:Date.now()-age*1000,
         speaker:gesture?'host':null,hostVoiceLevel:gesture?1:0,cinematic:hoodPose?{stage:pose==='hood-on'?'hooded':pose==='hood-off'?'rules':'opponent-unhood',mode:'full',startedAt:Date.now()-(pose==='hood-mid-removal'?3577:0)}:null,peekedCard:peek?demo.player[0]:null,tiesCut:{player:true,ai:true}});
       debugPose=saved;
+      if(isCapGrip){animateCards(time+2,.1,{phase:'PLAYER_DECISION',roundNumber:1,revealed:false,suspense:false,dead:null,shotEffect:null});host.visible=playerHands.visible=heldRig.visible=hostChair.visible=false;for(const slot of cardSlots)slot.group.visible=slot.owner==='ai';return captive;}
+      if(isPickup){host.visible=pickupOwner==='host';captive.visible=pickupOwner==='ai';playerHands.visible=pickupOwner==='player';heldRig.visible=false;cardSlots.forEach(s=>s.group.visible=false);hostChair.visible=host.visible;chair.visible=captive.visible;return pickupOwner==='host'?host:pickupOwner==='ai'?captive:playerHands;}
       if(hoodPose){host.visible=playerHands.visible=heldRig.visible=false;return captive;}
       if(empty){host.visible=captive.visible=heldRig.visible=false;return playerHands;}
       if(peek){captive.visible=host.visible=false;playerHands.visible=true;}
@@ -517,10 +542,10 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     }
     const rig=pose.startsWith('host-')?hostRig:pose.startsWith('guard-')?guardRigs[0]:pose.startsWith('player-')?playerRig:captiveRig;
     hideExcept(rig.group);rig.group.visible=true;rig.setRoom(debugRoom);
-    rig.group.position.set(0,pose.startsWith('host-')||pose.startsWith('guard-')?.9:.45,0);
+    rig.group.position.set(0,pose.startsWith('guard-')?.9:.45,0);
     rig.group.rotation.set(0,0,0);rig.pose(pose as PoseName,time);
     if(rig===captiveRig){chair.position.set(0,0,0);}
-    if(pose.startsWith('host-')&&pose!=='host-idle') {rig.crouch(.15);}
+
     if(pose==='self-shot'){selfShot();gun.visible=true;}
     if(pose==='holding-revolver'||pose==='player-hold-to-pull') {grip(rig,'right');rig.setGrip('right',1,.7,.7);gun.visible=true;}
     if(pose==='host-sliding'){flatGun(new THREE.Vector3(.12,.76,.35));gun.visible=true;}
@@ -540,20 +565,22 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     restoreNearCameraHiding(scene);hideHostBody(false);
     actorTime=time;
     if(debugPose){debugTarget=debugUpdate(time);return;}
+    if(playerHands.parent!==view){view.attach(playerHands);playerHands.rotation.set(0,0,0);playerHands.scale.set(1,1,1);}
     if(heldRig.parent!==view){view.add(heldRig);heldRig.position.set(0,0,0);heldRig.rotation.set(0,0,0);}
     const dt=Math.max(0,delta),epoch=Date.now(),room=state.roomNumber??1;
     if(room!==currentRoom){currentRoom=room;captiveRig.setRoom(room);}
     if(state.roundNumber!==lastRound||state.phase!==lastPhase){
-      if(state.roundNumber!==lastRound){lastRound=state.roundNumber;priorShotEffect=null;latchedShooter=null;gunHolder=null;shotAt=dropAt=-Infinity;}
-      if(state.phase!==lastPhase){phaseStartedAt=time;lastPhase=state.phase;}
+      if(state.roundNumber!==lastRound){lastRound=state.roundNumber;priorShotEffect=null;latchedShooter=null;gunHolder=null;shotAt=-Infinity;}
+      if(state.phase!==lastPhase){phaseStartedAt=time;lastPhase=state.phase;if(['PLAYER_SHOOTING','AI_SHOOTING','HOST_FORCE_SHOT'].includes(state.phase)&&shootingLayStartedAt<0){shootingLayStartedAt=time;cardSlots.filter(s=>s.active&&s.owner==='player').forEach(rememberWorld);}else if(['PLAYER_DECISION','SHUFFLING','START'].includes(state.phase))shootingLayStartedAt=-1;}
       if(state.phase==='SWEEPING'){sweepStartedAt=time;cardSlots.filter(s=>s.active).forEach(rememberWorld);}
     }
     elapsedShoot=time-phaseStartedAt;
     const shuffle=state.phase==='SHUFFLING'?Math.sin(Math.min(1,elapsedShoot/.50)*Math.PI*2):0;
     upperPack.position.set(shuffle*.045,.010+Math.abs(shuffle)*.015,0);upperPack.rotation.y=shuffle*.22;
-    captive.visible=host.visible=playerHands.visible=true;chair.visible=true;deck.visible=true;heldRig.visible=true;gun.visible=true;
-    captive.position.set(0,.45,-.90);captive.rotation.set(0,0,0);host.position.set(-.70,.90,-.35);host.rotation.set(0,Math.PI/2,0);playerHands.position.set(0,-.75,0);
+    captive.visible=host.visible=playerHands.visible=true;hostChair.visible=true;chair.visible=true;deck.visible=true;heldRig.visible=true;gun.visible=true;
+    captive.position.set(0,.45,-.80);captive.rotation.set(0,0,0);host.position.set(-.72,.45,.12);host.rotation.set(0,Math.PI/2,0);playerHands.position.set(0,-.75,0);
     captiveRig.pose('seated-resting');hostRig.pose('host-idle');playerPose();
+    if(!cardRevealed){captiveRig.solveHand('left',new THREE.Vector3(-.14,.39,.29),undefined,{palmQuaternion:new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI/2,0,Math.PI/2))});captiveRig.setGrip('left',.16);}
     for(const rig of guardRigs){rig.group.visible=false;rig.pose('guard-walking',time);}
     const cine=state.cinematic,stage=cine?.stage??state.storyStage??'',p=cinematicProgress(cine,epoch);
     const body=bodyLanguage(room,state.stress??.2,time,(state.chambersFired??0)+1,state.phase,state.tell?.disposition==='calm');
@@ -576,21 +603,13 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     const cv=active==='captive'?state.captiveVoiceLevel??state.voiceLevel??0:0,hv=active==='host'?state.hostVoiceLevel??state.voiceLevel??0:0;
     if(state.dead!=='ai')head.rotation.x+=cv*.01*motion;
     hostHead.rotation.x+=hv*.01*motion;
-    const reaction=state.distantShot??state.ambientEvent;
-    const eventTurn=reactionLevel(reaction,epoch),hostTurn=reactionLevel(reaction,epoch,true);
-    head.rotation.y+=(reaction?.direction??1)*eventTurn*.6;hostHead.rotation.y+=(reaction?.direction??1)*hostTurn*.5;
-    if(state.attention?.captive.away)head.rotation.y=state.attention.captive.direction*.72*state.attention.captive.amount;
-    // The Host stands side-on at the left. A negative local yaw turns its mask
-    // toward the player, so its public distraction turns toward the far wall.
-    if(state.attention?.host.away)hostHead.rotation.y=.70*state.attention.host.amount;
-    head.rotation.x-=eventDoorPulse(state.event,epoch)*.09;
     const hostHeadRotation=hostHead.rotation.clone();
     if(['SHUFFLING','DEALING','HITTING','DEALER_TURN','REVEAL','SWEEPING'].includes(state.phase)) {
-      hostRig.pose('host-dealing',time);hostRig.crouch(.15);host.position.x=-.94;host.position.z=-.10;
+      hostRig.pose('host-dealing',time);
       const palm=new THREE.Quaternion().setFromEuler(new THREE.Euler(1.05,0,0));
       const dealing=['DEALING','HITTING','DEALER_TURN'].includes(state.phase);
       const stroke=dealing?Math.sin((elapsedShoot*1000/CONFIG.DEAL_SPEED%1)*Math.PI):Math.abs(shuffle);
-      solveWorld(hostRig,'right',new THREE.Vector3(DECK_POSITION[0],.95+.025*stroke,DECK_POSITION[2]+.010*stroke),palm);
+      solveWorld(hostRig,'right',new THREE.Vector3(DECK_POSITION[0],.80+.025*stroke,DECK_POSITION[2]+.010*stroke),palm);
     }
     if(cine&&cine.mode!=='transfer') {
       const covered=!['guard-exit','rules','cut-opponent','cut-player','rub-wrists','complete'].includes(stage);
@@ -609,6 +628,8 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
         guard.foldedHoods.visible=stage==='guard-exit';guard.group.userData.hoodsCarried=stage==='guard-exit'?2:0;
       }
       cutter.visible=stage==='cut-opponent'||stage==='cut-player';
+      if(cutter.visible){const g=guards[0],playerCut=stage==='cut-player';g.group.visible=true;g.group.position.set(playerCut?.60:.55,playerCut?.75:.60,playerCut?.55:-.5);g.group.rotation.y=-Math.PI/2;g.rig.pose('guard-walking',0);g.rig.setStandingHeight(g.group.position.y);g.rig.spine.rotation.x=.75;g.rig.group.updateWorldMatrix(true,true);const target=playerCut?atCamera(0,-.35,-.38):new THREE.Vector3(0,.78,-.45);g.rig.solveHand('right',g.group.worldToLocal(target),undefined,{lean:false});g.rig.setGrip('right',.6);g.rig.arms.right.hand.add(cutter);}
+
     } else {captiveHood.visible=false;cutter.visible=false;}
     if(cine?.mode==='transfer'){hood.update(0);captiveHood.visible=true;}
     if(cine?.mode==='transfer')guardRigs.forEach((rig,i)=>{rig.group.visible=true;rig.group.position.set(i?-.98:.98,.9,1.05);rig.group.rotation.y=i?Math.PI/2:-Math.PI/2;});
@@ -620,32 +641,15 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     playerTie.position.copy(playerLeft.getWorldPosition(new THREE.Vector3())).lerp(playerRight.getWorldPosition(new THREE.Vector3()),.5);
     captiveTie.rotation.x=playerTie.rotation.x=Math.PI/2;
     const newShot=state.shotEffect&&state.shotEffect!==priorShotEffect;
-    if(newShot){shotAt=time;latchedShooter=gunHolder==='ai'?'ai':'player';gun.getWorldPosition(shotPosition);gun.getWorldQuaternion(shotQuaternion);if(state.dead==='ai')dropAt=time;}
+    if(newShot){shotAt=time;latchedShooter=gunHolder??(state.dead==='ai'?'ai':'player');}
     priorShotEffect=state.shotEffect;
     const transfer=state.gunTransfer;
-    if(transfer) {
-      const t=gunTransferProgress(transfer,epoch),u=transfer.stage==='return'?1-t:t;
-      const destination=new THREE.Vector3(...GUN_PICKUP[transfer.side]);
-      const path=[gunRest,new THREE.Vector3(destination.x,gunRest.y,0),destination];
-      flatGun(routePoint(path,u));gun.userData.shotStage='slide';
-      hostRig.pose('host-sliding',time);hostRig.crouch(.15);
-    } else if(state.phase==='AI_SHOOTING') {
-      const age=state.aiShotStartedAt==null?0:Math.max(0,(epoch-state.aiShotStartedAt)/1000);
-      const progress=state.aiShotStartedAt===undefined?Math.min(1,elapsedShoot/2):age/Math.max(1.5,(state.aiShotDurationMs??2000)/1000);
-      if(progress>=.55){selfShot();gun.userData.shotStage='temple';}
-      else if(progress>.10){flatGun(new THREE.Vector3(...GUN_PICKUP.ai));solveWorld(captiveRig,'right',gun.localToWorld(new THREE.Vector3(-.08,-.057,0)));if(progress>.25){grip(captiveRig,'right');captiveRig.setGrip('right',1);gunHolder='ai';}}
-      else flatGun(new THREE.Vector3(...GUN_PICKUP.ai));
-    } else if(state.phase==='PLAYER_SHOOTING'&&((state.triggerProgress??0)>0||state.spinning==='player')) {
-      playerPose(true,Math.max(state.triggerProgress??0,state.spinning==='player'?.4:0));gun.userData.shotStage='player-hold';
-    } else if(state.phase==='PLAYER_SHOOTING')flatGun(new THREE.Vector3(...GUN_PICKUP.player));
-    else if(state.phase==='HOST_FORCE_SHOT'||state.forceShotAt!=null&&state.phase==='ROUND_RESULT') {
-      const age=state.forceShotAt==null?0:(epoch-state.forceShotAt)/1000;
-      forcedShotPose(age);
-    } else if(state.shotEffect==='click'&&time-shotAt<.7) {
-      const target=new THREE.Vector3(...GUN_PICKUP[latchedShooter??'player']);flatGun(shotPosition.clone().lerp(target,Math.min(1,(time-shotAt)/.7)));
-    } else if(state.dead==='ai'&&Number.isFinite(dropAt)) {
-      scene.attach(gun);gun.position.copy(shotPosition);gun.position.y=Math.max(.06,shotPosition.y-2*(time-dropAt)**2);gun.quaternion.copy(shotQuaternion);gunHolder=null;
-    } else flatGun(gunRest);
+    if(transfer){const p=gunTransferProgress(transfer,epoch),rig=transfer.owner==='host'?hostRig:transfer.side==='ai'?captiveRig:playerRig;pickupGun(rig,transfer.stage==='return'?1-smooth(0,1,p):p,transfer.stage==='return');}
+    else if(state.phase==='HOST_FORCE_SHOT'||state.forceShotAt!=null&&state.phase==='ROUND_RESULT'&&epoch-state.forceShotAt<4400)forcedShotPose((epoch-(state.forceShotAt??epoch))/1000);
+    else if(state.shotEffect&&time-shotAt<.2){if(latchedShooter==='ai')selfShot();else if(latchedShooter==='host')forcedShotPose(4.2);else playerPose(true,1);}
+    else if(state.phase==='AI_SHOOTING')selfShot();
+    else if(state.phase==='PLAYER_SHOOTING'){playerPose(true,state.triggerProgress??0);}
+    else flatGun(gunRest);
     if(state.spinning){const serial=state.spinSerial??0;if(serial!==lastSpinSerial){lastSpinSerial=serial;spinStartedAt=time;spinFrom=revolverCylinder.rotation.x;}revolverCylinder.rotation.x=spinFrom+Math.PI*6*(1-(1-Math.min(1,(time-spinStartedAt)/.8))**3);}
     else revolverCylinder.rotation.x=(state.triggerProgress??0)*Math.PI/3;
     hammer.rotation.z=-THREE.MathUtils.smoothstep(state.triggerProgress??0,.3,.7)*.55;
@@ -673,32 +677,37 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     else if(peekIdentity){peekIdentity='';peekMaterial.map?.dispose();peekMaterial.map=peekMaterial.emissiveMap=null;peekMaterial.needsUpdate=true;}
     peekFront.visible=peek==='player'&&!!state.peekedCard;deckCorner.userData.identity=peek==='player'?state.peekedCard?.id??null:null;
     // Keep the held fan and its hand together, clear of the private corner.
-    const fanAside=peek==='player'?THREE.MathUtils.smoothstep(peekProgress,0,.15)*(1-THREE.MathUtils.smoothstep(peekProgress,.85,1)):0;
-    heldRig.position.set(fanAside?-.24*fanAside:0,fanAside?-.06*fanAside:0,0);
-    if(fanAside>0)solveWorld(playerRig,'left',atCamera(-.09-.24*fanAside,-.205-.06*fanAside,-.39),view.getWorldQuaternion(new THREE.Quaternion()).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI/2,0,-.12))));
-    const busyLeft=!cardRevealed&&currentRound?.player.length&& !['START','OPENING','TRANSITION','SWEEPING'].includes(state.phase);
-    if(!busyLeft&&!boundPlayer){solveWorld(playerRig,'left',atCamera(-.20,-.46,-.43),new THREE.Quaternion().setFromEuler(new THREE.Euler(0,Math.PI,0)));playerRig.setGrip('left',.20);}
-    if(!boundPlayer&&!['PLAYER_SHOOTING','HOST_FORCE_SHOT','PLAYER_PEEKING'].includes(state.phase)){solveWorld(playerRig,'right',atCamera(.25,-.48,-.38),new THREE.Quaternion().setFromEuler(new THREE.Euler(0,Math.PI,0)));playerRig.setGrip('right',.20);}
+    heldRig.position.set(0,0,0);
+    if(peek==='player')solveWorld(playerRig,'left',atCamera(-.18,-.28,-.53),view.getWorldQuaternion(new THREE.Quaternion()).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI/2,Math.PI,0))));
+    const busyLeft=!cardRevealed&&shootingLayStartedAt<0&&currentRound?.player.length&& !['START','OPENING','TRANSITION','SWEEPING'].includes(state.phase);
+    if(!busyLeft&&!boundPlayer&&(!transfer||transfer.owner==='host')){solveWorld(playerRig,'left',atCamera(-.20,-.42,-.40),view.getWorldQuaternion(new THREE.Quaternion()).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI,0,0))),false,true);playerRig.setGrip('left',.35);}
+    if(!boundPlayer&&!transfer&&!['PLAYER_SHOOTING','HOST_FORCE_SHOT','PLAYER_PEEKING'].includes(state.phase)){solveWorld(playerRig,'right',atCamera(.25,-.48,-.38),new THREE.Quaternion().setFromEuler(new THREE.Euler(0,Math.PI,0)));playerRig.setGrip('right',.20);}
     if(state.speaker==='host' && !['SHUFFLING','DEALING','HITTING','DEALER_TURN','HOST_FORCE_SHOT'].includes(state.phase)&&time-hostGestureAt<1.5){hostRig.solveHand('left',new THREE.Vector3(-.10,.20,.22));hostRig.setGrip('left',.18);}
     for(const rig of [captiveRig,hostRig,playerRig,...guardRigs])rig.constrainFingers();
     const hiddenCards=['START','OPENING','TRANSITION','ENDING_WIN'].includes(state.phase);
     animateCards(time,dt,state);
     if(hiddenCards){heldRig.visible=false;cardSlots.forEach(slot=>{slot.group.visible=false;slot.group.userData.held=false;slot.group.userData.tableFaceUp=false;});}
-    if(state.dead==='ai'){slump=Math.min(1,slump+dt/1.2);captiveRig.spine.rotation.x=slump*1.3;}else slump=0;
-    const eye=view.getWorldPosition(new THREE.Vector3()),monitorTarget=new THREE.Vector3(1.0,1.6,-3.4);
-    const dealing=['SHUFFLING','DEALING','HITTING','DEALER_TURN','SWEEPING'].includes(state.phase);
-    const hostTarget=state.attention?.host.away?eye.clone().lerp(monitorTarget,state.attention.host.amount):dealing?deck.getWorldPosition(new THREE.Vector3()):state.phase==='AI_SHOOTING'||state.phase==='PEEKING'||state.addressedTo==='captive'||state.speaker==='captive'?head.getWorldPosition(new THREE.Vector3()):eye;
-    const captiveTarget=state.attention?.captive.away?eye.clone().lerp(new THREE.Vector3(state.attention.captive.direction*2,1.1,-.4),state.attention.captive.amount):(state.distantShot||state.ambientEvent)&&eventTurn>0?new THREE.Vector3((state.distantShot?.direction??state.ambientEvent?.direction??1)*3,1.1,-1):state.phase==='AI_SHOOTING'?gun.getWorldPosition(new THREE.Vector3()):state.speaker==='captive'&&state.addressedTo==='host'?hostHead.getWorldPosition(new THREE.Vector3()):dealing||state.phase==='PEEKING'?new THREE.Vector3(0,.76,-.27):eye;
-    if(state.phase!=='HOST_FORCE_SHOT')lookAtTarget(hostRig,hostTarget,dt,hv*.01*motion);
-    if(state.dead!=='ai'&&gunHolder!=='ai'&&!captiveHood.visible)lookAtTarget(captiveRig,captiveTarget,dt,cv*.01*motion);
+    if(state.dead==='ai'&&!transfer&&time-shotAt>1.7){slump=Math.min(1,slump+dt/1.2);captiveRig.spine.rotation.x=slump*1.3;}else slump=0;
+    const eye=view.getWorldPosition(new THREE.Vector3()),ownCards=aiHeldRig.getWorldPosition(new THREE.Vector3()),gunPoint=gun.getWorldPosition(new THREE.Vector3()),hostPoint=hostHead.getWorldPosition(new THREE.Vector3());
+    const sound=state.worldSound??debugSound,capSound=soundReaction(sound,epoch),hostSound=soundReaction(sound,epoch,true);
+    const dealing=['SHUFFLING','DEALING','HITTING','DEALER_TURN','SWEEPING'].includes(state.phase),shooting=['AI_SHOOTING','PLAYER_SHOOTING','HOST_FORCE_SHOT'].includes(state.phase)||!!transfer;
+    const recentPlayer=['HITTING','REVEAL','SWEEPING','PLAYER_PEEKING'].includes(state.phase)&&time-phaseStartedAt<1.2;
+    let captiveTarget=shooting?gunPoint:state.speaker==='host'||dealing?hostPoint:state.speaker==='captive'?state.addressedTo==='host'?hostPoint:eye:state.phase==='REVEAL'?time-phaseStartedAt<.7?new THREE.Vector3(0,.76,.27):eye:recentPlayer?eye:ownCards;
+    if(!shooting&&!state.speaker&&!dealing&&!recentPlayer){if(room===1){const glance=Math.floor(time/3)%3;captiveTarget=glance===0?ownCards:glance===1?eye:gunPoint;}else if(room===2)captiveTarget=time%13<1?ownCards:eye;}
+    if(!shooting&&!state.speaker&&!dealing&&state.attention?.captive.away)captiveTarget=state.attention.captive.returning?eye:ownCards;
+    const hostTarget=state.phase==='HOST_FORCE_SHOT'?eye:shooting?gunPoint:state.speaker==='host'?state.addressedTo==='captive'?head.getWorldPosition(new THREE.Vector3()):eye:state.speaker==='captive'?head.getWorldPosition(new THREE.Vector3()):dealing||state.attention?.host.away&&!state.attention.host.returning?deck.getWorldPosition(new THREE.Vector3()):eye;
+    if(capSound>0&&sound){captiveTarget=new THREE.Vector3(...sound.position);captiveRig.chest.rotation.z+=Math.sin(Math.min(1,(epoch-sound.at)/180)*Math.PI)*sound.loudness*(room===1?.08:room===3?.02:.045);}
+    lookAtTarget(hostRig,hostSound>0&&sound?new THREE.Vector3(...sound.position):hostTarget,hostSound>0?dt*.55:dt,hv*.01*motion);
+    if(state.dead!=='ai'&&gunHolder!=='ai'&&!captiveHood.visible)lookAtTarget(captiveRig,captiveTarget,capSound>0?dt*1.8:dt,cv*.01*motion);
+    captive.userData.gazePriority=capSound>0?'sound':shooting||recentPlayer||state.speaker||dealing?'context':'cards';
     const forceActive=state.phase==='HOST_FORCE_SHOT'||state.forceShotAt!=null&&state.phase==='ROUND_RESULT';
-    const allowed=forceActive?[hostRig.arms.right.forearm]:[];
-    hideHostBody(forceActive);
+    const allowed:THREE.Object3D[]=[];
+    hostRig.updateCoat();hideHostBody(false);
     applyNearCameraHiding(scene,view,forceActive,allowed);
   }
   let debugTarget:THREE.Group=captive;
-  return {chair,guards,cutter,captiveTie,playerTie,captiveLegs:captiveRig.legs,standingHostLegs:hostRig.legs,
+  return {hostChair,aiHeldRig,chair,guards,cutter,captiveTie,playerTie,captiveLegs:captiveRig.legs,standingHostLegs:hostRig.legs,
     stranger:captive,captive,head,captiveHead:head,leftHand,rightHand,host,hostHead,hostLeftHand,hostRightHand,captiveHood,
     playerHands,heldRig,deck,gun,hammer,cylinder:revolverCylinder,peekCard,peekFront,deckCorner,cardSlots,skeletons,
-    setCards,update,setDebugPose:(pose:string,room:1|2|3=1)=>{debugPose=pose as DebugPoseName;debugRoom=room;},get debugTarget(){return debugTarget;}};
+    setDebugSound:(sound:WorldSound)=>{debugSound=sound;},setCards,update,setDebugPose:(pose:string,room:1|2|3=1)=>{debugPose=pose as DebugPoseName;debugRoom=room;},get debugTarget(){return debugTarget;}};
 }

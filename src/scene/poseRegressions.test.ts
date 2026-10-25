@@ -58,15 +58,16 @@ describe('skeleton rebuild regression contacts',()=>{
    }else expect(Math.max(...packX.map(Math.abs)),`${phase} stops shuffling`).toBe(0);
   }
  });
- it('keeps the Host public gaze and speaking bob during dealing and gun transfer',()=>{
+ it('keeps the seated Host context gaze and speaking bob during dealing and pickup',()=>{
   const gaze={away:true,returning:false,amount:1,direction:-1},attention={host:gaze,captive:{...gaze,direction:1},window:true};
   for(const phase of ['DEALING','DEALER_TURN','PLAYER_SHOOTING'] as GamePhase[]){
-   for(let frame=0;frame<40;frame++)actors.update(2+frame*.02,.02,{...state,phase,attention,speaker:'host',hostVoiceLevel:1,gunTransfer:phase==='PLAYER_SHOOTING'?{stage:'to-shooter',side:'player',startedAt:100000,duration:900}:null});
-   expect(actors.hostHead.rotation.y,phase).toBeGreaterThan(.4);expect(Math.abs(actors.hostHead.rotation.x)).toBeLessThan(Math.PI/6);
-   const eyeDirection=camera.getWorldPosition(new THREE.Vector3()).sub(actors.hostHead.getWorldPosition(new THREE.Vector3())).normalize();
-   expect(actors.hostHead.getWorldDirection(new THREE.Vector3()).dot(eyeDirection),`${phase} Host actually looks away`).toBeLessThan(.2);
+   const frameState={...state,phase,attention,speaker:'host' as const,hostVoiceLevel:1,gunTransfer:phase==='PLAYER_SHOOTING'?{stage:'to-shooter' as const,side:'player' as const,startedAt:100000,duration:1500}:null};
+   for(let frame=0;frame<40;frame++)actors.update(2+frame*.02,.02,frameState);
+   const expected=phase==='PLAYER_SHOOTING'?actors.gun.getWorldPosition(new THREE.Vector3()):camera.getWorldPosition(new THREE.Vector3());
+   expect(new THREE.Vector3(...actors.host.userData.gazeTarget).distanceTo(expected)).toBeLessThan(.002);
+   expect(actors.host.position.toArray()).toEqual([-.72,.45,.12]);expect(Math.abs(actors.hostHead.rotation.x)).toBeLessThan(Math.PI/6);
+   if(phase!=='PLAYER_SHOOTING'){const eyeDirection=expected.clone().sub(actors.hostHead.getWorldPosition(new THREE.Vector3())).normalize();expect(actors.hostHead.getWorldDirection(new THREE.Vector3()).dot(eyeDirection)).toBeGreaterThan(.95);}
+   actors.update(2.8,0,{...frameState,hostVoiceLevel:0});const quiet=actors.hostHead.rotation.x;actors.update(2.8,0,frameState);expect(actors.hostHead.rotation.x-quiet).toBeCloseTo(.01);
   }
-  actors.update(3,.016,{...state,attention:{...attention,host:{...gaze,returning:true,amount:.25}}});
-  expect(actors.hostHead.rotation.y).toBeGreaterThan(0);
  });
 });

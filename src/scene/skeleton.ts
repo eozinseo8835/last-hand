@@ -1,3 +1,4 @@
+import {createHostCoat,createHostMask} from './hostCoat';
 import * as THREE from 'three';
 import { solveTwoBone } from './rig';
 import { HUMAN, POSES, type PoseName, type Triple } from './poses';
@@ -13,7 +14,7 @@ function material(color:number,skin=false) {return new THREE.MeshStandardMateria
 function mesh(parent:THREE.Object3D,geometry:THREE.BufferGeometry,mat:THREE.Material,name:string,position:Triple=[0,0,0]) {const item=new THREE.Mesh(geometry,mat);item.name=name;item.position.set(...position);item.castShadow=true;item.receiveShadow=true;parent.add(item);return item;}
 function block(parent:THREE.Object3D,size:Triple,at:Triple,mat:THREE.Material,name:string) {return mesh(parent,new THREE.BoxGeometry(...size),mat,name,at);}
 function segment(parent:THREE.Object3D,length:number,radius:number,mat:THREE.Material,name:string,axis:'y'|'z'='y') {
-  const geometry=new THREE.CylinderGeometry(radius,radius*.82,length,7);
+  const geometry=new THREE.CylinderGeometry(radius,radius*.82,length,mat instanceof THREE.MeshStandardMaterial&&!mat.flatShading?24:7);
   if(axis==='z')geometry.rotateX(Math.PI/2);
   const item=mesh(parent,geometry,mat,name,axis==='y'?[0,-length/2,0]:[0,0,length/2]);
   item.userData={skeletonSegment:true,restLength:length,axis};return item;
@@ -38,6 +39,7 @@ export function createCharacter(role:CharacterRole,room:1|2|3=1) {
   chest.userData.width=.34;
   const neck=joint(chest,`${role} neck`,[0,.23,0]),head=joint(neck,`${role} head`,[0,.125,0]);
   const cloth=material(role==='host'?0x29312d:role==='guard'?0x25302b:role==='player'?0x303b31:0x465348);
+  if(role==='host')cloth.flatShading=false;
   const flesh=material(role==='host'?0xb7a28b:role==='guard'?0x5d6253:0xb29c80,true),black=material(0x17211b),shoeMat=material(0x20271f);
   const handSkin=role==='host'?material(0x252c27):flesh;
   const bodyMeshes:THREE.Mesh[]=[];
@@ -49,9 +51,7 @@ export function createCharacter(role:CharacterRole,room:1|2|3=1) {
     const skullGeo=new THREE.SphereGeometry(1,9,7);skullGeo.scale(.090,.115,.083);
     const skull=mesh(look,skullGeo,role==='host'||role==='guard'?black:flesh,'Cranium');bodyMeshes.push(skull);
     if(role==='host') {
-      const maskGeo=new THREE.SphereGeometry(1,9,7);maskGeo.scale(.084,.108,.025);
-      bodyMeshes.push(mesh(look,maskGeo,material(0xd4cfb6),'Featureless Host mask',[0,0,.076]));
-      bodyMeshes.push(block(look,[.184,.012,.015],[0,0,-.045],black,'Mask strap'));
+      skull.visible=false;createHostMask(look);
     } else if(role==='guard') {
       bodyMeshes.push(block(look,[.112,.020,.013],[0,.024,.077],flesh,'Balaclava eye opening'));
       for(const x of [-.030,.030])bodyMeshes.push(block(look,[.013,.009,.007],[x,.025,.086],black,'Guard eye'));
@@ -109,16 +109,18 @@ export function createCharacter(role:CharacterRole,room:1|2|3=1) {
     bodyMeshes.push(upperMesh,lowerMesh,cap(thigh,.067,cloth,'Hip cap'),cap(shin,.059,cloth,'Knee cap'),block(foot,[.095,.085,.25],[0,.0425,.080],shoeMat,'Shoe'));
     legs[side]={thigh,shin,foot,upperMesh,lowerMesh,lengths:[HUMAN.thigh,HUMAN.shin]};
   }
+  const coat=role==='host'?createHostCoat(pelvis,spine):null;
+  if(role==='host')bodyMeshes.forEach(m=>{m.visible=false;});
   let activeRoom=room;
   function setRoom(next:1|2|3) {
     activeRoom=next;headLooks.forEach((look,index)=>look.visible=role!=='captive'||index===next-1);
     if(role==='captive') {cloth.color.setHex([0x465348,0x888775,0x49554b][next-1]);flesh.color.setHex([0xb6a084,0xb1997e,0xb0a88e][next-1]);flesh.emissive.copy(flesh.color);}
-    tie.visible=role==='host'||role==='captive'&&next===2;hoodie.visible=role==='captive'&&next===1;
+    tie.visible=role==='captive'&&next===2;hoodie.visible=role==='captive'&&next===1;
     group.userData.roomNumber=next;
   }
   function setGrip(side:RigSide,amount:number,trigger=0,cock=0) {
     const arm=arms[side],a=THREE.MathUtils.clamp(amount,.12,1);
-    arm.fingers.forEach((chain,index)=>chain.forEach((bone,part)=>{bone.rotation.x=-(index===0?(part===0?.13+trigger*.62:trigger*.45):[.60,.92,.82][part])*a;}));
+    arm.fingers.forEach((chain,index)=>chain.forEach((bone,part)=>{bone.rotation.x=-(index===0?(part===0?1.0+trigger*.25:.18+trigger*.25):[.60,.92,.82][part])*a;}));
     const sign=side==='left'?-1:1;
     arm.thumb[0].rotation.set(-(.25+a*.28+cock*.12),sign*.38,sign*.12);
     arm.thumb[1].rotation.x=-a*.65;
@@ -130,7 +132,7 @@ export function createCharacter(role:CharacterRole,room:1|2|3=1) {
     spine.rotation.x=Math.cos(direction)*angle;spine.rotation.z=-Math.sin(direction)*angle;
     group.updateWorldMatrix(true,true);
   }
-  function solveHand(side:RigSide,targetInRoot:THREE.Vector3,poleInRoot?:THREE.Vector3,options:{allowRaisedElbow?:boolean;lean?:boolean;palmQuaternion?:THREE.Quaternion}={}) {
+  function solveHand(side:RigSide,targetInRoot:THREE.Vector3,poleInRoot?:THREE.Vector3,options:{allowRaisedElbow?:boolean;lean?:boolean;palmQuaternion?:THREE.Quaternion;fullGrip?:boolean}={}) {
     const arm=arms[side];group.updateWorldMatrix(true,true);
     let shoulder=rootPosition(arm.shoulder);
     if(options.lean!==false&&shoulder.distanceTo(targetInRoot)>HUMAN.reachRatio*(HUMAN.upperArm+HUMAN.forearm)) {leanToward(targetInRoot);shoulder=rootPosition(arm.shoulder);}
@@ -154,7 +156,10 @@ export function createCharacter(role:CharacterRole,room:1|2|3=1) {
     local.copy(arm.forearm.getWorldQuaternion(new THREE.Quaternion())).invert().multiply(desiredWorld);
     delta.copy(HAND_BIND).invert().multiply(local);euler.setFromQuaternion(delta,'XYZ');
     const needsPronation=Math.max(Math.abs(euler.x),Math.abs(euler.y),Math.abs(euler.z))>HUMAN.wristLimit;
-    for(let step=-12;needsPronation&&step<=12;step++) {
+    // The analytic elbow frame has no fixed anatomical roll zero. During a
+    // cross-table grip search the full reference circle, retaining wrist limits.
+    const referenceSteps=options.fullGrip?24:12;
+    for(let step=-referenceSteps;needsPronation&&step<=referenceSteps;step++) {
       const twist=step*Math.PI/24;
       arm.forearm.quaternion.copy(untwisted).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),twist));
       local.copy(arm.forearm.getWorldQuaternion(new THREE.Quaternion())).invert().multiply(desiredWorld);
@@ -197,11 +202,11 @@ export function createCharacter(role:CharacterRole,room:1|2|3=1) {
     if(data.walk) {
       for(const side of ['left','right'] as const) {const sign=side==='left'?-1:1,swing=Math.sin(time*6)*sign;legs[side].thigh.rotation.x=swing*.22;legs[side].shin.rotation.x=Math.max(0,-swing)*.32;legs[side].foot.rotation.x=-legs[side].thigh.rotation.x-legs[side].shin.rotation.x;arms[side].upper.rotation.x-=swing*.22;}
     }
-    group.userData.pose=name;group.updateWorldMatrix(true,true);
+    coat?.update();group.userData.pose=name;group.updateWorldMatrix(true,true);
   }
   function constrainFingers(){for(const arm of Object.values(arms)){for(const chain of [...arm.fingers,arm.thumb])for(const digit of chain){digit.rotation.x=THREE.MathUtils.clamp(digit.rotation.x,-Math.PI/2,-.015);digit.rotation.z=0;}}}
   function setFirstPerson(enabled:boolean) {bodyMeshes.forEach(item=>item.visible=!enabled);head.visible=!enabled;for(const leg of Object.values(legs))leg.thigh.visible=!enabled;}
   setRoom(activeRoom);pose(role==='host'?'host-idle':role==='guard'?'guard-walking':'seated-resting');
-  return {group,pelvis,spine,chest,neck,head,arms,legs,bodyMeshes,skinMaterial:flesh,clothingMaterial:cloth,pose,solveHand,setGrip,leanToward,setRoom,setFirstPerson,constrainFingers,setStandingHeight,crouch:(drop:number)=>setStandingHeight(.9-THREE.MathUtils.clamp(drop,0,.25))};
+  return {updateCoat:()=>coat?.update(),group,pelvis,spine,chest,neck,head,arms,legs,bodyMeshes,skinMaterial:flesh,clothingMaterial:cloth,pose,solveHand,setGrip,leanToward,setRoom,setFirstPerson,constrainFingers,setStandingHeight,crouch:(drop:number)=>setStandingHeight(.9-THREE.MathUtils.clamp(drop,0,.25))};
 }
 export type HumanRig=ReturnType<typeof createCharacter>;

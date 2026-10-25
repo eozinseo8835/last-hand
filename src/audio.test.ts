@@ -591,3 +591,21 @@ describe('Big Update 3 mix and hearing',()=>{
  it('uses a bounded final limiter and 5 second hearing recovery only on local reports',()=>{audio.init();audio.setSoundState({...state,active:false});const limiter=context().nodes.find(n=>n.kind==='distortion'&&n.curve?.length===16385)!;expect(Math.max(...limiter.curve!)).toBeLessThan(1);expect(limiter.connect).toHaveBeenCalledWith(context().destination);const hearing=stage().hearing;audio.playShot({id:'distant-safety',kind:'distant'});expect(hearing.frequency.exponentialRampToValueAtTime).not.toHaveBeenCalled();audio.playShot({id:'local-safety',kind:'local'});expect(hearing.frequency.exponentialRampToValueAtTime).toHaveBeenCalledWith(19000,context().currentTime+5);expect(context().nodes.some(n=>n.kind==='oscillator'&&n.frequency.setValueAtTime.mock.calls.some(c=>c[0]===4800))).toBe(true);});
  it('uses HRTF positions for real table voices',()=>{audio.init();const ctx=context();Object.assign(ctx,{createPanner:()=>Object.assign(ctx.make('panner'),{panningModel:'',positionX:new Parameter(),positionY:new Parameter(),positionZ:new Parameter()})});audio.setSoundState({...state,active:false});audio.startVoice(plan(),'host');const p=ctx.nodes.find(n=>n.kind==='panner') as Node&{panningModel:string;positionX:Parameter;positionZ:Parameter};expect(p.panningModel).toBe('HRTF');expect([p.positionX.value,p.positionZ.value]).toEqual([-.7,-1.4]);});
 });
+
+describe('Bug Update 1 single report and positioned world cues',()=>{
+ it('logs each delivery attempt but accepts one id; all audible bang layers share a 5ms onset and have no discrete delay taps',()=>{
+  audio.init();const ctx=context(),start=ctx.nodes.length;audio.playShot({id:'strict-pull',kind:'local'});audio.playShot({id:'strict-pull',kind:'local'});
+  expect(audio.shotLog).toEqual([{id:'strict-pull',source:'local',time:2,accepted:true},{id:'strict-pull',source:'local',time:2,accepted:false}]);
+  const nodes=ctx.nodes.slice(start);expect(nodes.filter(n=>n.kind==='source'&&(n.buffer?.getChannelData(0).length??0)>1)).toHaveLength(1);expect(nodes.some(n=>n.kind==='delay')).toBe(false);
+  const onsets=nodes.filter(n=>n.kind==='oscillator'||n.kind==='source'&&(n.buffer?.getChannelData(0).length??0)>1).flatMap(n=>n.start.mock.calls.map(c=>c[0]!));
+  expect(Math.max(...onsets)-Math.min(...onsets)).toBeLessThanOrEqual(.005);
+ });
+ it('publishes real positions at each door bang and removes canceled future bangs',()=>{
+  const event:RoundEvent={kind:'door',startedAt:Date.now(),duration:3500,seed:77},offsets=eventBangOffsets(event);audio.setEvent(event);
+  for(const offset of offsets){vi.setSystemTime(event.startedAt+offset);expect(audio.getWorldSound()).toMatchObject({source:'event:door',position:[2.7,1,-3.7],at:event.startedAt+offset});}
+  vi.setSystemTime(event.startedAt);audio.setEvent(null);vi.setSystemTime(event.startedAt+3500);expect(audio.getWorldSound()).toBeNull();
+ });
+ it('retains world reaction metadata while muted without allocating or unlocking audio',()=>{
+  audio.mute(true);audio.setEmitter('gun',[.3,1.1,.7]);audio.play('hammer');expect(audio.getWorldSound()).toMatchObject({position:[.3,1.1,.7],source:'hammer'});expect(Context.instances).toHaveLength(0);
+ });
+});

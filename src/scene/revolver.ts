@@ -12,10 +12,8 @@ export const REVOLVER_DIMENSIONS = {
 } as const;
 export const MUZZLE_LOCAL = [.151, .042, 0] as const;
 export const GRIP_LOCAL = [-.080, -.057, 0] as const;
-/** Gun-child-of-hand bind. Hand +Z runs along the palm, fingers curl towards +Y.
- * This cyclic rotation maps gun +X to hand +Y and gun +Y to hand +Z.
- * The wooden grip centre consequently sits at hand-local (0, .010, .053).
- */
+/** The grip runs along the palm: gun +Y follows the fingers, while +X
+ * points across the hand. Curling digits close around the wooden grip. */
 export const GRIP_SOCKET = {
   position: [0, .09, .11] as const,
   quaternion: [.5, .5, .5, .5] as const,

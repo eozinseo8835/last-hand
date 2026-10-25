@@ -155,3 +155,6 @@ The character skeleton rebuild replaces the production cast with nested joints a
 For development inspection, open **`http://localhost:5173/?debug=poses`** after `npm run dev`. The viewer uses the actual production models, with front/side views and the pixel effect off/on. The [pose review record](docs/character-pose-review.md) lists all 11 pose categories and the 84-image review; this viewer is excluded from production builds.
 
 Skeleton completion: forced-shot staging, PEEK visibility/reach, Host shuffle/dealing/gaze and look-around regressions pass. The viewer includes `?debug=poses&pose=host-forced-shot` (front uses the seated camera) and `?debug=poses&pose=player-peek`. Final validation passes **374 tests across 25 files** and the production build; targeted Chromium checks report no console errors. See the completion section of the pose review record for the limited rechecks after the WIP checkpoint.
+
+
+Latest presentation update: the Host stays seated, every shooter picks the same revolver up from the table center, cards use supported hand grips, and positioned sounds drive context-aware gaze. See the [Bug Update 1 changes, gunshot diagnosis and verification record](docs/bug-update-1.md).
