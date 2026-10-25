@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { createActors, type ActorState } from './scene/actors';
 import { retroFragment } from './Scene';
-import { playerPeekDeck } from './tableLayout';
+import { playerPeekDeck, HOST_HEAD } from './tableLayout';
 import './poseViewer.css';
 
 export const POSE_CASES = [
@@ -163,7 +163,7 @@ export default function PoseViewer() {
         if (changed) actors.setDebugPose(state.pose, state.room);
         const time = state.animate ? now / 1000 : state.time;
         productionCamera.aspect=width/height;productionCamera.updateProjectionMatrix();
-        productionCamera.position.set(0,1.2,1.05);productionCamera.rotation.set(-.12,0,0);if(state.pose==='host-forced-shot')productionCamera.lookAt(-.72,1.22,.12);
+        productionCamera.position.set(0,1.2,1.05);productionCamera.rotation.set(-.12,0,0);if(state.pose==='host-forced-shot')productionCamera.lookAt(HOST_HEAD[0],HOST_HEAD[1]-.02,HOST_HEAD[2]);
         if(state.pose==='player-peek'){
           productionCamera.position.x-=.16;productionCamera.position.z-=.14;
           productionCamera.lookAt(new THREE.Vector3(...playerPeekDeck(.5).position));

@@ -38,10 +38,10 @@ export function createCharacter(role:CharacterRole,room:1|2|3=1) {
   const pelvis=joint(group,`${role} pelvis`),spine=joint(pelvis,`${role} spine`,[0,.14,0]),chest=joint(spine,`${role} chest`,[0,.27,0]);
   chest.userData.width=.34;
   const neck=joint(chest,`${role} neck`,[0,.23,0]),head=joint(neck,`${role} head`,[0,.125,0]);
-  const cloth=material(role==='host'?0x29312d:role==='guard'?0x25302b:role==='player'?0x303b31:0x465348);
-  if(role==='host')cloth.flatShading=false;
+  const cloth=material(role==='host'?0x161d1b:role==='guard'?0x25302b:role==='player'?0x303b31:0x465348);
+  if(role==='host'){cloth.flatShading=false;cloth.roughness=1;}
   const flesh=material(role==='host'?0xb7a28b:role==='guard'?0x5d6253:0xb29c80,true),black=material(0x17211b),shoeMat=material(0x20271f);
-  const handSkin=role==='host'?material(0x252c27):flesh;
+  const handSkin=role==='host'?new THREE.MeshStandardMaterial({color:0x1b1f1c,roughness:.55,metalness:.05,flatShading:true}):flesh;
   const bodyMeshes:THREE.Mesh[]=[];
   bodyMeshes.push(block(pelvis,[.29,.14,.19],[0,.02,0],cloth,'Hip clothing'),block(spine,[.29,.24,.18],[0,.06,0],cloth,'Abdomen'),block(chest,[.34,.36,.20],[0,-.02,0],cloth,'Chest clothing'),block(chest,[.40,.10,.19],[0,.11,0],cloth,'Relaxed clavicles'));
   bodyMeshes.push(mesh(neck,new THREE.CylinderGeometry(.036,.040,.130,7),flesh,'Neck skin',[0,-.015,0]));
@@ -79,9 +79,10 @@ export function createCharacter(role:CharacterRole,room:1|2|3=1) {
     const shoulder=joint(chest,`${role} ${side} shoulder`,[sign*.20,.17,0]);
     const upper=joint(shoulder,`${role} ${side} upper arm`),forearm=joint(upper,`${role} ${side} forearm`,[0,-HUMAN.upperArm,0]);
     const hand=joint(forearm,`${role} ${side} wrist`,[0,-HUMAN.forearm,0]);hand.quaternion.copy(HAND_BIND);hand.userData.bindQuaternion=HAND_BIND.toArray();
-    const upperMesh=segment(upper,HUMAN.upperArm,.050,cloth,'Upper sleeve'),lowerMesh=segment(forearm,HUMAN.forearm,.041,cloth,'Forearm sleeve');
+    const upperMesh=segment(upper,HUMAN.upperArm,role==='host'?.056:.050,cloth,'Upper sleeve'),lowerMesh=segment(forearm,HUMAN.forearm,role==='host'?.050:.041,cloth,'Forearm sleeve');
+    if(role==='host')(lowerMesh.geometry as THREE.CylinderGeometry).dispose(),lowerMesh.geometry=new THREE.CylinderGeometry(.050,.062,HUMAN.forearm,18,1,true);
     cap(upper,.051,cloth,'Shoulder cap');cap(forearm,.042,cloth,'Elbow cap');cap(hand,.023,handSkin,'Wrist cap');
-    segment(forearm,.030,.042,material(role==='host'?0x29312d:0x475245),'Sleeve cuff').position.y=-HUMAN.forearm+.015;
+    segment(forearm,.030,role==='host'?.064:.042,role==='host'?cloth:material(0x475245),'Sleeve cuff').position.y=-HUMAN.forearm+.015;
     const palm=block(hand,[.075,.028,.10],[0,0,.050],handSkin,'Skin palm');palm.receiveShadow=false;
     const fingers:THREE.Group[][]=[];
     for(let digit=0;digit<4;digit++) {

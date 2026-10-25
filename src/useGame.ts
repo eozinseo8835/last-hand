@@ -575,7 +575,8 @@ export function useGame() {
       shotEffect: fired.fired ? 'shot' : 'click', shotId, gunTransfer: null, phase: 'ROUND_RESULT', dead: fired.fired ? shooter : null,
       aiShotStartedAt: null, aiShotDurationMs: null, triggerDeadline: null, triggerRemainingMs: null,
       message: fired.fired ? '' : 'Click. An empty chamber.' });
-    later(()=>{if(current.current.shotId===shotId)slideGun(shooter,'return');},GUN_SET_DOWN_MS,gunTimers.current);
+    // Only an empty click is set down and pushed back. A fatal shot drops the revolver where it falls.
+    if(!fired.fired)later(()=>{if(current.current.shotId===shotId)slideGun(shooter,'return');},GUN_SET_DOWN_MS,gunTimers.current);
     if (fired.fired) tableAudio.playShot({ id: shotId, kind: 'local', roomId: state.roomNumber });
     else { tableAudio.play('click'); if(shooter==='ai') tableAudio.playStory('gasp'); }
     if (!penaltyShot.current) completeRound();
