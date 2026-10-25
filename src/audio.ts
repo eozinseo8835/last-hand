@@ -703,7 +703,8 @@ export class TableAudio {
     const layer = this.makeLayer(this.master), now = ctx.currentTime;
     const random = voiceRandom(this.soundSeed(`contact:${kind}:${this.revolverSerial++}`));
     const level = .009 + Math.max(0, Math.min(1, stress)) * .012;
-    if (kind === 'knuckles') this.impact(layer, now, .035, level, 2400, random, 'highpass');
+    if(kind==='metal') {this.resonance(layer,now,.18,.07,1870,1530,'triangle');this.resonance(layer,now,.12,.025,3100,2840);}
+    else if (kind === 'knuckles') this.impact(layer, now, .035, level, 2400, random, 'highpass');
     else if (kind === 'heel' || kind === 'drum' || kind === 'square') this.resonance(layer, now, .09, level, kind === 'heel' ? 80 : 180, 48);
     else this.noise(layer, now, .22, level * .65, kind === 'chair' ? 340 : 900, random, 'lowpass');
     setTimeout(() => this.disposeLayer(layer), 500);

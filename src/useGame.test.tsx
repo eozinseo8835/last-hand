@@ -18,7 +18,7 @@ import { DISTANT_SHOT_GAP_MS } from './roomLife';
 
 vi.mock('./Scene', () => ({ default: () => null }));
 vi.mock('./attention', async importOriginal => { const actual = await importOriginal<typeof import('./attention')>(); return { ...actual, planAttention: vi.fn(actual.planAttention) }; });
-vi.mock('./audio', () => ({ tableAudio: { init: vi.fn(), play: vi.fn(), mute: vi.fn(), startVoice: vi.fn(), stopVoice: vi.fn(), getVoiceLevel: vi.fn(() => 0), setHeartbeat: vi.fn(), setEvent: vi.fn(), playStory: vi.fn(), getHeartbeatLevel: vi.fn(() => 0), playShot: vi.fn(() => true), setHooded: vi.fn(), playAmbient: vi.fn() } }));
+vi.mock('./audio', () => ({ tableAudio: { init: vi.fn(), play: vi.fn(), mute: vi.fn(), startVoice: vi.fn(), stopVoice: vi.fn(), getVoiceLevel: vi.fn(() => 0), setHeartbeat: vi.fn(), setEvent: vi.fn(), playStory: vi.fn(), getHeartbeatLevel: vi.fn(() => 0), playShot: vi.fn(() => true), setHooded: vi.fn(), playContact: vi.fn(), playAmbient: vi.fn() } }));
 vi.mock('./tension', async importOriginal => {
   const actual = await importOriginal<typeof import('./tension')>();
   return { ...actual, chooseRoundEvent: vi.fn(() => null), cosmeticRandom: vi.fn(() => .5) };
@@ -1191,7 +1191,12 @@ describe('Big Update 2 Host trigger deadline', () => {
     expect(latest.game.stats.forcedShots).toBe(1); expect(latest.game.awaitingTrigger).toBe(false);
     act(()=>{latest.spinCylinder(); latest.beginTriggerHold(); latest.forceShot();});
     expect(vi.mocked(createRevolver).mock.calls).toHaveLength(calls); expect(latest.game.stats.forcedShots).toBe(1);
-    advance(3499); expect(latest.game.revolver.currentChamber).toBe(3);
+    vi.mocked(tableAudio.playContact).mockClear();vi.mocked(tableAudio.play).mockClear();
+    advance(1099);expect(tableAudio.playContact).not.toHaveBeenCalled();
+    advance(1);expect(tableAudio.playContact).toHaveBeenCalledWith('metal',1);
+    advance(999);expect(tableAudio.play).not.toHaveBeenCalledWith('hammer');
+    advance(1);expect(tableAudio.play).toHaveBeenCalledWith('hammer');
+    advance(1399); expect(latest.game.revolver.currentChamber).toBe(3);
     advance(1); expect(latest.game.revolver.currentChamber).toBe(4); expect(latest.game.shotEffect).toBe('click');
     advance(1000); expect(allSpeech().some(l=>l.speaker==='host'&&l.category==='forced_shot')).toBe(true);
   });

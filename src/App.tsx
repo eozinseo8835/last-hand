@@ -47,6 +47,8 @@ export default function App() {
   const [muted, setMuted] = useState(false), [rulesOpen, setRulesOpen] = useState(false);
   const [scale, setScale] = useState(1), [recenterToken, setRecenterToken] = useState(0);
   const rulesButton = useRef<HTMLButtonElement>(null), closeButton = useRef<HTMLButtonElement>(null);
+  const [forceContact,setForceContact]=useState(false);
+  useEffect(()=>{setForceContact(false);if(game.phase!=='HOST_FORCE_SHOT'||game.forceShotAt==null)return;const timer=setTimeout(()=>setForceContact(true),Math.max(0,1100-(Date.now()-game.forceShotAt)));return()=>clearTimeout(timer);},[game.phase,game.forceShotAt]);
   const intro = game.phase === 'START', over = game.phase === 'GAME_OVER';
   const opening = game.phase === 'OPENING';
   const story = opening || game.phase === 'TRANSITION' || game.phase === 'ENDING_WIN' || game.phase === 'ENDING_DEATH';
@@ -65,9 +67,9 @@ export default function App() {
   }, []);
   useEffect(() => { if (rulesOpen) closeButton.current?.focus(); }, [rulesOpen]);
   useEffect(() => {
-    tableAudio.setHeartbeat({ active: heartbeatActive && !game.dead, chambersFired, pulling: game.triggerHeld, urgency: game.triggerRemainingMs == null ? 0 : Math.max(0, 1 - game.triggerRemainingMs / 10000) });
+    tableAudio.setHeartbeat({ active: heartbeatActive && !game.dead, chambersFired, pulling: game.triggerHeld || forceContact, urgency: game.triggerRemainingMs == null ? 0 : Math.max(0, 1 - game.triggerRemainingMs / 10000) });
     return () => tableAudio.setHeartbeat({ active: false, chambersFired: 0, pulling: false });
-  }, [heartbeatActive, chambersFired, game.triggerHeld, game.dead, game.triggerRemainingMs == null ? null : Math.ceil(game.triggerRemainingMs / 1000)]);
+  }, [heartbeatActive, chambersFired, forceContact, game.triggerHeld, game.dead, game.triggerRemainingMs == null ? null : Math.ceil(game.triggerRemainingMs / 1000)]);
   useEffect(() => {
     tableAudio.setEvent(game.event);
     return () => tableAudio.setEvent(null);

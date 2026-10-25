@@ -60,12 +60,18 @@ describe('production hierarchy, materials and speech',()=>{
    }
   }
  });
+ it('relaxes the empty hand and returns the Host gesture to idle after 1.5 seconds',()=>{
+  tick(.01,{phase:'PLAYER_DECISION',speaker:'host',hostVoiceLevel:1});const gesture=world(actors.hostLeftHand);
+  advance(1.6);expect(world(actors.hostLeftHand).distanceTo(gesture)).toBeGreaterThan(.03);
+  for(const rig of [actors.skeletons.player,actors.skeletons.host,actors.skeletons.captive,...actors.skeletons.guards])for(const arm of Object.values(rig.arms))for(const chain of [...arm.fingers,arm.thumb])for(const joint of chain){expect(-joint.rotation.x).toBeGreaterThanOrEqual(0);expect(-joint.rotation.x).toBeLessThanOrEqual(Math.PI/2);}
+  expect(camera.worldToLocal(world(actors.playerHands.getObjectByName('player left wrist')!)).y).toBeLessThan(-.40);
+ });
  it('gives every hand three finger segments, two thumb segments and readable skin materials',()=>{
   for(const rig of [actors.skeletons.captive,actors.skeletons.host,...actors.skeletons.guards,actors.skeletons.player])for(const arm of Object.values(rig.arms)){
    expect(arm.fingers).toHaveLength(4);for(const chain of arm.fingers)expect(chain).toHaveLength(3);expect(arm.thumb).toHaveLength(2);
    expect(arm.hand.parent).toBe(arm.forearm);expect(arm.forearm.parent).toBe(arm.upper);
    const material=arm.palm.material as THREE.MeshStandardMaterial;expect(material.isMeshStandardMaterial).toBe(true);
-   const hsl={h:0,s:0,l:0};material.color.getHSL(hsl);expect(hsl.l).toBeGreaterThan(.08);
+   const hsl={h:0,s:0,l:0};material.color.getHSL(hsl);expect(hsl.l).toBeGreaterThan(rig===actors.skeletons.host?.01:.08);
   }
  });
  it('bobs only the active speaker using rotation while leaving joint offsets unchanged',()=>{
@@ -196,8 +202,12 @@ describe('one physical revolver and reachable pickup',()=>{
 });
 
 describe('ordered guard and restraint choreography',()=>{
+ it('keeps the hood-removal grip reachable while the sack deforms upward',()=>{
+  for(const progress of [.67,.75,.85,.93]){openingStage('opponent-unhood',progress);const arm=actors.guards[0].rig.arms.right;expect(arm.diagnostics.requestedDistance).toBeLessThanOrEqual(.5131);expect(arm.diagnostics.relocateRequired).toBe(false);}
+ });
+
  it('covers the real head before removal and keeps hands bound until each cut state',()=>{
-  actors.setCards(null,false);openingStage('hooded');expect(actors.captiveHood.visible).toBe(true);expect(actors.captiveTie.visible).toBe(true);expect(actors.playerTie.visible).toBe(true);
+  actors.setCards(null,false);openingStage('hooded');expect(world(actors.playerTie).distanceTo(world(actors.skeletons.player.arms.left.hand).lerp(world(actors.skeletons.player.arms.right.hand),.5))).toBeLessThan(.002);expect(actors.captiveHood.visible).toBe(true);expect(actors.captiveTie.visible).toBe(true);expect(actors.playerTie.visible).toBe(true);
   const b=new THREE.Box3().setFromObject(actors.captiveHood),head=world(actors.head);expect(b.min.y).toBeLessThan(head.y-.10);expect(b.max.y).toBeGreaterThan(head.y+.10);
   openingStage('player-unhood');expect(actors.captiveHood.visible).toBe(true);expect(actors.guards[0].group.visible).toBe(true);
   openingStage('opponent-unhood',.99);expect(actors.captiveHood.visible).toBe(false);openingStage('guard-exit');expect(actors.guards[0].foldedHoods.visible).toBe(true);expect(actors.guards[0].group.userData.hoodsCarried).toBe(2);
@@ -227,8 +237,10 @@ describe('forced shot camera safety',()=>{
   expect(arm.diagnostics.relocateRequired).toBe(false);expect(arm.diagnostics.wristLimited).toBe(false);
   expect(world(arm.forearm).distanceTo(world(arm.hand))).toBeCloseTo(HUMAN.forearm,7);
   const wrist=world(arm.hand).project(camera),barrel=muzzle().project(camera);
-  expect(wrist.x).toBeGreaterThan(-1);expect(wrist.x).toBeLessThan(0);
-  expect(Math.abs(wrist.y)).toBeLessThan(1);expect(Math.abs(barrel.x)).toBeLessThan(1);expect(Math.abs(barrel.y)).toBeLessThan(1);
+  expect(wrist.x).toBeLessThan(-1);expect(barrel.x).toBeLessThan(-.9);expect(actors.gun.scale.toArray()).toEqual([1,1,1]);
+  actors.gun.traverse(o=>{if(o instanceof THREE.Mesh&&o.layers.test(camera.layers))expect(/Hollow .38 barrel|muzzle|Muzzle|Barrel front sight|Sight highlight/.test(o.name),o.name).toBe(true);});
+  expect(arm.lowerMesh.layers.test(camera.layers)).toBe(false);
+  expect(Math.abs(barrel.x)).toBeLessThan(1);expect(Math.abs(barrel.y)).toBeLessThan(1);
   expect(Math.abs(arm.forearm.rotation.x)).toBeGreaterThan(.05);expect(Math.abs(arm.forearm.rotation.x)).toBeLessThanOrEqual(HUMAN.elbowFlexLimit);expect(world(arm.shoulder).distanceTo(world(arm.forearm))).toBeCloseTo(HUMAN.upperArm,7);
  });
  it('hides other meshes within 35cm only from the seated camera and restores their original layers afterward',()=>{

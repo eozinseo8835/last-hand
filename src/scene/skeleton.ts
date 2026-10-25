@@ -39,6 +39,7 @@ export function createCharacter(role:CharacterRole,room:1|2|3=1) {
   const neck=joint(chest,`${role} neck`,[0,.23,0]),head=joint(neck,`${role} head`,[0,.125,0]);
   const cloth=material(role==='host'?0x29312d:role==='guard'?0x25302b:role==='player'?0x303b31:0x465348);
   const flesh=material(role==='host'?0xb7a28b:role==='guard'?0x5d6253:0xb29c80,true),black=material(0x17211b),shoeMat=material(0x20271f);
+  const handSkin=role==='host'?material(0x252c27):flesh;
   const bodyMeshes:THREE.Mesh[]=[];
   bodyMeshes.push(block(pelvis,[.29,.14,.19],[0,.02,0],cloth,'Hip clothing'),block(spine,[.29,.24,.18],[0,.06,0],cloth,'Abdomen'),block(chest,[.34,.36,.20],[0,-.02,0],cloth,'Chest clothing'),block(chest,[.40,.10,.19],[0,.11,0],cloth,'Relaxed clavicles'));
   bodyMeshes.push(mesh(neck,new THREE.CylinderGeometry(.036,.040,.130,7),flesh,'Neck skin',[0,-.015,0]));
@@ -79,9 +80,9 @@ export function createCharacter(role:CharacterRole,room:1|2|3=1) {
     const upper=joint(shoulder,`${role} ${side} upper arm`),forearm=joint(upper,`${role} ${side} forearm`,[0,-HUMAN.upperArm,0]);
     const hand=joint(forearm,`${role} ${side} wrist`,[0,-HUMAN.forearm,0]);hand.quaternion.copy(HAND_BIND);hand.userData.bindQuaternion=HAND_BIND.toArray();
     const upperMesh=segment(upper,HUMAN.upperArm,.050,cloth,'Upper sleeve'),lowerMesh=segment(forearm,HUMAN.forearm,.041,cloth,'Forearm sleeve');
-    cap(upper,.051,cloth,'Shoulder cap');cap(forearm,.042,cloth,'Elbow cap');cap(hand,.023,flesh,'Wrist cap');
-    segment(forearm,.030,.042,material(role==='host'?0x7e826f:0x475245),'Sleeve cuff').position.y=-HUMAN.forearm+.015;
-    const palm=block(hand,[.075,.028,.10],[0,0,.050],flesh,'Skin palm');palm.receiveShadow=false;
+    cap(upper,.051,cloth,'Shoulder cap');cap(forearm,.042,cloth,'Elbow cap');cap(hand,.023,handSkin,'Wrist cap');
+    segment(forearm,.030,.042,material(role==='host'?0x29312d:0x475245),'Sleeve cuff').position.y=-HUMAN.forearm+.015;
+    const palm=block(hand,[.075,.028,.10],[0,0,.050],handSkin,'Skin palm');palm.receiveShadow=false;
     const fingers:THREE.Group[][]=[];
     for(let digit=0;digit<4;digit++) {
       const chain:THREE.Group[]=[],total=[.075,.080,.076,.065][digit],lengths=[total*.36,total*.34,total*.30];
@@ -89,7 +90,7 @@ export function createCharacter(role:CharacterRole,room:1|2|3=1) {
       for(let part=0;part<3;part++) {
         const bone=joint(parent,`${role} ${side} ${['index','middle','ring','little'][digit]} ${part+1}`,part===0?[(side==='left'?1:-1)*(.027-digit*.018),0,.10]:[0,0,lengths[part-1]]);
         bone.userData={...bone.userData,fingerIndex:digit,phalanx:part+1};
-        const skin=block(bone,[.014,.014,lengths[part]],[0,0,lengths[part]/2],flesh,'Finger skin');skin.receiveShadow=false;cap(bone,.0075,flesh,'Finger knuckle');chain.push(bone);parent=bone;
+        const skin=block(bone,[.014,.014,lengths[part]],[0,0,lengths[part]/2],handSkin,'Finger skin');skin.receiveShadow=false;cap(bone,.0075,handSkin,'Finger knuckle');chain.push(bone);parent=bone;
       }
       fingers.push(chain);
     }
@@ -97,7 +98,7 @@ export function createCharacter(role:CharacterRole,room:1|2|3=1) {
     for(let part=0;part<2;part++) {
       const bone=joint(thumbParent,`${role} ${side} thumb ${part+1}`,part===0?[side==='left'?.043:-.043,0,.032]:[0,0,.028]);
       bone.userData={...bone.userData,fingerIndex:4,phalanx:part+1};
-      const skin=block(bone,[.020,.019,.028],[0,0,.014],flesh,'Thumb skin');skin.receiveShadow=false;cap(bone,.010,flesh,'Thumb knuckle');thumb.push(bone);thumbParent=bone;
+      const skin=block(bone,[.020,.019,.028],[0,0,.014],handSkin,'Thumb skin');skin.receiveShadow=false;cap(bone,.010,handSkin,'Thumb knuckle');thumb.push(bone);thumbParent=bone;
     }
     arms[side]={shoulder,upper,forearm,hand,palm,fingers,thumb,upperMesh,lowerMesh,lengths:[HUMAN.upperArm,HUMAN.forearm],diagnostics:{requestedDistance:0,targetDistance:0,reachLimit:.513,relocateRequired:false,elbowAngle:90,shoulder:new THREE.Vector3(),elbow:new THREE.Vector3(),wrist:new THREE.Vector3(),wristLimited:false}};
   }
@@ -116,10 +117,10 @@ export function createCharacter(role:CharacterRole,room:1|2|3=1) {
     group.userData.roomNumber=next;
   }
   function setGrip(side:RigSide,amount:number,trigger=0,cock=0) {
-    const arm=arms[side],a=THREE.MathUtils.clamp(amount,0,1);
+    const arm=arms[side],a=THREE.MathUtils.clamp(amount,.12,1);
     arm.fingers.forEach((chain,index)=>chain.forEach((bone,part)=>{bone.rotation.x=-(index===0?(part===0?.13+trigger*.62:trigger*.45):[.60,.92,.82][part])*a;}));
-    const sign=side==='left'?1:-1;
-    arm.thumb[0].rotation.set(-a*.28-cock*.18,sign*(.85-a*.6),sign*.20);
+    const sign=side==='left'?-1:1;
+    arm.thumb[0].rotation.set(-(.25+a*.28+cock*.12),sign*.38,sign*.12);
     arm.thumb[1].rotation.x=-a*.65;
   }
   function rootPosition(object:THREE.Object3D) {group.updateWorldMatrix(true,true);return group.worldToLocal(object.getWorldPosition(new THREE.Vector3()));}
@@ -198,8 +199,9 @@ export function createCharacter(role:CharacterRole,room:1|2|3=1) {
     }
     group.userData.pose=name;group.updateWorldMatrix(true,true);
   }
+  function constrainFingers(){for(const arm of Object.values(arms)){for(const chain of [...arm.fingers,arm.thumb])for(const digit of chain){digit.rotation.x=THREE.MathUtils.clamp(digit.rotation.x,-Math.PI/2,-.015);digit.rotation.z=0;}}}
   function setFirstPerson(enabled:boolean) {bodyMeshes.forEach(item=>item.visible=!enabled);head.visible=!enabled;for(const leg of Object.values(legs))leg.thigh.visible=!enabled;}
   setRoom(activeRoom);pose(role==='host'?'host-idle':role==='guard'?'guard-walking':'seated-resting');
-  return {group,pelvis,spine,chest,neck,head,arms,legs,bodyMeshes,skinMaterial:flesh,clothingMaterial:cloth,pose,solveHand,setGrip,leanToward,setRoom,setFirstPerson,setStandingHeight,crouch:(drop:number)=>setStandingHeight(.9-THREE.MathUtils.clamp(drop,0,.25))};
+  return {group,pelvis,spine,chest,neck,head,arms,legs,bodyMeshes,skinMaterial:flesh,clothingMaterial:cloth,pose,solveHand,setGrip,leanToward,setRoom,setFirstPerson,constrainFingers,setStandingHeight,crouch:(drop:number)=>setStandingHeight(.9-THREE.MathUtils.clamp(drop,0,.25))};
 }
 export type HumanRig=ReturnType<typeof createCharacter>;

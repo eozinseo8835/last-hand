@@ -176,8 +176,9 @@ export function createMonitorWall(scene: THREE.Scene) {
       ctx.fillRect(headX - 4, headY, 8, 9 - drop * .15);
       const hoodProgress = hoods[seat];
       if (hoodProgress < 1 && !isVictim) {
-        ctx.fillStyle = '#181d17'; ctx.fillRect(headX - 5, headY - 1 - hoodProgress * 5, 10, Math.max(1, 12 * (1 - hoodProgress)));
-        ctx.strokeStyle = '#52604a'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(headX - 5, headY + 9 - hoodProgress * 7); ctx.lineTo(headX + 5, headY + 9 - hoodProgress * 7); ctx.stroke();
+        ctx.fillStyle = '#776447';ctx.beginPath();ctx.ellipse(headX,headY+4-hoodProgress*10,5.3,7*(1-hoodProgress*.3),0,0,Math.PI*2);ctx.fill();
+        ctx.fillStyle='#51452f';for(let fold=0;fold<3;fold++)ctx.fillRect(headX-3+fold*3,headY+1-hoodProgress*10,1,7);
+        ctx.strokeStyle = '#a18c62'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(headX - 5, headY + 9 - hoodProgress * 7); ctx.lineTo(headX + 5, headY + 9 - hoodProgress * 7); ctx.stroke();
       }
       // Bent arms make the large gestures legible even at 96 by 72 pixels.
       let leftX = x - 4, rightX = x + 5, handY = 45, elbowY = 40;

@@ -204,6 +204,7 @@ export function useGame() {
       spinning: null, triggerHeld: false, triggerProgress: 0, triggerRemainingMs: 0,
       stats: { ...state.stats, forcedShots: state.stats.forcedShots + 1 }, message: 'The Host will complete the procedure.' });
     hostSay('forced_shot', 'Your time has elapsed.', true);
+    later(() => { if (current.current.phase === 'HOST_FORCE_SHOT') tableAudio.playContact('metal',1); }, 1100, timeoutTimers.current);
     later(() => { if (current.current.phase === 'HOST_FORCE_SHOT') tableAudio.play('hammer'); }, 2100, timeoutTimers.current);
     later(() => { if (current.current.phase === 'HOST_FORCE_SHOT') resolveShot('player'); }, 3500, timeoutTimers.current);
   }
