@@ -1,3 +1,4 @@
+import { GUN_SLIDE_MS, GUN_SET_DOWN_MS, type GunTransfer } from './gunTransfer';
 import { attentionAt, canOpponentPeek, planAttention, type Attention, type AttentionPlan } from './attention';
 import { approachStress, stressTarget } from './bodyLanguage';
 import { useEffect, useRef, useState } from 'react';
@@ -35,7 +36,7 @@ export type Session = {
   aiShotStartedAt: number | null; aiShotDurationMs: number | null;
   attention: Attention; peekStartedAt: number | null; caught: 'host' | 'captive' | 'ai' | null;
   triggerDeadline: number | null; triggerRemainingMs: number | null; forceShotAt: number | null;
-  stress: number; lossStreak: number;
+  stress: number; lossStreak: number; gunTransfer: GunTransfer | null;
 };
 const initial = (): Session => ({
   phase: 'START', round: null, roundNumber: 0, folds: CONFIG.MAX_FOLDS,
@@ -49,7 +50,7 @@ const initial = (): Session => ({
   cinematic: null, tiesCut: { player: true, ai: true }, distantShot: null, ambientEvent: null, shotId: null,
   aiShotStartedAt: null, aiShotDurationMs: null,
   attention: attentionAt(null, Date.now()), peekStartedAt: null, caught: null,
-  triggerDeadline: null, triggerRemainingMs: null, forceShotAt: null, stress: .22, lossStreak: 0,
+  triggerDeadline: null, triggerRemainingMs: null, forceShotAt: null, stress: .22, lossStreak: 0, gunTransfer: null,
 });
 type Timer = ReturnType<typeof setTimeout>;
 type SpeechEntry = { line: SpeechLine; reactive: boolean };
@@ -71,7 +72,7 @@ export function useGame() {
   const distantTimer = useRef<Timer | null>(null), ambientTimer = useRef<Timer | null>(null);
   const lastDistantAt = useRef(-Infinity), localShotUntil = useRef(0), ambientDueAt = useRef(Infinity);
   const attentionPlan = useRef<AttentionPlan | null>(null), opponentInView = useRef(true);
-  const penaltyShot = useRef(false), timeoutTimers = useRef(new Set<Timer>());
+  const penaltyShot = useRef(false), timeoutTimers = useRef(new Set<Timer>()), gunTimers = useRef(new Set<Timer>());
   const stressClock = useRef(Date.now()), loudAt = useRef(-Infinity), reliefAt = useRef(-Infinity);
   const seenLoud = useRef(new Set<string>()), glanced = useRef(false);
   const openingSeen = useRef(false), completedRounds = useRef(new Set<string>()), recordedHands = useRef(new Set<string>());
@@ -106,7 +107,7 @@ export function useGame() {
   }
   function clearTimers() {
     timers.current.forEach(clearTimeout); timers.current.clear(); holdTimers.current.clear(); drainTimers.current.clear();
-    storyTimers.current.clear(); timeoutTimers.current.clear();
+    storyTimers.current.clear(); timeoutTimers.current.clear(); gunTimers.current.clear();
     eventStart.current = eventEnd.current = impatient.current = speechTimer.current = speechGap.current = distantTimer.current = ambientTimer.current = null;
   }
   useEffect(() => {
@@ -161,11 +162,28 @@ export function useGame() {
       update({ phase: 'PLAYER_DECISION', folds: 0, message: 'CAUGHT — all remaining folds forfeited.' });
     } else { penaltyShot.current = true; beginPlayerShot('CAUGHT — face the chamber.'); }
   }
+  function slideGun(side: Side, stage: GunTransfer['stage'], after?: () => void) {
+    clearGroup(gunTimers.current);
+    const gunTransfer: GunTransfer = { stage, side, startedAt: Date.now(), duration: GUN_SLIDE_MS };
+    update({ gunTransfer });
+    tableAudio.play('slide');
+    later(() => {
+      if (current.current.gunTransfer !== gunTransfer) return;
+      update({ gunTransfer: null });
+      after?.();
+    }, gunTransfer.duration, gunTimers.current);
+  }
   function beginPlayerShot(message: string) {
     clearGroup(timeoutTimers.current);
+    update({ phase: 'PLAYER_SHOOTING', awaitingTrigger: false, triggerHeld: false, triggerProgress: 0,
+      triggerDeadline: null, triggerRemainingMs: null, forceShotAt: null, message });
+    slideGun('player', 'to-shooter', () => {
+      if (current.current.phase === 'PLAYER_SHOOTING') startTriggerCountdown(message);
+    });
+  }
+  function startTriggerCountdown(message: string) {
     const deadline = Date.now() + CONFIG.TRIGGER_TIMEOUT_MS;
-    update({ phase: 'PLAYER_SHOOTING', awaitingTrigger: true, triggerHeld: false, triggerProgress: 0,
-      triggerDeadline: deadline, triggerRemainingMs: CONFIG.TRIGGER_TIMEOUT_MS, forceShotAt: null, message });
+    update({ awaitingTrigger: true, triggerDeadline: deadline, triggerRemainingMs: CONFIG.TRIGGER_TIMEOUT_MS, message });
     for (const [remaining, text] of [[10000, 'Ten seconds.'], [5000, 'Last chance to do it yourself.']] as const) {
       later(() => {
         if (current.current.phase === 'PLAYER_SHOOTING' && current.current.triggerDeadline === deadline) hostSay('trigger_warning', text, true);
@@ -386,8 +404,8 @@ export function useGame() {
     clearGroup(holdTimers.current); clearGroup(drainTimers.current);
     cancel(impatient.current); impatient.current = null;
     const state = current.current;
-    attentionPlan.current = null; clearGroup(timeoutTimers.current);
-    update({ roomNumber, stress: OPPONENTS[roomNumber].behavior.baseStress, lossStreak: 0, triggerDeadline: null, triggerRemainingMs: null, forceShotAt: null, peekStartedAt: null, caught: null, round: null, roundNumber: 0, folds: CONFIG.MAX_FOLDS,
+    attentionPlan.current = null; clearGroup(timeoutTimers.current); clearGroup(gunTimers.current);
+    update({ gunTransfer: null, roomNumber, stress: OPPONENTS[roomNumber].behavior.baseStress, lossStreak: 0, triggerDeadline: null, triggerRemainingMs: null, forceShotAt: null, peekStartedAt: null, caught: null, round: null, roundNumber: 0, folds: CONFIG.MAX_FOLDS,
       revolver: roomNumber === 1 && state.stats.roundsPlayed === 0 ? state.revolver : createRevolver(),
       abilities: freshAbilities(), tell: null, feedDeaths: [], revealed: false, result: null,
       suspense: false, awaitingTrigger: false, hasHit: false, dead: null, shotEffect: null, shotId: null,
@@ -471,7 +489,7 @@ export function useGame() {
 
   function nextRound() {
     attentionPlan.current = null; glanced.current = false; penaltyShot.current = false;
-    clearGroup(timeoutTimers.current);
+    clearGroup(timeoutTimers.current); clearGroup(gunTimers.current);
     const opening = dealRound();
     const deck = [opening.player[0], opening.ai[0], opening.player[1], opening.ai[1], ...opening.deck];
     pendingEvent.current = chooseRoundEvent(); eventUsed.current = false;
@@ -481,7 +499,7 @@ export function useGame() {
       suspense: false, awaitingTrigger: false, hasHit: false, shotEffect: null, shotId: null, aiShotStartedAt: null, aiShotDurationMs: null,
       triggerHeld: false, triggerProgress: 0, spinning: null, peekActor: null, peekedCard: null,
       triggerDeadline: null, triggerRemainingMs: null, forceShotAt: null, peekStartedAt: null, caught: null,
-      storyStage: 'table', tell: opponentTell(current.current.roomNumber, handTotal(opening.ai)),
+      gunTransfer: null, storyStage: 'table', tell: opponentTell(current.current.roomNumber, handTotal(opening.ai)),
       stats: { ...current.current.stats, roundsPlayed: current.current.stats.roundsPlayed + 1 } });
     hostSay('deal');
     const order = ['player', 'ai', 'player', 'ai'] as const;
@@ -537,6 +555,7 @@ export function useGame() {
     cancel(impatient.current); impatient.current = null;
     clearGroup(holdTimers.current); clearGroup(drainTimers.current);
     const state = current.current;
+    clearGroup(gunTimers.current);
     const wasForced = state.phase === 'HOST_FORCE_SHOT';
     clearGroup(timeoutTimers.current);
     const fired = fireRevolver(state.revolver);
@@ -549,7 +568,7 @@ export function useGame() {
       guestsRemainingWhenFell: fired.fired && shooter === 'player' ? guestsRemaining : state.stats.guestsRemainingWhenFell } });
     update({ revolver: fired.revolver, suspense: false, awaitingTrigger: false, triggerHeld: false,
       triggerProgress: shooter === 'player' ? 1 : 0, spinning: null,
-      shotEffect: fired.fired ? 'shot' : 'click', shotId, phase: 'ROUND_RESULT', dead: fired.fired ? shooter : null,
+      shotEffect: fired.fired ? 'shot' : 'click', shotId, gunTransfer: null, phase: 'ROUND_RESULT', dead: fired.fired ? shooter : null,
       aiShotStartedAt: null, aiShotDurationMs: null, triggerDeadline: null, triggerRemainingMs: null,
       message: fired.fired ? '' : 'Click. An empty chamber.' });
     if (fired.fired) tableAudio.playShot({ id: shotId, kind: 'local', roomId: state.roomNumber });
@@ -564,6 +583,9 @@ export function useGame() {
       else later(() => current.current.roomNumber < 3 ? transitionRoom() : endingWin(), 2400, storyTimers.current);
     }
     else {
+      later(() => {
+        if (current.current.phase === 'ROUND_RESULT' && current.current.shotId === shotId) slideGun(shooter, 'return');
+      }, GUN_SET_DOWN_MS, gunTimers.current);
       later(() => wasForced ? hostSay('forced_shot') : say(current.current.revolver.currentChamber >= CONFIG.DANGER_CHAMBER ? 'danger' : shooter === 'ai' ? 'ai_survives_click' : 'player_survives_click'), 1000);
       later(() => {
         update({ forceShotAt: null });
@@ -628,6 +650,7 @@ export function useGame() {
   }
   function opponentShot() {
     update({ phase: 'AI_SHOOTING', suspense: true, awaitingTrigger: false, triggerHeld: false, triggerProgress: 0, aiShotStartedAt: null, aiShotDurationMs: null });
+    slideGun('ai', 'to-shooter');
     say('ai_loses_hand', true);
     function hesitate() {
       tableAudio.play('tension');
@@ -641,7 +664,12 @@ export function useGame() {
     function whenQuiet(callback: () => void) {
       speechIdle.current = () => {
         speechIdle.current = null;
-        if (current.current.phase === 'AI_SHOOTING') callback();
+        if (current.current.phase !== 'AI_SHOOTING') return;
+        const transfer = current.current.gunTransfer;
+        if (transfer?.stage === 'to-shooter') {
+          later(() => { if (current.current.phase === 'AI_SHOOTING') callback(); },
+            Math.max(0, transfer.startedAt + transfer.duration - Date.now()), gunTimers.current);
+        } else callback();
       };
       maybeSpeechIdle();
     }

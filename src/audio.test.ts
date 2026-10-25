@@ -560,3 +560,25 @@ describe('caught stings and captive contact sounds', () => {
     audio.mute(true); expect(audio.getHeartbeatLevel()).toBe(0);
   });
 });
+
+describe('felt revolver slide friction', () => {
+  it('stays click-gated, muted and non-replaying, then emits one lowpass friction sweep without a bang', () => {
+    audio.play('slide'); expect(Context.instances).toHaveLength(0);
+    audio.init(); const ctx=context(); audio.mute(true); const mutedCount=ctx.nodes.length;
+    audio.play('slide'); expect(ctx.nodes).toHaveLength(mutedCount);
+    audio.mute(false); expect(ctx.nodes).toHaveLength(mutedCount);
+    audio.play('slide');
+    const nodes=ctx.nodes.slice(mutedCount), sources=nodes.filter(node=>node.kind==='source');
+    expect(sources).toHaveLength(1); expect(sources[0].start).toHaveBeenCalledTimes(1);
+    expect(sources[0].buffer!.getChannelData(0)).toHaveLength(Math.ceil(ctx.sampleRate*.72));
+    expect(nodes.some(node=>node.kind==='filter'&&node.type==='lowpass')).toBe(true);
+    expect(nodes.filter(node=>node.kind==='oscillator')).toHaveLength(0);
+  });
+  it('does not resume suspended audio or consume gameplay randomness for a slide', () => {
+    audio.init(); const ctx=context(), resumes=ctx.resume.mock.calls.length;
+    ctx.state='suspended'; const count=ctx.nodes.length;
+    audio.play('slide'); expect(ctx.nodes).toHaveLength(count); expect(ctx.resume).toHaveBeenCalledTimes(resumes);
+    ctx.state='running'; const random=vi.spyOn(Math,'random').mockImplementation(()=>{throw Error('Slide touched gameplay randomness');});
+    expect(()=>audio.play('slide')).not.toThrow(); expect(random).not.toHaveBeenCalled();
+  });
+});

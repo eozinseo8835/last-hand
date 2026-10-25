@@ -195,8 +195,8 @@ describe('seated table lean and hood camera timing', () => {
     wheelLean(lean, -10000, .45, true); expect(lean.target).toBe(.45);
     updateLean(lean, 10, .45, false); expect(lean.amount).toBeCloseTo(.45);
     wheelLean(lean, -10000, 50, true); expect(lean.target).toBe(MAX_SAFE_LEAN);
-    wheelLean(lean, 10000, .45, true); expect(lean.target).toBe(0);
-    wheelLean(lean, NaN, .45, true); expect(lean.target).toBe(0);
+    wheelLean(lean, 10000, .45, true); expect(lean.target).toBe(-.45);
+    wheelLean(lean, NaN, .45, true); expect(lean.target).toBe(-.45);
   });
   it('leans at the same speed at low and high FPS, then automatically backs out for a shot', () => {
     const results = [5, 30, 120].map(fps => {

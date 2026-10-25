@@ -172,37 +172,40 @@ export function createRoom(scene: THREE.Scene): BunkerRoom {
   // A broad fourteen-sided wooden table, with layered worn rails and taut dirty felt.
   const table = new THREE.Group(); table.name = 'card-table'; root.add(table);
   const tableLayer = (radiusX: number, radiusZ: number, height: number, y: number, material: THREE.Material) => {
-    const geometry = new THREE.CylinderGeometry(1, 1, height, 16);
-    geometry.rotateY(Math.PI / 16);
-    const vertices = geometry.attributes.position;
-    for (let index=0;index<vertices.count;index++) if (vertices.getZ(index)>0) vertices.setZ(index,vertices.getZ(index)*.74);
-    geometry.computeVertexNormals();
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.scale.set(radiusX, 1, radiusZ); mesh.position.y = y; mesh.castShadow = true; mesh.receiveShadow = true; table.add(mesh); return mesh;
+    const r=.10, shape=new THREE.Shape();
+    shape.moveTo(-radiusX+r,-radiusZ); shape.lineTo(radiusX-r,-radiusZ);
+    shape.quadraticCurveTo(radiusX,-radiusZ,radiusX,-radiusZ+r);
+    shape.lineTo(radiusX,radiusZ-r); shape.quadraticCurveTo(radiusX,radiusZ,radiusX-r,radiusZ);
+    shape.lineTo(-radiusX+r,radiusZ); shape.quadraticCurveTo(-radiusX,radiusZ,-radiusX,radiusZ-r);
+    shape.lineTo(-radiusX,-radiusZ+r); shape.quadraticCurveTo(-radiusX,-radiusZ,-radiusX+r,-radiusZ);
+    const geometry=new THREE.ExtrudeGeometry(shape,{depth:height,bevelEnabled:false,curveSegments:2});
+    geometry.rotateX(-Math.PI/2); geometry.computeVertexNormals();
+    const mesh=new THREE.Mesh(geometry,material);
+    mesh.position.y=y-height/2; mesh.castShadow=mesh.receiveShadow=true; table.add(mesh); return mesh;
   };
   // A thin front rail and open steel support leave a real sight line to the
   // captive's knees/shoes. Opaque felt and the original materials stay intact.
-  tableLayer(1.8, 1.34, .035, .850, wood);
-  tableLayer(1.77, 1.31, .035, .85, mat(0x5c4c35));
-  tableLayer(1.69, 1.23, .025, .874, felt);
+  tableLayer(.84, .70, .025, .720, wood);
+  tableLayer(.81, .68, .015, .738, mat(0x5c4c35));
+  tableLayer(.78, .65, .012, .744, felt);
   const railPoints = Array.from({length:32},(_,i)=> {
-    const angle=i/32*Math.PI*2,z=Math.sin(angle)*1.29;
-    return new THREE.Vector3(Math.cos(angle)*1.75,.66,z>0?z*.74:z);
+    const angle=i/32*Math.PI*2,z=Math.sin(angle)*.61;
+    return new THREE.Vector3(Math.cos(angle)*.80,.67,z);
   });
   const underFrame = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(railPoints,true),32,.022,4,true),darkMetal);
   table.add(underFrame);
-  for (const x of [-1.2, 1.2]) for (const z of [-.85, .85]) {
-    const leg = box(.1, .68, .1, darkMetal, x, .33, z, table, true); leg.rotation.z = x > 0 ? -.055 : .055;
+  for (const x of [-.55, .55]) for (const z of [-.40, .40]) {
+    const leg = box(.065, .70, .065, darkMetal, x, .35, z, table, true); leg.rotation.z = x > 0 ? -.055 : .055;
   }
-  box(2.4, .06, .05, metal, 0, .29, -.85, table);
-  box(2.4, .06, .05, metal, 0, .29, .85, table);
+  box(1.1, .04, .035, metal, 0, .24, -.40, table);
+  box(1.1, .04, .035, metal, 0, .24, .40, table);
   // A few raised surface scars and tiny ash flecks catch the bulb's harsh light.
   const scuff = mat(0x879067), burn = mat(0x141d11);
   for (const [x, z, angle] of [[1.25, .44, .3], [-1.12, -.48, -.4], [.91, -.82, .6], [-.6, .98, .2]]) {
-    const scar = box(.15, .0015, .003, scuff, x, .889, z, table); scar.rotation.y = angle;
+    const scar = box(.15, .0015, .003, scuff, x*.42, .751, z*.44, table); scar.rotation.y = angle;
   }
   for (const [x, z] of [[-1.24, .57], [1.31, -.19], [.75, -1.0]]) {
-    const mark = new THREE.Mesh(new THREE.CircleGeometry(.025, 8), burn); mark.rotation.x = -Math.PI / 2; mark.position.set(x, .8905, z); table.add(mark);
+    const mark = new THREE.Mesh(new THREE.CircleGeometry(.025, 8), burn); mark.rotation.x = -Math.PI / 2; mark.position.set(x*.42, .7515, z*.44); table.add(mark);
     const ring = new THREE.Mesh(new THREE.RingGeometry(.025, .032, 8), mat(0x65582e)); ring.rotation.x = -Math.PI / 2; ring.position.copy(mark.position); table.add(ring);
   }
 
@@ -310,8 +313,8 @@ export function createRoom(scene: THREE.Scene): BunkerRoom {
   // Unlabelled discarded crates and one original battered ashtray.
   const crate = box(.7, .42, .61, mat(0x5b5540, { map: woodMap }), -3.42, .22, .6); crate.rotation.y = -.17;
   for (const y of [.08, .23, .38]) box(.73, .02, .018, darkMetal, -3.42, y, .92);
-  const ashtray = new THREE.Mesh(new THREE.CylinderGeometry(.095, .08, .025, 8), mat(0x4f5446, { metalness: .5 })); ashtray.position.set(-1.19, .909, -.35); root.add(ashtray);
-  const ash = new THREE.Mesh(new THREE.CylinderGeometry(.075, .075, .002, 8), mat(0x171d14)); ash.position.set(-1.19, .923, -.35); root.add(ash);
+  const ashtray = new THREE.Mesh(new THREE.CylinderGeometry(.095, .08, .025, 8), mat(0x4f5446, { metalness: .5 })); ashtray.position.set(-.66, .763, -.29); root.add(ashtray);
+  const ash = new THREE.Mesh(new THREE.CylinderGeometry(.075, .075, .002, 8), mat(0x171d14)); ash.position.set(-.66, .777, -.29); root.add(ash);
   const cigarette = box(.075, .008, .011, mat(0xb3aa7c), -1.16, .93, -.33); cigarette.rotation.y = .5;
 
   // Hanging fixture pivots at the ceiling: the bulb and its light swing as one.

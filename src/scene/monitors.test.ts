@@ -61,13 +61,13 @@ describe('real ceiling-camera feed', () => {
   it('frames all three seats from the ceiling without the hanging lamp blocking the table', () => {
     const feed = createCeilingFeed(scene, monitors.group);
     feed.camera.updateMatrixWorld(true);
-    for (const position of [[-1.95, 2.05, -.45], [0, 2.05, -1.65], [0, 1.85, 1.8]]) {
+    for (const position of [[-1.05, 1.665, -.10], [0, 1.215, -.90], [0, 1.215, .90]]) {
       const head = new THREE.Vector3(...position).project(feed.camera);
       expect(Math.abs(head.x)).toBeLessThan(.9);
       expect(Math.abs(head.y)).toBeLessThan(.9);
       expect(head.z).toBeGreaterThan(-1); expect(head.z).toBeLessThan(1);
     }
-    const table = new THREE.Vector3(0, .89, 0), eye = feed.camera.position;
+    const table = new THREE.Vector3(0, .75, 0), eye = feed.camera.position;
     const sightline = new THREE.Line3(eye, table);
     const closest = sightline.closestPointToPoint(new THREE.Vector3(0, 2.76, .02), true, new THREE.Vector3());
     expect(closest.distanceTo(new THREE.Vector3(0, 2.76, .02))).toBeGreaterThan(.4);

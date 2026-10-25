@@ -194,11 +194,12 @@ describe('guard access and noticeable room life', () => {
   });
 });
 
-it('keeps the opaque felt and an actual clear view of captive shoes below the front rail', () => {
+it('keeps opaque felt and a real view of captive shoes from the permitted seated lean-back', () => {
   scene.updateMatrixWorld(true);
-  const eye=new THREE.Vector3(0,1.45,2.65);
-  for (const x of [-.17,.17]) {
-    const foot=new THREE.Vector3(x,.055,-.83), direction=foot.clone().sub(eye);
+  // Camera's base z=1.05 plus the configured 0.45m backward lean.
+  const eye=new THREE.Vector3(0,1.20,1.50);
+  for (const x of [-.105,.105]) {
+    const foot=new THREE.Vector3(x,.0425,-.37), direction=foot.clone().sub(eye);
     const ray=new THREE.Raycaster(eye,direction.clone().normalize(),0,direction.length()-.03);
     const hits=ray.intersectObjects(scene.children,true).filter(hit=>hit.object instanceof THREE.Mesh&&hit.object.visible&&!(hit.object.material as THREE.Material).transparent);
     expect(hits.map(hit=>hit.object.name)).toEqual([]);
