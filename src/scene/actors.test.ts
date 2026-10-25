@@ -132,6 +132,21 @@ describe('real cards and hidden information',()=>{
   tick(.02,{phase:'PLAYER_DECISION',peekActor:null,peekedCard:null});expect(actors.deckCorner.visible).toBe(false);expect((actors.peekFront.material as THREE.MeshStandardMaterial).map).toBeNull();
   expect(actors.deck.position.toArray()).toEqual([...DECK_POSITION]);
  });
+ it('moves the held fan aside so it cannot hide the PEEK corner, then restores it',()=>{
+  settle();
+  for(const progress of [.25,.5,.75]){
+   camera.position.set(-Math.sin(progress*Math.PI)*.16,1.20,1.05-Math.sin(progress*Math.PI)*.14);camera.lookAt(new THREE.Vector3(...playerPeekDeck(progress).position));
+   tick(0,{phase:'PLAYER_PEEKING',peekActor:'player',peekStartedAt:Date.now()-progress*CONFIG.PEEK_DURATION_MS,peekedCard:card('Q','hearts')});
+   const corner=world(actors.deckCorner).project(camera),ray=new THREE.Raycaster();ray.setFromCamera(new THREE.Vector2(corner.x,corner.y),camera);
+   expect(ray.intersectObjects(playerCards().map(s=>s.group),true)).toHaveLength(0);
+   const index=actors.peekFront.localToWorld(new THREE.Vector3(.02,0,.04/3)).project(camera),hands:THREE.Object3D[]=[actors.peekFront];
+   for(const arm of Object.values(actors.skeletons.player.arms))arm.shoulder.traverse(o=>{if(o instanceof THREE.Mesh&&visible(o)&&o.layers.test(camera.layers))hands.push(o);});
+   ray.setFromCamera(new THREE.Vector2(index.x,index.y),camera);
+   if(progress===.5)expect(ray.intersectObjects(hands,false)[0]?.object===actors.peekFront,'the lifted private index is visible past the fingers').toBe(true);
+   for(const arm of Object.values(actors.skeletons.player.arms)){expect(arm.diagnostics.requestedDistance).toBeLessThanOrEqual(.5131);expect(arm.diagnostics.relocateRequired).toBe(false);}
+  }
+  tick(0,{phase:'PLAYER_DECISION',peekActor:null,peekedCard:null});expect(actors.heldRig.position.toArray()).toEqual([0,0,0]);
+ });
  it('dims held cards only during the active blackout and resumes normal illumination after it ends',()=>{
   settle();const m=playerCards()[0].front.material as THREE.MeshStandardMaterial,level=m.emissiveIntensity;
   tick(.02,{event:{kind:'blackout',startedAt:Date.now(),duration:4000,seed:1}});expect(m.emissiveIntensity).toBeCloseTo(level*.055);
@@ -197,7 +212,8 @@ describe('ordered guard and restraint choreography',()=>{
 });
 
 describe('forced shot camera safety',()=>{
- it('keeps the Host left and behind the seated camera, showing only its bent forearm, hand and gun',()=>{
+ it.each([[1280,720],[1440,900],[1920,1080]])('keeps the forced Host outside the %s×%s view with a reachable visible forearm, hand and gun',(width,height)=>{
+  camera.aspect=width/height;camera.updateProjectionMatrix();
   settle();tick(.02,{phase:'HOST_FORCE_SHOT',forceShotAt:Date.now()-2800});
   const relative=camera.worldToLocal(world(actors.host));
   expect(relative.x).toBeCloseTo(-.90,6);expect(relative.z).toBeCloseTo(.20,6);
@@ -207,6 +223,9 @@ describe('forced shot camera safety',()=>{
   expect(excluded.length).toBeGreaterThan(10);expect(excluded.every(mesh=>!mesh.layers.test(camera.layers))).toBe(true);
   expect(included.some(mesh=>mesh.layers.test(camera.layers))).toBe(true);expect(actors.gun.parent).toBe(arm.hand);
   expect(actors.gun.userData.muzzleError).toBeLessThan(.015);
+  expect(arm.diagnostics.requestedDistance).toBeLessThanOrEqual(.513);
+  expect(arm.diagnostics.relocateRequired).toBe(false);expect(arm.diagnostics.wristLimited).toBe(false);
+  expect(world(arm.forearm).distanceTo(world(arm.hand))).toBeCloseTo(HUMAN.forearm,7);
   const wrist=world(arm.hand).project(camera),barrel=muzzle().project(camera);
   expect(wrist.x).toBeGreaterThan(-1);expect(wrist.x).toBeLessThan(0);
   expect(Math.abs(wrist.y)).toBeLessThan(1);expect(Math.abs(barrel.x)).toBeLessThan(1);expect(Math.abs(barrel.y)).toBeLessThan(1);

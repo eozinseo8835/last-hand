@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { createActors, type ActorState } from './scene/actors';
 import { retroFragment } from './Scene';
+import { playerPeekDeck } from './tableLayout';
 import './poseViewer.css';
 
 export const POSE_CASES = [
@@ -10,6 +11,8 @@ export const POSE_CASES = [
   { pose: 'guard-walking', room: 1 as const, label: 'Guard · walking' },
   { pose: 'player-card-hand', room: 1 as const, label: 'Player · card hand' },
   { pose: 'player-hold-to-pull', room: 1 as const, label: 'Player · hold to pull' },
+  { pose: 'host-forced-shot', room: 1 as const, label: 'Host · forced shot (front = seated view)' },
+  { pose: 'player-peek', room: 1 as const, label: 'Player · PEEK' },
 ];
 export type PoseSelection = { pose: string; room: 1 | 2 | 3; view: 'front' | 'side'; pixel: boolean; animate: boolean; time: number };
 export function poseSelection(search: string): PoseSelection {
@@ -60,6 +63,7 @@ export function measurePose(rig: RigLike | undefined, target: THREE.Object3D, gu
   if (rig) {
     for (const [side, arm] of Object.entries(rig.arms)) {
       if (selection.pose === 'player-card-hand' && side === 'right' || selection.pose === 'player-hold-to-pull' && side === 'left') continue;
+      if(selection.pose==='host-forced-shot'&&side==='left')continue;
       const shoulder = arm.shoulder.getWorldPosition(new THREE.Vector3());
       const elbow = arm.forearm.getWorldPosition(new THREE.Vector3());
       const wrist = arm.hand.getWorldPosition(new THREE.Vector3());
@@ -74,7 +78,7 @@ export function measurePose(rig: RigLike | undefined, target: THREE.Object3D, gu
         requestedRatio: diagnostics ? diagnostics.requestedDistance / (arm.lengths[0] + arm.lengths[1]) : null,
         relocationRequired: diagnostics?.relocateRequired ?? false });
     }
-    metrics.fixedLengths &&= metrics.arms.every((arm, index) => { const expected = Object.values(rig.arms).filter((_, i) => !(selection.pose === 'player-card-hand' && i === 1 || selection.pose === 'player-hold-to-pull' && i === 0))[index].lengths; return Math.abs(arm.upper - expected[0]) < 1e-6 && Math.abs(arm.forearm - expected[1]) < 1e-6; });
+    metrics.fixedLengths &&= metrics.arms.every(arm => { const expected = rig.arms[arm.side as 'left'|'right'].lengths; return Math.abs(arm.upper - expected[0]) < 1e-6 && Math.abs(arm.forearm - expected[1]) < 1e-6; });
     metrics.reachable = metrics.arms.every(arm => arm.targetRatio !== null && arm.targetRatio <= .900001 && !arm.relocationRequired);
     if (selection.pose === 'seated-resting') metrics.restGeometry = metrics.arms.every(arm => arm.elbowBelowShoulder && arm.lateral >= .049999 && arm.lateral <= .120001 && arm.elbow >= 80 && arm.elbow <= 110);
   }
@@ -153,6 +157,11 @@ export default function PoseViewer() {
         if (!actors.setDebugPose) { setError('The production pose rebuild is not available in this checkout.'); frame = requestAnimationFrame(animate); return; }
         if (changed) actors.setDebugPose(state.pose, state.room);
         const time = state.animate ? now / 1000 : state.time;
+        productionCamera.position.set(0,1.2,1.05);productionCamera.rotation.set(-.12,0,0);
+        if(state.pose==='player-peek'){
+          productionCamera.position.x-=.16;productionCamera.position.z-=.14;
+          productionCamera.lookAt(new THREE.Vector3(...playerPeekDeck(.5).position));
+        }
         actors.update(time, state.animate ? 1 / 60 : 0, { ...baseState, roomNumber: state.room });
         world.updateMatrixWorld(true);
         const inspected = actors.debugTarget ?? actors.captive;
@@ -165,6 +174,12 @@ export default function PoseViewer() {
         const facing = inspected.getWorldQuaternion(new THREE.Quaternion());
         const direction = new THREE.Vector3(state.view === 'side' ? 1 : 0, .035, state.view === 'side' ? 0 : 1).applyQuaternion(facing).normalize();
         camera.aspect = width / height; camera.position.copy(center).addScaledVector(direction, distance); camera.lookAt(center); camera.updateProjectionMatrix();
+        camera.layers.set(0);
+        if(state.pose==='host-forced-shot'){
+          if(state.view==='front'){camera.fov=68;camera.position.copy(productionCamera.position);camera.quaternion.copy(productionCamera.quaternion);}
+          else {camera.fov=39;camera.layers.enable(1);}
+          camera.updateProjectionMatrix();
+        } else if(camera.fov!==39){camera.fov=39;camera.updateProjectionMatrix();}
         const h = state.pixel ? 360 : Math.round(height), w = Math.round(h * width / height);
         renderer.setSize(w, h, false); target.setSize(w, h); canvas.style.imageRendering = state.pixel ? 'pixelated' : 'auto';
         canvas.dataset.pose = state.pose; canvas.dataset.room = String(state.room); canvas.dataset.view = state.view; canvas.dataset.pixel = String(state.pixel);
@@ -198,7 +213,7 @@ export default function PoseViewer() {
   function chooseCase(next: number) { const item = POSE_CASES[(next + POSE_CASES.length) % POSE_CASES.length]; setSelection(previous => ({ ...previous, pose: item.pose, room: item.room })); }
   const checks = metrics ? [['Fixed bone lengths', metrics.fixedLengths], ['Joint unit scale', metrics.unitScales], ['Reach ≤90%', metrics.reachable], ['Resting elbows', metrics.restGeometry], ['One revolver scale', metrics.gunScale]] as const : [];
   return <main className="pose-viewer">
-    <header><div><span className="pose-eyebrow">LAST HAND · DEVELOPMENT ONLY</span><h1>Production pose inspection</h1><p>Actual game skeletons, authored poses and shared revolver. Front/side × clear/pixel = 84 review frames.</p></div><a href="/">Return to game</a></header>
+    <header><div><span className="pose-eyebrow">LAST HAND · DEVELOPMENT ONLY</span><h1>Production pose inspection</h1><p>Actual game skeletons, authored poses and shared revolver. Front/side × clear/pixel; forced-shot front uses the seated camera.</p></div><a href="/">Return to game</a></header>
     <nav aria-label="Pose viewer controls"><button onClick={() => chooseCase(index - 1)}>Previous</button><label>Pose<select value={index} onChange={event => chooseCase(Number(event.target.value))}>{POSE_CASES.map((item, i) => <option key={`${item.room}-${item.pose}`} value={i}>{String(i + 1).padStart(2, '0')} · {item.label}</option>)}</select></label><button onClick={() => chooseCase(index + 1)}>Next</button><label>View<select value={selection.view} onChange={event => setSelection(previous => ({ ...previous, view: event.target.value as PoseSelection['view'] }))}><option value="front">Front</option><option value="side">Side</option></select></label><label className="pose-check"><input type="checkbox" checked={selection.pixel} onChange={event => setSelection(previous => ({ ...previous, pixel: event.target.checked }))}/>Pixel effect</label><label className="pose-check"><input type="checkbox" checked={selection.animate} onChange={event => setSelection(previous => ({ ...previous, animate: event.target.checked }))}/>Animate</label></nav>
     <section className="pose-inspection"><div className="pose-stage" ref={mount} aria-label="Production pose inspection render"/>{error && <p role="alert">{error}</p>}<aside><h2>{POSE_CASES[index].label}</h2><p className="pose-view-label">{selection.view.toUpperCase()} · PIXEL {selection.pixel ? 'ON' : 'OFF'}</p><ul>{checks.map(([label, pass]) => <li key={label}><span>{label}</span><b className={pass === null ? '' : pass ? 'check-pass' : 'check-fail'}>{pass === null ? 'N/A' : pass ? 'PASS' : 'FAIL'}</b></li>)}</ul>{metrics && <><p>{metrics.measuredSegments} measured segments · max length error {metrics.maxLengthError.toExponential(1)} m</p>{metrics.arms.map(arm => <div className="pose-arm" key={arm.side}><h3>{arm.side} arm</h3><p>Upper {arm.upper.toFixed(3)} m · forearm {arm.forearm.toFixed(3)} m<br/>Elbow {arm.elbow.toFixed(1)}° · outside torso {(arm.lateral * 100).toFixed(1)} cm<br/>Reach {arm.targetRatio === null ? 'unknown' : `${(arm.targetRatio * 100).toFixed(1)}%`} · requested {arm.requestedRatio === null ? 'unknown' : `${(arm.requestedRatio * 100).toFixed(1)}%`}</p></div>)}<p>Gun parent: {metrics.gunParent || 'scene'}<br/>Skin material lightness: {metrics.skinLightness === null ? 'unknown' : metrics.skinLightness.toFixed(2)}</p></>}<p className="pose-note">Wire outline marks the 0.75 m table. Geometry checks accompany visual review; material lightness alone does not establish correct lighting or grip.</p></aside></section>
     <footer>{index + 1} / {POSE_CASES.length} cases · query controls: pose, room, view, pixel, time</footer>

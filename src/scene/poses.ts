@@ -25,3 +25,9 @@ export const POSES = {
 } satisfies Record<string,JointPose>;
 export type PoseName = keyof typeof POSES;
 export const POSE_NAMES = Object.keys(POSES) as PoseName[];
+/** Camera-relative staging; the arm still uses the same fixed-bone IK limits. */
+export const FORCED_SHOT = {
+  root: [-.9,-.50,.20] as Triple, turn:.60,
+  muzzle: [-.04,.06,-.30] as Triple, cant:.10, walkSeconds:1.1,
+} as const;
+export type DebugPoseName = PoseName | 'host-forced-shot' | 'player-peek';

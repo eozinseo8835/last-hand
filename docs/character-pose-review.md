@@ -37,4 +37,18 @@ The completed review covers **21 character/pose cases × 2 views × 2 pixel sett
 
 Every captured case has constant measured segment lengths, unit scales, reachable authored targets and readable skin materials. Actual game-browser checks additionally cover hood/state order, no pre-deal cards, held-card presentation in Rooms 1 and 3, and the forced-shot camera view. No browser console errors were observed. Browser rendering uses Chromium software WebGL in this environment.
 
-Final automated test/build results are recorded after the end-of-task validation.
+## Completion of the `566bf51` checkpoint
+
+The remaining work was limited to forced-shot staging and PEEK/dealing/camera regressions. The original 84-frame matrix was not repeated. Only forced shot, Host dealing and player PEEK were captured again, from the front and side with pixel rendering off/on. PEEK used two correction/recheck cycles; dealing used one. The forced-shot front view uses the actual seated camera; its side view enables the surveillance layer to inspect the body and bent elbow outside that view.
+
+| Remaining check | Result | Evidence |
+| --- | --- | --- |
+| Forced-shot arm and gun | PASS | Host root stays 0.9m left / 0.2m behind the eye. A small body turn gives an unclamped wrist target of about 0.489m, below the 0.513m limit. Only its forearm subtree appears in the seated camera. |
+| Close-mesh protection | PASS | Main-camera checks find no forbidden Host meshes or other meshes within 0.35m; fixed bone lengths and wrist limits remain enforced. |
+| PEEK windows and private card | PASS | Host visibly turns away and keeps its gaze during dealer poses. Pack/corner remain attached and reachable; the fan moves aside with its hand. A ray to the lifted index confirms neither fingers nor held cards cover it. PEEK still identifies the next HIT card. |
+| Host shuffle and dealing | PASS | Restored upper-pack shuffle and short wrist strokes. Fingers reach down toward the pack. Public head turns and speaking motion survive body-pose changes. |
+| Look-around camera | PASS | Mouse drag, WASD, bounds, smooth release, recenter and automatic locks pass related checks; the actual game browser also exercises drag, WASD and recenter. |
+
+The viewer now includes `pose=host-forced-shot` and `pose=player-peek`, bringing its available cases to 23. The Host dealing case also runs the production choreography. No game HUD, audio, rules or story content was changed by this completion.
+
+Final validation: **374 tests across 25 files pass**, and the TypeScript/Vite production build succeeds. The full suite ran once. The initial build caught one test-only `updateWorldMatrix` call missing its child-update argument; that call was fixed, its 10 related tests passed, and the build was retried successfully. Chromium reports no console errors in the targeted pose and actual-game checks.

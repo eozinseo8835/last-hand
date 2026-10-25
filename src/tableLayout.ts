@@ -11,7 +11,7 @@ export const DECK_POSITION = [-.61, .778, -.06] as const;
 export function playerPeekDeck(progress: number): { slide: number; position: [number, number, number] } {
   const smooth = (x: number) => { const t=Math.max(0,Math.min(1,x));return t*t*(3-2*t); };
   const slide=Math.min(smooth(progress/.20),1-smooth((progress-.80)/.20));
-  return {slide,position:[DECK_POSITION[0]+(.20-DECK_POSITION[0])*slide,DECK_POSITION[1],DECK_POSITION[2]+(.46-DECK_POSITION[2])*slide]};
+  return {slide,position:[DECK_POSITION[0]+(.20-DECK_POSITION[0])*slide,DECK_POSITION[1],DECK_POSITION[2]+(.54-DECK_POSITION[2])*slide]};
 }
 export const GUN_REST = [0, .780, 0] as const;
 export const GUN_PICKUP = {

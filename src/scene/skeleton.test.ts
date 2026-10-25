@@ -78,7 +78,7 @@ describe('authored human skeleton hierarchy',()=>{
 
 it('overlaps the neck skin with the chest and skull instead of leaving a floating head',()=>{
  for(const role of ['host','captive','guard'] as const){
-  const rig=createCharacter(role);rig.pose(role==='host'?'host-idle':'seated-resting');rig.group.updateWorldMatrix(true);
+  const rig=createCharacter(role);rig.pose(role==='host'?'host-idle':'seated-resting');rig.group.updateWorldMatrix(true,true);
   const neck=new THREE.Box3().setFromObject(rig.group.getObjectByName('Neck skin')!);
   const torso=new THREE.Box3().setFromObject(rig.group.getObjectByName('Chest clothing')!);
   const skull=new THREE.Box3().setFromObject(rig.group.getObjectByName('Cranium')!);
