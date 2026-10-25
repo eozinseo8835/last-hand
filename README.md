@@ -1,5 +1,7 @@
 # LAST HAND
 
+Bug Update 2 seats the Host farther back with a real 3D mask and cloth hood, restores the hold where the muzzle rises to face you, replaces the stretched center pickup with a Host push and a direct grab, shows the captive's cards as a readable fan of oxblood backs, rests empty hands on the felt, and drops the revolver at a fatal shot with the body left slumped in its chair. See [the update record](docs/bug-update-2.md).
+
 Big Update 3 adds layered concrete-room gunshots, a bounded master mix, shooting silence and recovery, tinnitus/muffling, close breathing, stress sounds, a rising drone and HRTF positioning. The start screen and header provide volume controls. Host/captive gaze now follows scene targets smoothly, and the Host stands farther back within view. See [the implementation and validation record](docs/big-update-3.md). Validation: **383 tests pass**, and the production build succeeds.
 
 Small Update 1 adds the restrained left-edge temple-contact shot, relaxed empty hands and inward-curling fingers, and a rounded woven sack with smoothly deforming removal. The development pose viewer includes hood on/mid-removal/off, the empty resting hand and the Host gesture. See [the update and validation record](docs/small-update-1.md). Validation: 378 tests pass and the production build succeeds.

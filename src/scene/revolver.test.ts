@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { createRevolverModel, GRIP_LOCAL, GRIP_SOCKET, MUZZLE_LOCAL, REVOLVER_DIMENSIONS } from './revolver';
-import { boundsOverlap, cardBounds, GUN_BOUNDS, GUN_PICKUP, GUN_REST, TABLE_HALF_DEPTH, TABLE_HALF_WIDTH } from '../tableLayout';
+import { boundsOverlap, cardBounds, gunBoundsAt, gunSlidePoint, GUN_BOUNDS, GUN_PICKUP, GUN_REST, DECK_POSITION, CARD_WIDTH, CARD_HEIGHT, TABLE_HALF_DEPTH, TABLE_HALF_WIDTH } from '../tableLayout';
 
 describe('one real-scale procedural .38 revolver', () => {
   it('has a readable complete silhouette in one hand-sized model', () => {
@@ -44,11 +44,21 @@ describe('central revolver and clear table layout',()=>{
 
     }
   });
-  it('fits all card corners on the table and shares one center contact for all shooters',()=>{
+  it('fits all card corners on the table',()=>{
     for(const owner of ['player','ai'] as const)for(let count=1;count<=11;count++)for(let i=0;i<count;i++){
       const b=cardBounds(owner,i,count);expect(Math.abs(b.minX)).toBeLessThan(TABLE_HALF_WIDTH);expect(Math.abs(b.maxX)).toBeLessThan(TABLE_HALF_WIDTH);
       expect(Math.abs(b.minZ)).toBeLessThan(TABLE_HALF_DEPTH);expect(Math.abs(b.maxZ)).toBeLessThan(TABLE_HALF_DEPTH);
     }
-    expect(GUN_PICKUP.ai).toEqual(GUN_REST);expect(GUN_PICKUP.player).toEqual(GUN_REST);
+  });
+  it('keeps the rest and both pickup spots on the felt, clear of the deck, and slides wide of ordinary hands',()=>{
+    const onFelt=(p:readonly number[])=>(p[0]/TABLE_HALF_WIDTH)**2+(p[2]/TABLE_HALF_DEPTH)**2<1;
+    for(const spot of [GUN_REST,GUN_PICKUP.player,GUN_PICKUP.ai])expect(onFelt(spot)).toBe(true);
+    const deck={minX:DECK_POSITION[0]-CARD_WIDTH/2,maxX:DECK_POSITION[0]+CARD_WIDTH/2,minZ:DECK_POSITION[2]-CARD_HEIGHT/2,maxZ:DECK_POSITION[2]+CARD_HEIGHT/2};
+    expect(boundsOverlap(GUN_BOUNDS,deck)).toBe(false);
+    for(const side of ['player','ai'] as const){
+      expect(gunSlidePoint(side,0)).toEqual([...GUN_REST]);expect(gunSlidePoint(side,1)).toEqual([...GUN_PICKUP[side]]);
+      for(let u=0;u<=1.0001;u+=.02){const at=gunSlidePoint(side,u);expect(onFelt(at)).toBe(true);
+        for(const owner of ['player','ai'] as const)for(let count=1;count<=3;count++)for(let i=0;i<count;i++)expect(boundsOverlap(gunBoundsAt(at),cardBounds(owner,i,count)),`${side} slide u=${u.toFixed(2)} vs ${owner} card ${i}/${count}`).toBe(false);}
+    }
   });
 });

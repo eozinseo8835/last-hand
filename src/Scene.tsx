@@ -1,4 +1,3 @@
-import {pickupPose} from './pickup';
 import type { GunTransfer } from './gunTransfer';
 import { createCharacter } from './scene/skeleton';
 import type { Attention } from './attention';
@@ -14,7 +13,7 @@ import { createCeilingFeed, createMonitorWall } from './scene/monitors';
 import { cameraRecenter, createLeanState, createLookKeys, createLookState, dragLook, updateKeyboardLook, updateLean, updateLook, wheelLean } from './scene/camera';
 import { cinematicProgress, focusRecovery, hoodCoverage, type CinematicState } from './cinematics';
 import type { AmbientEvent, DistantShot } from './roomLife';
-import { playerPeekDeck } from './tableLayout';
+import { playerPeekDeck, HOST_HEAD } from './tableLayout';
 
 export type SceneProps = {
   phase: GamePhase;
@@ -392,8 +391,8 @@ export default function Scene(props: SceneProps) {
         camera.quaternion.slerpQuaternions(facing, camera.quaternion.clone(), Math.min(1,leanPeek*2));
       }
       const contact=state.phase==='HOST_FORCE_SHOT'&&state.forceShotAt!=null?THREE.MathUtils.smoothstep((epoch-state.forceShotAt)/1000,2.4,2.8):0;
-      if(state.gunTransfer?.side==='player'&&state.gunTransfer.owner!=='host'){const p=THREE.MathUtils.clamp((epoch-state.gunTransfer.startedAt)/state.gunTransfer.duration,0,1),lean=pickupPose(state.gunTransfer.stage==='return'?1-p:p).lean;camera.position.z-=.15*lean;camera.rotation.x-=.35*lean;}
-      if(state.phase==='HOST_FORCE_SHOT'||state.forceShotAt!=null&&!!state.gunTransfer){const before=camera.quaternion.clone();camera.lookAt(-.72,1.22,.12);camera.quaternion.slerpQuaternions(before,camera.quaternion.clone(),THREE.MathUtils.smoothstep((epoch-(state.forceShotAt??epoch))/1000,.2,1.2));}
+      // No camera lunge during the player's grab: the revolver is delivered within reach and taken with a direct reach.
+      if(state.phase==='HOST_FORCE_SHOT'||state.forceShotAt!=null&&!!state.gunTransfer){const before=camera.quaternion.clone();camera.lookAt(HOST_HEAD[0],HOST_HEAD[1]-.02,HOST_HEAD[2]);camera.quaternion.slerpQuaternions(before,camera.quaternion.clone(),THREE.MathUtils.smoothstep((epoch-(state.forceShotAt??epoch))/1000,1.1,2.1));}
 
       camera.updateMatrixWorld(true);
       room.update(time, dt, state.danger, state.suspense, impulse, event, epoch, {

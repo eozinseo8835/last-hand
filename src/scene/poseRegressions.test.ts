@@ -2,7 +2,7 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 import * as THREE from 'three';
 import {CONFIG,type GamePhase} from '../game';
-import {DECK_POSITION,playerPeekDeck} from '../tableLayout';
+import {DECK_POSITION,HOST_SEAT,playerPeekDeck} from '../tableLayout';
 import {createActors,type ActorState} from './actors';
 
 let scene:THREE.Scene,camera:THREE.PerspectiveCamera,actors:ReturnType<typeof createActors>;
@@ -65,7 +65,7 @@ describe('skeleton rebuild regression contacts',()=>{
    for(let frame=0;frame<40;frame++)actors.update(2+frame*.02,.02,frameState);
    const expected=phase==='PLAYER_SHOOTING'?actors.gun.getWorldPosition(new THREE.Vector3()):camera.getWorldPosition(new THREE.Vector3());
    expect(new THREE.Vector3(...actors.host.userData.gazeTarget).distanceTo(expected)).toBeLessThan(.002);
-   expect(actors.host.position.toArray()).toEqual([-.72,.45,.12]);expect(Math.abs(actors.hostHead.rotation.x)).toBeLessThan(Math.PI/6);
+   expect(actors.host.position.toArray()).toEqual([...HOST_SEAT]);expect(Math.abs(actors.hostHead.rotation.x)).toBeLessThan(Math.PI/6);
    if(phase!=='PLAYER_SHOOTING'){const eyeDirection=expected.clone().sub(actors.hostHead.getWorldPosition(new THREE.Vector3())).normalize();expect(actors.hostHead.getWorldDirection(new THREE.Vector3()).dot(eyeDirection)).toBeGreaterThan(.95);}
    actors.update(2.8,0,{...frameState,hostVoiceLevel:0});const quiet=actors.hostHead.rotation.x;actors.update(2.8,0,frameState);expect(actors.hostHead.rotation.x-quiet).toBeCloseTo(.01);
   }
