@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { createRevolverModel, GRIP_LOCAL, GRIP_SOCKET, MUZZLE_LOCAL, REVOLVER_DIMENSIONS } from './revolver';
-import { boundsOverlap, cardBounds, GUN_BOUNDS, GUN_PICKUP, gunBoundsAt, GUN_REST, TABLE_HALF_DEPTH, TABLE_HALF_WIDTH } from '../tableLayout';
+import { boundsOverlap, cardBounds, GUN_BOUNDS, GUN_PICKUP, GUN_REST, TABLE_HALF_DEPTH, TABLE_HALF_WIDTH } from '../tableLayout';
 
 describe('one real-scale procedural .38 revolver', () => {
   it('has a readable complete silhouette in one hand-sized model', () => {
@@ -36,23 +36,19 @@ describe('one real-scale procedural .38 revolver', () => {
     }
   });
 });
-describe('central revolver and reachable side deliveries',()=>{
-  it('never overlaps either complete card grid at rest or while sliding to either shooter',()=>{
+describe('central revolver and clear table layout',()=>{
+  it('never overlaps either complete showdown card grid at rest',()=>{
     for(let playerCount=1;playerCount<=11;playerCount++)for(let aiCount=1;aiCount<=11;aiCount++){
       const cards=[...Array.from({length:playerCount},(_,i)=>cardBounds('player',i,playerCount)),...Array.from({length:aiCount},(_,i)=>cardBounds('ai',i,aiCount))];
       for(const card of cards)expect(boundsOverlap(card,GUN_BOUNDS)).toBe(false);
-      // Slide out along the central clear band, then along the right-side delivery lane.
-      for(const endpoint of [GUN_PICKUP.ai,GUN_PICKUP.player]) for(let frame=0;frame<=100;frame++) {
-        const t=frame/100,position: [number,number,number]=t<=.5?[endpoint[0]*t*2,GUN_REST[1],0]:[endpoint[0],GUN_REST[1],endpoint[2]*(t-.5)*2];
-        for(const card of cards)expect(boundsOverlap(card,gunBoundsAt(position))).toBe(false);
-      }
+
     }
   });
-  it('fits all card corners on the usable table and leaves a 20cm pickup gap from resting hands',()=>{
+  it('fits all card corners on the table and shares one center contact for all shooters',()=>{
     for(const owner of ['player','ai'] as const)for(let count=1;count<=11;count++)for(let i=0;i<count;i++){
       const b=cardBounds(owner,i,count);expect(Math.abs(b.minX)).toBeLessThan(TABLE_HALF_WIDTH);expect(Math.abs(b.maxX)).toBeLessThan(TABLE_HALF_WIDTH);
       expect(Math.abs(b.minZ)).toBeLessThan(TABLE_HALF_DEPTH);expect(Math.abs(b.maxZ)).toBeLessThan(TABLE_HALF_DEPTH);
     }
-    expect(Math.abs(GUN_PICKUP.ai[2]-(-.70))).toBeCloseTo(.20);expect(Math.abs(GUN_PICKUP.player[2]-.70)).toBeCloseTo(.20);
+    expect(GUN_PICKUP.ai).toEqual(GUN_REST);expect(GUN_PICKUP.player).toEqual(GUN_REST);
   });
 });

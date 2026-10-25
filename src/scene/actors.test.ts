@@ -3,9 +3,10 @@ import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 import * as THREE from 'three';
 import {CONFIG,type Card,type Round} from '../game';
 import {createActors,type ActorState} from './actors';
-import {CARD_WIDTH,CARD_HEIGHT,DECK_POSITION,GUN_REST,GUN_PICKUP,TABLE_CARD_Y,tableCardPosition,playerPeekDeck} from '../tableLayout';
+import {CARD_WIDTH,CARD_HEIGHT,DECK_POSITION,GUN_REST,TABLE_CARD_Y,tableCardPosition,playerPeekDeck} from '../tableLayout';
 import {GRIP_SOCKET,MUZZLE_LOCAL} from './revolver';
 import {stageDurationMs,type CinematicStage} from '../cinematics';
+import {PICKUP_MS,PICKUP_PHASES} from '../pickup';
 import {HUMAN} from './poses';
 import {applyNearCameraHiding,restoreNearCameraHiding} from './visibility';
 
@@ -25,7 +26,7 @@ function settle(){const round=opening();actors.setCards(round,false);advance(CON
 function noFaceOnFelt(){for(const s of playerCards())expect(Math.abs(position(s).y-TABLE_CARD_Y)<.025&&normal(s).y>.7,s.group.name).toBe(false);}
 function world(object:THREE.Object3D){return object.getWorldPosition(new THREE.Vector3());}
 function muzzle(){return actors.gun.localToWorld(new THREE.Vector3(...MUZZLE_LOCAL));}
-function prepareShot(side:'player'|'ai'){const started=Date.now();tick(0,{phase:side==='ai'?'AI_SHOOTING':'PLAYER_SHOOTING',aiShotStartedAt:null,gunTransfer:{stage:'to-shooter',side,startedAt:started,duration:900}});advance(.9);tick(0,{gunTransfer:null});}
+function prepareShot(side:'player'|'ai'){const started=Date.now();tick(0,{phase:side==='ai'?'AI_SHOOTING':'PLAYER_SHOOTING',aiShotStartedAt:null,gunTransfer:{stage:'to-shooter',side,startedAt:started,duration:PICKUP_MS}});advance(PICKUP_MS/1000);tick(0,{gunTransfer:null});}
 function beginAiWindup(){prepareShot('ai');const started=Date.now();tick(0,{phase:'AI_SHOOTING',aiShotStartedAt:started,aiShotDurationMs:2000});advance(2);}
 function openingStage(stage:CinematicStage,fraction=.5){const duration=stageDurationMs(stage);tick(0,{phase:'OPENING',storyStage:stage,cinematic:{stage,startedAt:Date.now()-duration*fraction,mode:'full'},tiesCut:{player:false,ai:false}});}
 function visible(object:THREE.Object3D){for(let p:THREE.Object3D|null=object;p;p=p.parent)if(!p.visible)return false;return true;}
@@ -91,10 +92,14 @@ describe('production hierarchy, materials and speech',()=>{
   actors.setCards({...round,ai:[card('2','clubs'),card('3','diamonds')]},false);actors.update(time,0,{...state,stress:.8,tell:null});expect(actors.head.rotation.equals(head)).toBe(true);
   actors.update(time,0,{...state,phase:'REVEAL',tell:{kind:'avert',disposition:'nervous'}});const reveal=actors.head.rotation.clone();actors.update(time,0,{...state,phase:'REVEAL',tell:null});expect(actors.head.rotation.equals(reveal)).toBe(true);
  });
- it('turns only the addressed heads and visibly returns before a distraction closes',()=>{
-  settle();const gaze={away:true,returning:false,amount:1,direction:-1};advance(.6,{attention:{host:gaze,captive:{...gaze,direction:1},window:true}});
-  const h=Math.abs(actors.hostHead.rotation.y),c=Math.abs(actors.head.rotation.y);expect(h).toBeGreaterThan(.4);expect(c).toBeGreaterThan(.4);
-  advance(.4,{attention:{host:{...gaze,returning:true,amount:.25},captive:{...gaze,direction:1,returning:true,amount:.25},window:true}});expect(Math.abs(actors.hostHead.rotation.y)).toBeLessThan(h);expect(Math.abs(actors.head.rotation.y)).toBeLessThan(c);
+ it('reacts to a positioned sound before context, then returns to context without random sideways targets',()=>{
+  settle();const sound={id:'left',at:Date.now(),position:[-3,1.3,-.5] as const,loudness:1,source:'pipe'};
+  advance(.3,{worldSound:sound,speaker:'host'});
+  expect(actors.captive.userData.gazeTarget).toEqual([...sound.position]);expect(actors.captive.userData.gazePriority).toBe('sound');
+  advance(.5,{speaker:'captive'});expect(actors.captive.userData.gazeTarget).toEqual([...sound.position]);
+  advance(.8,{speaker:'host'});expect(new THREE.Vector3(...actors.captive.userData.gazeTarget).distanceTo(world(actors.hostHead))).toBeLessThan(.003);
+  advance(.4,{speaker:null,worldSound:null,roomNumber:3});expect(new THREE.Vector3(...actors.captive.userData.gazeTarget).distanceTo(world(actors.aiHeldRig))).toBeLessThan(.015);
+  for(let i=0;i<20;i++){tick(.2,{roomNumber:1});const t=new THREE.Vector3(...actors.captive.userData.gazeTarget);expect(Math.min(t.distanceTo(world(actors.aiHeldRig)),t.distanceTo(world(camera)),t.distanceTo(world(actors.gun)))).toBeLessThan(.015);expect(Math.abs(actors.head.rotation.y)).toBeLessThan(70*Math.PI/180);}
  });
 });
 
@@ -138,7 +143,7 @@ describe('real cards and hidden information',()=>{
   tick(.02,{phase:'PLAYER_DECISION',peekActor:null,peekedCard:null});expect(actors.deckCorner.visible).toBe(false);expect((actors.peekFront.material as THREE.MeshStandardMaterial).map).toBeNull();
   expect(actors.deck.position.toArray()).toEqual([...DECK_POSITION]);
  });
- it('moves the held fan aside so it cannot hide the PEEK corner, then restores it',()=>{
+ it('keeps the low held fan and both hands clear of the private PEEK corner',()=>{
   settle();
   for(const progress of [.25,.5,.75]){
    camera.position.set(-Math.sin(progress*Math.PI)*.16,1.20,1.05-Math.sin(progress*Math.PI)*.14);camera.lookAt(new THREE.Vector3(...playerPeekDeck(progress).position));
@@ -165,23 +170,32 @@ describe('real cards and hidden information',()=>{
 });
 
 describe('one physical revolver and reachable pickup',()=>{
- it('starts at the center, uses one scale, and slides through the clear lane to each shooter',()=>{
-  settle();expect(actors.gun.position.toArray()).toEqual([...GUN_REST]);
-  for(const side of ['ai','player'] as const){const started=Date.now();tick(0,{phase:side==='ai'?'AI_SHOOTING':'PLAYER_SHOOTING',gunTransfer:{stage:'to-shooter',side,startedAt:started,duration:900}});
-   advance(.9);expect(world(actors.gun).distanceTo(new THREE.Vector3(...GUN_PICKUP[side]))).toBeLessThan(.01);expect(actors.gun.scale.toArray()).toEqual([1,1,1]);expect(actors.gun.parent).toBe(scene);}
+ it.each(['player','ai','host'] as const)('picks up from center through all six phases and stays attached from contact: %s',owner=>{
+  settle();const started=Date.now(),phases=new Set<string>(),rig=actors.skeletons[owner==='ai'?'captive':owner];
+  for(let i=0;i<=40;i++){
+   tick(i===0?0:PICKUP_MS/40000,{phase:owner==='ai'?'AI_SHOOTING':'PLAYER_SHOOTING',gunTransfer:{stage:'to-shooter',side:owner==='ai'?'ai':'player',owner,startedAt:started,duration:PICKUP_MS}});
+   const p=i/40;phases.add(actors.gun.userData.pickupPhase);expect(actors.gun.scale.toArray()).toEqual([1,1,1]);
+   if(p<.5)expect(world(actors.gun).distanceTo(new THREE.Vector3(...GUN_REST))).toBeLessThan(.001);
+   else {expect(actors.gun.parent).toBe(rig.arms.right.hand);if(p===.5)expect(world(actors.gun).distanceTo(new THREE.Vector3(...GUN_REST))).toBeLessThan(.01);}
+   expect(rig.arms.right.diagnostics.relocateRequired).toBe(false);
+  }
+  expect([...phases]).toEqual([...PICKUP_PHASES]);
  });
  it('keeps the wrapped grip bound to the wrist, with the same socket and three curling knuckles',()=>{
   settle();prepareShot('player');advance(1,{phase:'PLAYER_SHOOTING',triggerHeld:true,triggerProgress:1});expect(actors.gun.parent).toBe(actors.skeletons.player.arms.right.hand);
   expect(actors.gun.position.toArray()).toEqual([...GRIP_SOCKET.position]);expect(actors.gun.quaternion.angleTo(new THREE.Quaternion(...GRIP_SOCKET.quaternion))).toBeLessThan(1e-7);
   for(const chain of actors.skeletons.player.arms.right.fingers.slice(1))expect(chain.every(joint=>joint.rotation.x<-.1)).toBe(true);
  });
- it.each([[1280,720],[1440,900],[1920,1080]])('points the held barrel at the eye in the center of %s×%s', (width,height)=>{
-  settle();prepareShot('player');camera.aspect=width/height;camera.updateProjectionMatrix();advance(1,{phase:'PLAYER_SHOOTING',triggerHeld:true,triggerProgress:1});const p=muzzle().project(camera),direction=new THREE.Vector3(1,0,0).transformDirection(actors.gun.matrixWorld),eyeDirection=world(camera).sub(muzzle()).normalize();
-  expect(Math.abs(p.x)).toBeLessThan(.03);expect(Math.abs(p.y)).toBeLessThan(.03);expect(direction.dot(eyeDirection)).toBeGreaterThan(.999);expect(p.z).toBeGreaterThan(-1);expect(p.z).toBeLessThan(1);
+ it.each([[1280,720],[1440,900],[1920,1080]])('holds the same gun at the right temple edge in %s×%s',(width,height)=>{
+  settle();prepareShot('player');camera.aspect=width/height;camera.updateProjectionMatrix();advance(1,{phase:'PLAYER_SHOOTING',triggerHeld:true,triggerProgress:1});
+  const bounds=new THREE.Box3().setFromObject(actors.gun),right=bounds.max.project(camera);expect(right.x).toBeGreaterThan(.35);expect(actors.gun.parent).toBe(actors.skeletons.player.arms.right.hand);
+  const direction=new THREE.Vector3(1,0,0).transformDirection(actors.gun.matrixWorld).transformDirection(camera.matrixWorldInverse);expect(direction.x).toBeLessThan(-.9);
+  expect(actors.gun.userData.muzzleError).toBeLessThan(.015);expect(actors.gun.scale.toArray()).toEqual([1,1,1]);
  });
- it('preserves centered hold geometry through sparse frames and camera changes',()=>{
-  settle();prepareShot('player');camera.position.set(.04,1.24,1.08);camera.rotation.set(-.12,.08,.01);let elapsed=0;for(const dt of [.4,.4,.4,.4,.4,.4,.3]){elapsed+=dt;tick(dt,{phase:'PLAYER_SHOOTING',triggerHeld:true,triggerProgress:elapsed/3});}
-  const p=muzzle().project(camera);expect(Math.abs(p.x)).toBeLessThan(.03);expect(Math.abs(p.y)).toBeLessThan(.03);
+ it('keeps the temple grip reachable through sparse frames and camera changes',()=>{
+  settle();prepareShot('player');camera.position.set(.04,1.24,1.08);camera.rotation.set(-.12,.08,.01);
+  for(const dt of [.4,.4,.4,.4,.4,.4,.3])tick(dt,{phase:'PLAYER_SHOOTING',triggerHeld:true,triggerProgress:.8});
+  expect(actors.gun.userData.muzzleError).toBeLessThan(.015);expect(actors.skeletons.player.arms.right.diagnostics.relocateRequired).toBe(false);
  });
  it('cocks and squeezes progressively while spinning the same cylinder without rescaling the gun',()=>{
   settle();prepareShot('player');tick(.02,{phase:'PLAYER_SHOOTING',triggerHeld:true,triggerProgress:.2});const first=actors.hammer.rotation.z;tick(.02,{triggerProgress:.9});expect(Math.abs(actors.hammer.rotation.z-first)).toBeGreaterThan(.1);
@@ -189,10 +203,11 @@ describe('one physical revolver and reachable pickup',()=>{
  });
  it('keeps the captive muzzle touching the temple with fixed bones and returns after an empty click',()=>{
   settle();beginAiWindup();expect(actors.gun.parent).toBe(actors.rightHand);expect(muzzle().distanceTo(new THREE.Vector3(...actors.gun.userData.temple))).toBeLessThan(.015);
-  tick(0,{phase:'ROUND_RESULT',shotEffect:'click',aiShotStartedAt:null});advance(.7);const started=Date.now();tick(0,{gunTransfer:{stage:'return',side:'ai',startedAt:started,duration:900}});advance(.9);expect(actors.gun.parent).toBe(scene);expect(world(actors.gun).distanceTo(new THREE.Vector3(...GUN_REST))).toBeLessThan(.01);
+  tick(0,{phase:'ROUND_RESULT',shotEffect:'click',aiShotStartedAt:null});advance(.7);const started=Date.now();tick(0,{gunTransfer:{stage:'return',side:'ai',startedAt:started,duration:PICKUP_MS}});advance(.9);expect(actors.gun.parent).toBe(scene);expect(world(actors.gun).distanceTo(new THREE.Vector3(...GUN_REST))).toBeLessThan(.01);
  });
- it('slumps only the defeated captive and drops its gun while the Host remains composed',()=>{
-  settle();beginAiWindup();tick(.02,{phase:'ROUND_RESULT',dead:'ai',shotEffect:'shot',aiShotStartedAt:null});advance(1.5);
+ it('sets down even a fatal shot before the captive slumps while the Host stays seated',()=>{
+  settle();beginAiWindup();tick(.02,{phase:'ROUND_RESULT',dead:'ai',shotEffect:'shot',aiShotStartedAt:null});const started=Date.now();tick(0,{gunTransfer:{stage:'return',side:'ai',startedAt:started,duration:PICKUP_MS}});advance(PICKUP_MS/1000);tick(0,{gunTransfer:null});advance(1);
+  expect(world(actors.gun).distanceTo(new THREE.Vector3(...GUN_REST))).toBeLessThan(.001);
   expect(actors.skeletons.captive.spine.rotation.x).toBeGreaterThan(.5);expect(actors.host.rotation.x).toBe(0);expect(actors.host.rotation.z).toBe(0);expect(actors.gun.parent).toBe(scene);expect(actors.host.userData.canDie).toBe(false);
  });
  it('resets a fatal replay to its real-size rest pose, empty cards and central revolver',()=>{
@@ -222,26 +237,15 @@ describe('ordered guard and restraint choreography',()=>{
 });
 
 describe('forced shot camera safety',()=>{
- it.each([[1280,720],[1440,900],[1920,1080]])('keeps the forced Host outside the %s×%s view with a reachable visible forearm, hand and gun',(width,height)=>{
-  camera.aspect=width/height;camera.updateProjectionMatrix();
+ it.each([[1280,720],[1440,900],[1920,1080]])('keeps enforcement seated, reachable and aimed at the player in %s×%s',(width,height)=>{
+  camera.aspect=width/height;camera.updateProjectionMatrix();camera.lookAt(-.72,1.22,.12);
   settle();tick(.02,{phase:'HOST_FORCE_SHOT',forceShotAt:Date.now()-2800});
-  const relative=camera.worldToLocal(world(actors.host));
-  expect(relative.x).toBeCloseTo(-.90,6);expect(relative.z).toBeCloseTo(.20,6);
-  const arm=actors.skeletons.host.arms.right,allowed=new Set<THREE.Object3D>();arm.forearm.traverse(o=>allowed.add(o));
-  const excluded:THREE.Mesh[]=[],included:THREE.Mesh[]=[];
-  actors.host.traverse(o=>{if(!(o instanceof THREE.Mesh))return;(allowed.has(o)?included:excluded).push(o);});
-  expect(excluded.length).toBeGreaterThan(10);expect(excluded.every(mesh=>!mesh.layers.test(camera.layers))).toBe(true);
-  expect(included.some(mesh=>mesh.layers.test(camera.layers))).toBe(true);expect(actors.gun.parent).toBe(arm.hand);
-  expect(actors.gun.userData.muzzleError).toBeLessThan(.015);
-  expect(arm.diagnostics.requestedDistance).toBeLessThanOrEqual(.513);
+  expect(actors.host.position.toArray()).toEqual([-.72,.45,.12]);
+  const arm=actors.skeletons.host.arms.right;expect(actors.gun.parent).toBe(arm.hand);expect(actors.gun.userData.muzzleError).toBeLessThan(.015);
   expect(arm.diagnostics.relocateRequired).toBe(false);expect(arm.diagnostics.wristLimited).toBe(false);
   expect(world(arm.forearm).distanceTo(world(arm.hand))).toBeCloseTo(HUMAN.forearm,7);
-  const wrist=world(arm.hand).project(camera),barrel=muzzle().project(camera);
-  expect(wrist.x).toBeLessThan(-1);expect(barrel.x).toBeLessThan(-.9);expect(actors.gun.scale.toArray()).toEqual([1,1,1]);
-  actors.gun.traverse(o=>{if(o instanceof THREE.Mesh&&o.layers.test(camera.layers))expect(/Hollow .38 barrel|muzzle|Muzzle|Barrel front sight|Sight highlight/.test(o.name),o.name).toBe(true);});
-  expect(arm.lowerMesh.layers.test(camera.layers)).toBe(false);
-  expect(Math.abs(barrel.x)).toBeLessThan(1);expect(Math.abs(barrel.y)).toBeLessThan(1);
-  expect(Math.abs(arm.forearm.rotation.x)).toBeGreaterThan(.05);expect(Math.abs(arm.forearm.rotation.x)).toBeLessThanOrEqual(HUMAN.elbowFlexLimit);expect(world(arm.shoulder).distanceTo(world(arm.forearm))).toBeCloseTo(HUMAN.upperArm,7);
+  const axis=new THREE.Vector3(1,0,0).transformDirection(actors.gun.matrixWorld);expect(axis.dot(world(camera).sub(muzzle()).normalize())).toBeGreaterThan(.995);
+  expect(Math.abs(world(actors.hostHead).project(camera).x)).toBeLessThan(.5);expect(actors.gun.scale.toArray()).toEqual([1,1,1]);
  });
  it('hides other meshes within 35cm only from the seated camera and restores their original layers afterward',()=>{
   const surface=new THREE.MeshStandardMaterial(),geometry=new THREE.BoxGeometry(.03,.03,.03);
@@ -276,4 +280,24 @@ it('keeps production hand contact targets inside the 90% reach rule after torso 
  prepareShot('player');advance(.5,{triggerHeld:true,triggerProgress:1});inspect(actors.skeletons.player,'right','player grip');
  tick(0,{phase:'PLAYER_DECISION',triggerHeld:false,triggerProgress:0});beginAiWindup();inspect(actors.skeletons.captive,'right','captive temple');
  tick(.02,{phase:'HOST_FORCE_SHOT',forceShotAt:Date.now()-2800});inspect(actors.skeletons.host,'right','Host enforcement');
+});
+
+it('keeps the Host seated in every state with one smooth continuous coat and a recessed flat mask',()=>{
+ for(const phase of ['OPENING','DEALING','PLAYER_DECISION','PLAYER_PEEKING','AI_SHOOTING','PLAYER_SHOOTING','HOST_FORCE_SHOT','ROUND_RESULT','TRANSITION','ENDING_DEATH'] as const){tick(.1,{phase,forceShotAt:phase==='HOST_FORCE_SHOT'?Date.now()-2800:null});expect(actors.host.position.toArray()).toEqual([-.72,.45,.12]);expect(actors.skeletons.host.legs.left.thigh.rotation.x).toBeCloseTo(-Math.PI/2);}
+ const coat=actors.host.getObjectByName('Continuous seated Host coat') as THREE.Mesh<THREE.BufferGeometry,THREE.MeshStandardMaterial>;expect(coat.material.flatShading).toBe(false);expect(coat.geometry.attributes.normal.count).toBeGreaterThan(600);
+ const mask=actors.hostHead.getObjectByName('Featureless Host mask') as THREE.Mesh;mask.geometry.computeBoundingBox();const size=mask.geometry.boundingBox!.getSize(new THREE.Vector3());expect(size.z).toBeLessThan(.01);expect(size.x).toBeGreaterThan(.1);
+});
+it('holds the player palm toward the camera, captive backs toward the player, and lays penalty cards face down',()=>{
+ settle();const palm=actors.skeletons.player.arms.left.palm;const n=new THREE.Vector3(0,1,0).transformDirection(palm.matrixWorld),toward=world(camera).sub(world(palm)).normalize();expect(n.dot(toward)).toBeGreaterThan(.7);
+ for(const s of actors.cardSlots.filter(s=>s.active&&s.owner==='ai')){expect(s.group.parent).toBe(actors.aiHeldRig);expect(normal(s).dot(world(camera).sub(position(s)).normalize())).toBeLessThan(0);}
+ advance(.5,{phase:'PLAYER_SHOOTING'});for(const s of playerCards()){expect(s.group.parent).toBe(scene);expect(normal(s).y).toBeLessThan(-.98);expect(s.group.userData.tableFaceUp).toBe(false);}
+});
+it('assigns walking and restraint cutting to reachable guards while the Host remains seated',()=>{
+ for(const stage of ['guard-approach','opponent-unhood','cut-opponent','cut-player','guard-exit'] as const){openingStage(stage,.8);expect(actors.host.position.toArray()).toEqual([-.72,.45,.12]);if(stage.startsWith('cut-')){expect(actors.cutter.parent).toBe(actors.guards[0].rig.arms.right.hand);expect(actors.guards[0].rig.arms.right.diagnostics.relocateRequired,stage+': '+JSON.stringify(actors.guards[0].rig.arms.right.diagnostics)).toBe(false);}}
+});
+
+it('makes PEEK windows readable through card/deck glances and visibly returns before they close',()=>{
+ settle();const away={away:true,returning:false,amount:1,direction:1};advance(.6,{roomNumber:2,attention:{host:away,captive:away,window:true}});
+ expect(new THREE.Vector3(...actors.host.userData.gazeTarget).distanceTo(world(actors.deck))).toBeLessThan(.002);expect(new THREE.Vector3(...actors.captive.userData.gazeTarget).distanceTo(world(actors.aiHeldRig))).toBeLessThan(.015);
+ advance(.3,{attention:{host:{...away,returning:true},captive:{...away,returning:true},window:true}});expect(actors.host.userData.gazeTarget).toEqual(world(camera).toArray());expect(actors.captive.userData.gazeTarget).toEqual(world(camera).toArray());
 });

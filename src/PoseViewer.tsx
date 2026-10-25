@@ -1,3 +1,4 @@
+import {tableAudio} from './audio';
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { createActors, type ActorState } from './scene/actors';
@@ -13,7 +14,7 @@ export const POSE_CASES = [
   { pose: 'player-hold-to-pull', room: 1 as const, label: 'Player · hold to pull' },
   { pose: 'host-forced-shot', room: 1 as const, label: 'Host · forced shot (front = seated view)' },
   { pose: 'player-peek', room: 1 as const, label: 'Player · PEEK' },
- ...['host-speaking','hood-on','hood-mid-removal','hood-off','player-empty-hand','host-open-hand'].map(pose=>({pose,room:1 as const,label:pose.replaceAll('-',' ')})),
+ ...['host-seated','opponent-card-hand','pickup-player','pickup-ai','pickup-host','gaze-test','host-speaking','hood-on','hood-mid-removal','hood-off','player-empty-hand','host-open-hand'].map(pose=>({pose,room:1 as const,label:pose.replaceAll('-',' ')})),
 
 ];
 export type PoseSelection = { pose: string; room: 1 | 2 | 3; view: 'front' | 'side'; pixel: boolean; animate: boolean; time: number };
@@ -89,6 +90,7 @@ export function measurePose(rig: RigLike | undefined, target: THREE.Object3D, gu
 
 declare global {
   interface Window {
+    __playPoseSound?:(side:number)=>void;
     __poseViewer?: { ready: boolean; selection: PoseSelection; metrics: PoseMetrics | null; cases: typeof POSE_CASES };
     __poseCaptureReady?: boolean;
     __setPoseView?: (selection: Partial<PoseSelection>) => void;
@@ -139,6 +141,7 @@ export default function PoseViewer() {
     const productionCamera = new THREE.PerspectiveCamera(68, 16 / 9, .055, 30); productionCamera.position.set(0, 1.2, 1.05); productionCamera.rotation.x = -.12; world.add(productionCamera);
     const camera = new THREE.PerspectiveCamera(39, 1, .02, 30);
     const actors = createActors(world, productionCamera) as DebugActors;
+    window.__playPoseSound=(side:number)=>{tableAudio.init();const sound={id:`debug:${Date.now()}`,at:Date.now(),source:'positioned-test',position:[side*2,1.2,-.2] as const,loudness:1};actors.setDebugSound(sound);tableAudio.playAmbient({id:sound.id,kind:'pipe',startedAt:sound.at,duration:1400,loud:true,direction:side,seed:31,position:sound.position});setSelection(s=>({...s,pose:'gaze-test',animate:true}));};
     const hemisphere = new THREE.HemisphereLight(0xe0e6d4, 0x343c35, 1.3); world.add(hemisphere);
     const key = new THREE.DirectionalLight(0xffe9ca, 3.0); key.position.set(1, 4, 4); world.add(key);
     const fill = new THREE.DirectionalLight(0xb9d4d0, 1.5); fill.position.set(-3, 2, -1); world.add(fill);
@@ -160,7 +163,7 @@ export default function PoseViewer() {
         if (changed) actors.setDebugPose(state.pose, state.room);
         const time = state.animate ? now / 1000 : state.time;
         productionCamera.aspect=width/height;productionCamera.updateProjectionMatrix();
-        productionCamera.position.set(0,1.2,1.05);productionCamera.rotation.set(-.12,0,0);
+        productionCamera.position.set(0,1.2,1.05);productionCamera.rotation.set(-.12,0,0);if(state.pose==='host-forced-shot')productionCamera.lookAt(-.72,1.22,.12);
         if(state.pose==='player-peek'){
           productionCamera.position.x-=.16;productionCamera.position.z-=.14;
           productionCamera.lookAt(new THREE.Vector3(...playerPeekDeck(.5).position));
@@ -170,6 +173,7 @@ export default function PoseViewer() {
         const inspected = actors.debugTarget ?? actors.captive;
         const bounds = visibleBounds(inspected);
         if (['host-sliding', 'host-dealing'].includes(state.pose) && actors.gun.visible) bounds.union(visibleBounds(actors.gun));
+        if(state.pose.startsWith('pickup-'))bounds.union(visibleBounds(actors.gun));
         if(state.pose==='player-card-hand')bounds.union(visibleBounds(actors.heldRig));
         if (bounds.isEmpty()) bounds.setFromCenterAndSize(new THREE.Vector3(0, .9, 0), new THREE.Vector3(.8, 1.8, .8));
         const center = bounds.getCenter(new THREE.Vector3()), size = bounds.getSize(new THREE.Vector3());
@@ -186,11 +190,11 @@ export default function PoseViewer() {
         const h = state.pixel ? 360 : Math.round(height), w = Math.round(h * width / height);
         renderer.setSize(w, h, false); target.setSize(w, h); canvas.style.imageRendering = state.pixel ? 'pixelated' : 'auto';
         canvas.dataset.pose = state.pose; canvas.dataset.room = String(state.room); canvas.dataset.view = state.view; canvas.dataset.pixel = String(state.pixel);
-        material.uniforms.forcedContact.value=state.pose==='host-forced-shot'?1:0;
+        material.uniforms.forcedContact.value=0;
         if (state.pixel) { renderer.setRenderTarget(target); renderer.render(world, camera); renderer.setRenderTarget(null); material.uniforms.time.value = time; renderer.render(post, postCamera); }
         else { renderer.setRenderTarget(null); renderer.render(world, camera); }
         const rigs = actors.skeletons;
-        const rig = state.pose.startsWith('host-') ? rigs?.host : state.pose.startsWith('guard-') ? rigs?.guards[0] : state.pose.startsWith('player-') ? rigs?.player : rigs?.captive;
+        const rig = state.pose==='pickup-player'?rigs?.player:state.pose==='pickup-ai'?rigs?.captive:state.pose==='pickup-host'?rigs?.host:state.pose.startsWith('host-') ? rigs?.host : state.pose.startsWith('guard-') ? rigs?.guards[0] : state.pose.startsWith('player-') ? rigs?.player : rigs?.captive;
         const currentMetrics = measurePose(rig, inspected, actors.gun, state);
         window.__poseViewer = { ready: true, selection: state, metrics: currentMetrics, cases: POSE_CASES }; window.__poseCaptureReady = true;
         if (changed || dirty) setMetrics(currentMetrics);
@@ -200,7 +204,7 @@ export default function PoseViewer() {
     }
     frame = requestAnimationFrame(animate);
     return () => {
-      cancelAnimationFrame(frame); resize.disconnect();
+      cancelAnimationFrame(frame); resize.disconnect();delete window.__playPoseSound;tableAudio.playAmbient(null);
       const textures = new Set<THREE.Texture>(), materials = new Set<THREE.Material>(), geometries = new Set<THREE.BufferGeometry>();
       world.traverse(object => {
         if (!(object instanceof THREE.Mesh || object instanceof THREE.LineSegments)) return;
@@ -220,6 +224,6 @@ export default function PoseViewer() {
     <header><div><span className="pose-eyebrow">LAST HAND · DEVELOPMENT ONLY</span><h1>Production pose inspection</h1><p>Actual game skeletons, authored poses and shared revolver. Front/side × clear/pixel; forced-shot front uses the seated camera.</p></div><a href="/">Return to game</a></header>
     <nav aria-label="Pose viewer controls"><button onClick={() => chooseCase(index - 1)}>Previous</button><label>Pose<select value={index} onChange={event => chooseCase(Number(event.target.value))}>{POSE_CASES.map((item, i) => <option key={`${item.room}-${item.pose}`} value={i}>{String(i + 1).padStart(2, '0')} · {item.label}</option>)}</select></label><button onClick={() => chooseCase(index + 1)}>Next</button><label>View<select value={selection.view} onChange={event => setSelection(previous => ({ ...previous, view: event.target.value as PoseSelection['view'] }))}><option value="front">Front</option><option value="side">Side</option></select></label><label className="pose-check"><input type="checkbox" checked={selection.pixel} onChange={event => setSelection(previous => ({ ...previous, pixel: event.target.checked }))}/>Pixel effect</label><label className="pose-check"><input type="checkbox" checked={selection.animate} onChange={event => setSelection(previous => ({ ...previous, animate: event.target.checked }))}/>Animate</label></nav>
     <section className="pose-inspection"><div className="pose-stage" ref={mount} aria-label="Production pose inspection render"/>{error && <p role="alert">{error}</p>}<aside><h2>{POSE_CASES[index].label}</h2><p className="pose-view-label">{selection.view.toUpperCase()} · PIXEL {selection.pixel ? 'ON' : 'OFF'}</p><ul>{checks.map(([label, pass]) => <li key={label}><span>{label}</span><b className={pass === null ? '' : pass ? 'check-pass' : 'check-fail'}>{pass === null ? 'N/A' : pass ? 'PASS' : 'FAIL'}</b></li>)}</ul>{metrics && <><p>{metrics.measuredSegments} measured segments · max length error {metrics.maxLengthError.toExponential(1)} m</p>{metrics.arms.map(arm => <div className="pose-arm" key={arm.side}><h3>{arm.side} arm</h3><p>Upper {arm.upper.toFixed(3)} m · forearm {arm.forearm.toFixed(3)} m<br/>Elbow {arm.elbow.toFixed(1)}° · outside torso {(arm.lateral * 100).toFixed(1)} cm<br/>Reach {arm.targetRatio === null ? 'unknown' : `${(arm.targetRatio * 100).toFixed(1)}%`} · requested {arm.requestedRatio === null ? 'unknown' : `${(arm.requestedRatio * 100).toFixed(1)}%`}</p></div>)}<p>Gun parent: {metrics.gunParent || 'scene'}<br/>Skin material lightness: {metrics.skinLightness === null ? 'unknown' : metrics.skinLightness.toFixed(2)}</p></>}<p className="pose-note">Wire outline marks the 0.75 m table. Geometry checks accompany visual review; material lightness alone does not establish correct lighting or grip.</p></aside></section>
-    <footer>{index + 1} / {POSE_CASES.length} cases · query controls: pose, room, view, pixel, time</footer>
+    <div className="pose-sound-controls"><button onClick={()=>window.__playPoseSound?.(-1)}>Play sound on left</button><button onClick={()=>window.__playPoseSound?.(1)}>Play sound on right</button><label>Pose time <input aria-label="Pose time" type="range" min="0" max="1.5" step=".025" value={selection.time} onChange={e=>setSelection(s=>({...s,time:Number(e.target.value),animate:false}))}/></label></div><footer>{index + 1} / {POSE_CASES.length} cases · query controls: pose, room, view, pixel, time</footer>
   </main>;
 }

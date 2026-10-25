@@ -6,7 +6,7 @@ export const SEAT_HEIGHT = .450;
 export const CARD_WIDTH = .100;
 export const CARD_HEIGHT = .140;
 export const TABLE_CARD_Y = .760;
-export const DECK_POSITION = [-.61, .778, -.06] as const;
+export const DECK_POSITION = [-.43, .778, -.24] as const;
 /** Bring the whole pack within the seated player's reach before a corner lift. */
 export function playerPeekDeck(progress: number): { slide: number; position: [number, number, number] } {
   const smooth = (x: number) => { const t=Math.max(0,Math.min(1,x));return t*t*(3-2*t); };
@@ -15,8 +15,8 @@ export function playerPeekDeck(progress: number): { slide: number; position: [nu
 }
 export const GUN_REST = [0, .780, 0] as const;
 export const GUN_PICKUP = {
-  ai: [.48, .780, -.50] as const,
-  player: [.48, .780, .50] as const,
+  ai: [0, .780, 0] as const,
+  player: [0, .780, 0] as const,
 };
 /** The weapon slides alongside, never through, a complete laid-out hand. */
 export const GUN_FLAT_ROTATION = [-Math.PI / 2, 0, 0] as const;

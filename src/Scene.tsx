@@ -1,3 +1,4 @@
+import {pickupPose} from './pickup';
 import type { GunTransfer } from './gunTransfer';
 import { createCharacter } from './scene/skeleton';
 import type { Attention } from './attention';
@@ -390,8 +391,10 @@ export default function Scene(props: SceneProps) {
         const facing = camera.quaternion.clone(); camera.lookAt(deckLook);
         camera.quaternion.slerpQuaternions(facing, camera.quaternion.clone(), Math.min(1,leanPeek*2));
       }
-      const contact=state.phase==='HOST_FORCE_SHOT'&&state.forceShotAt!=null?THREE.MathUtils.smoothstep((epoch-state.forceShotAt)/1000,1.1,1.35):0;
-      camera.rotation.y-=contact*.055;
+      const contact=state.phase==='HOST_FORCE_SHOT'&&state.forceShotAt!=null?THREE.MathUtils.smoothstep((epoch-state.forceShotAt)/1000,2.4,2.8):0;
+      if(state.gunTransfer?.side==='player'&&state.gunTransfer.owner!=='host'){const p=THREE.MathUtils.clamp((epoch-state.gunTransfer.startedAt)/state.gunTransfer.duration,0,1),lean=pickupPose(state.gunTransfer.stage==='return'?1-p:p).lean;camera.position.z-=.15*lean;camera.rotation.x-=.35*lean;}
+      if(state.phase==='HOST_FORCE_SHOT'||state.forceShotAt!=null&&!!state.gunTransfer){const before=camera.quaternion.clone();camera.lookAt(-.72,1.22,.12);camera.quaternion.slerpQuaternions(before,camera.quaternion.clone(),THREE.MathUtils.smoothstep((epoch-(state.forceShotAt??epoch))/1000,.2,1.2));}
+
       camera.updateMatrixWorld(true);
       room.update(time, dt, state.danger, state.suspense, impulse, event, epoch, {
         roomNumber: state.roomNumber, phase: state.phase === 'GAME_OVER' && winPose ? 'ENDING_WIN' : state.phase,
@@ -400,9 +403,10 @@ export default function Scene(props: SceneProps) {
       const hostVoiceLevel = tableAudio.getVoiceLevel('host'), captiveVoiceLevel = tableAudio.getVoiceLevel('captive');
       const voiceLevel = captiveVoiceLevel;
       const heartbeat = tableAudio.getHeartbeatLevel();camera.rotation.z+=heartbeat*.0015*(motionPreference.matches?.2:1);
-      const shotProgress=state.phase==='PLAYER_SHOOTING'?state.triggerProgress??0:state.phase==='HOST_FORCE_SHOT'?Math.min(1,(epoch-(state.forceShotAt??epoch))/2500*.85):state.phase==='AI_SHOOTING'&&state.aiShotStartedAt?Math.min(1,(epoch-state.aiShotStartedAt)/Math.max(1,(state.aiShotDurationMs??2000)-1000)*.85):0;
+      const shotProgress=state.phase==='PLAYER_SHOOTING'?state.triggerProgress??0:state.phase==='HOST_FORCE_SHOT'?Math.min(1,(epoch-(state.forceShotAt??epoch))/3200*.85):state.phase==='AI_SHOOTING'&&state.aiShotStartedAt?Math.min(1,(epoch-state.aiShotStartedAt)/Math.max(1,(state.aiShotDurationMs??2000)-1000)*.85):0;
       tableAudio.setSoundState({active:state.phase!=='START'&&!state.dead,fired:state.chambersFired??0,room:roomNumber,progress:shotProgress,holding:!!state.triggerHeld,hesitating:state.phase==='AI_SHOOTING',stress:state.stress??.2,nervous:roomNumber===1,speaking:!!state.speaker});
-      actors.update(time, dt, { ...state, roomNumber, event, voiceLevel, hostVoiceLevel, captiveVoiceLevel, reducedMotion: motionPreference.matches });
+      actors.update(time, dt, { ...state,worldSound:tableAudio.getWorldSound(), roomNumber, event, voiceLevel, hostVoiceLevel, captiveVoiceLevel, reducedMotion: motionPreference.matches });
+      tableAudio.setEmitter('gun',actors.gun.getWorldPosition(new THREE.Vector3()).toArray());
       tableAudio.setListener([camera.position.x,camera.position.y-1.2,camera.position.z-1.05],camera.getWorldDirection(new THREE.Vector3()).toArray(),new THREE.Vector3(0,1,0).applyQuaternion(camera.quaternion).toArray());
       for(const [speaker,head]of [['host',actors.hostHead],['captive',actors.captiveHead]] as const)tableAudio.setVoicePosition(speaker,head.getWorldPosition(new THREE.Vector3()).sub(new THREE.Vector3(0,1.2,1.05)).toArray());
       const seen = actors.captiveHead.getWorldPosition(captiveScreen).project(camera);
@@ -419,7 +423,7 @@ export default function Scene(props: SceneProps) {
       monitors.update(state, time, epoch);
       const signalLost = (state.phase === 'ENDING_DEATH' && state.storyStage === 'no-signal') || (state.phase === 'GAME_OVER' && state.dead === 'player');
       monitors.setSignalLost(signalLost);
-      postMaterial.uniforms.forcedContact.value=contact;
+      postMaterial.uniforms.forcedContact.value=0;
       postMaterial.uniforms.triggerDarkening.value = contact>0 ? .7*contact : state.phase === 'PLAYER_SHOOTING' ? Math.max(0, Math.min(1, state.triggerProgress ?? 0)) : 0;
       postMaterial.uniforms.heartbeatPulse.value = heartbeat * (motionPreference.matches ? .2 : 1);
       postMaterial.uniforms.hoodCovered.value = hood.covered;

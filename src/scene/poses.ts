@@ -16,18 +16,13 @@ export const POSES = {
   'reaching-cards':{...seated([.18,0,0]),right:arm(1,[.10,.315,.48],.06)},
   'holding-revolver':{...seated([.05,0,0]),right:{...arm(1,[.13,.36,.32],1),wrist:[-.65,0,.12] as Triple}},
   'self-shot':{...seated(),raisedElbow:true,right:{...arm(1,[.331,.6333641386247653,.076],1),pole:[.5,.2,-.25] as Triple,wrist:[-2*Math.PI/3,0,Math.PI/2] as Triple}},
-  'host-idle':standing(),
-  'host-dealing':{...standing(),spine:[.24,0,0] as Triple,right:{...arm(1,[.12,.15,.32],.15),wrist:[1.1,0,0] as Triple}},
-  'host-sliding':{...standing(),spine:[.32,0,0] as Triple,right:{...arm(1,[.12,.15,.38],.30),wrist:[1.1,0,0] as Triple}},
+  'host-idle':seated(),
+  'host-dealing':{...seated(),spine:[.24,0,0] as Triple,right:{...arm(1,[.10,.315,.35],.15),wrist:[1.1,0,0] as Triple}},
+  'host-sliding':{...seated(),spine:[.32,0,0] as Triple,right:{...arm(1,[.10,.315,.40],.30),wrist:[1.1,0,0] as Triple}},
   'guard-walking':{...standing(),walk:true,left:{...arm(-1,[-.22,.075,0]),wrist:[1.1,0,0] as Triple},right:{...arm(1,[.22,.075,0]),wrist:[1.1,0,0] as Triple}},
   'player-card-hand':{...seated(),left:{...arm(-1,[-.10,.35,.38],.7),wrist:[-.22,0,.16] as Triple}},
   'player-hold-to-pull':{...seated(),right:{...arm(1,[.12,.40,.38],1),wrist:[-.3,0,0] as Triple}},
 } satisfies Record<string,JointPose>;
 export type PoseName = keyof typeof POSES;
 export const POSE_NAMES = Object.keys(POSES) as PoseName[];
-/** Camera-relative staging; the arm still uses the same fixed-bone IK limits. */
-export const FORCED_SHOT = {
-  root: [-.9,-.50,.20] as Triple, turn:.60,
-  muzzle: [-.16,.012,-.15] as Triple, cant:0, walkSeconds:1.1,
-} as const;
-export type DebugPoseName = PoseName | 'host-forced-shot' | 'player-peek' | 'hood-on' | 'hood-mid-removal' | 'hood-off' | 'player-empty-hand' | 'host-open-hand' | 'host-speaking';
+export type DebugPoseName = PoseName | 'host-forced-shot' | 'player-peek' | 'hood-on' | 'hood-mid-removal' | 'hood-off' | 'player-empty-hand' | 'host-open-hand' | 'host-speaking' | 'host-seated' | 'opponent-card-hand' | 'pickup-player' | 'pickup-ai' | 'pickup-host' | 'gaze-test';
