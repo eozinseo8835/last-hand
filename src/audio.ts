@@ -1,3 +1,4 @@
+import type {ReactionSound} from './reactions';
 import type {WorldSound,WorldPosition} from './worldSound';
 import { SoundStage, type MixState } from './soundStage';
 import { CONFIG } from './game';
@@ -722,6 +723,19 @@ export class TableAudio {
     envelope.gain.setValueAtTime(volume, start); envelope.gain.exponentialRampToValueAtTime(.0001, start + duration);
     source.connect(envelope); envelope.connect(layer.gain);
     this.ownSource(layer, source, [envelope]); source.start(start); source.stop(start + duration);
+  }
+  /** Reactions reuse the existing procedural effects bus and positioned emitter. */
+  playReaction(kind:ReactionSound,position:WorldPosition){
+    this.emitWorldSound(`reaction:${kind}`,position,kind==='thud'?.9:kind==='slap'?.5:.2);
+    const ctx=this.context;if(!ctx||!this.master||this.muted||ctx.state!=='running')return;
+    const layer=this.makeLayer(this.master),now=ctx.currentTime,random=voiceRandom(this.soundSeed(`reaction:${kind}:${++this.revolverSerial}`));
+    this.positionLayer(layer,position[0]<0?-1:1,undefined,position);
+    if(kind==='thud'||kind==='slap'||kind==='tap'){
+      this.noise(layer,now,kind==='thud'?.16:.07,kind==='thud'?.18:kind==='slap'?.08:.02,kind==='thud'?900:2200,random,'lowpass');
+      this.resonance(layer,now,kind==='thud'?.30:.10,kind==='thud'?.14:.025,kind==='thud'?95:220,45);
+    }else if(kind==='exhale')this.noise(layer,now,.48,.025,850,random,'bandpass',true);
+    else for(const offset of kind==='sob'?[0,.29]:[0,.17,.36])this.noise(layer,now+offset,kind==='sob'?.25:.13,.025,kind==='sob'?700:1100,random,'bandpass',true);
+    layer.closed=true;
   }
   playContact(kind: string, stress: number) {
     const ctx = this.context;

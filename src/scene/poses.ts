@@ -25,4 +25,4 @@ export const POSES = {
 } satisfies Record<string,JointPose>;
 export type PoseName = keyof typeof POSES;
 export const POSE_NAMES = Object.keys(POSES) as PoseName[];
-export type DebugPoseName = PoseName | 'host-forced-shot' | 'player-peek' | 'hood-on' | 'hood-mid-removal' | 'hood-off' | 'player-empty-hand' | 'host-open-hand' | 'host-speaking' | 'host-seated' | 'opponent-card-hand' | 'pickup-player' | 'pickup-ai' | 'pickup-host' | 'gaze-test';
+export type DebugPoseName = `reaction-${import('../reactions').ReactionKind}` | PoseName | 'host-forced-shot' | 'player-peek' | 'hood-on' | 'hood-mid-removal' | 'hood-off' | 'player-empty-hand' | 'host-open-hand' | 'host-speaking' | 'host-seated' | 'opponent-card-hand' | 'pickup-player' | 'pickup-ai' | 'pickup-host' | 'gaze-test';

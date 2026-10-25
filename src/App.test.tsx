@@ -21,7 +21,7 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 const actions = {
   start: vi.fn(), fold: vi.fn(), hit: vi.fn(), stand: vi.fn(), pullTrigger: vi.fn(),
   beginTriggerHold: vi.fn(), endTriggerHold: vi.fn(), spinCylinder: vi.fn(), peek: vi.fn(),
-  finishSpeech: vi.fn(), advanceOpening: vi.fn(), skipOpening: vi.fn(),
+  finishSpeech: vi.fn(),finishTyping:vi.fn(), advanceOpening: vi.fn(), skipOpening: vi.fn(),
 };
 function fixture(roomNumber: RoomNumber = 1) {
   return {
@@ -77,7 +77,7 @@ describe('campaign speaker presentation', () => {
 
   it('routes a subtitle skip through the engine without starting a second speaker', () => {
     render(); act(() => container.querySelector<HTMLButtonElement>('.dialogue')!.click());
-    expect(actions.finishSpeech).toHaveBeenCalledTimes(1);
+    expect(actions.finishSpeech).not.toHaveBeenCalled();expect(actions.finishTyping).toHaveBeenCalledWith(true);act(()=>container.querySelector<HTMLButtonElement>('.dialogue')!.click());expect(actions.finishSpeech).toHaveBeenCalledTimes(1);
     expect(tableAudio.stopVoice).toHaveBeenCalled();
     expect(tableAudio.startVoice).toHaveBeenCalledTimes(1); expect(container.querySelectorAll('.dialogue')).toHaveLength(1);
   });
@@ -132,4 +132,11 @@ describe('Big Update 2 decision and trigger HUD', () => {
     expect(container.querySelector('.host-enforcement')).not.toBeNull();
     expect(container.querySelector('.spin-button')).toBeNull(); expect(container.querySelector('.trigger-countdown')).toBeNull();
   });
+});
+
+it('opens a last-twenty speaker log with L or LOG without blocking gameplay, and offers text speed',()=>{
+ Object.assign(game,{dialogueLog:Array.from({length:22},(_,i)=>({id:i,name:i%2?'THE HOST':'THE NERVOUS MAN',text:`Line ${i}`,speaker:i%2?'host':'captive'}))});render();
+ act(()=>window.dispatchEvent(new KeyboardEvent('keydown',{code:'KeyL',key:'l'})));expect(container.querySelectorAll('#dialogue-log li')).toHaveLength(20);expect(container.querySelector('#dialogue-log')!.textContent).not.toContain('Line 0');expect(container.querySelector('#dialogue-log li b')?.textContent).toBe('THE NERVOUS MAN');
+ act(()=>button('HIT').click());expect(actions.hit).toHaveBeenCalledTimes(1);act(()=>window.dispatchEvent(new KeyboardEvent('keydown',{code:'KeyL',key:'l'})));expect(container.querySelector('#dialogue-log')).toBeNull();act(()=>button('LOG').click());expect(container.querySelector('#dialogue-log')).toBeTruthy();
+ expect([...container.querySelectorAll('select[aria-label="Text speed"] option')].map(o=>o.textContent)).toEqual(['Slow','Normal','Fast']);
 });

@@ -1,3 +1,4 @@
+import type {Reaction} from './reactions';
 import type { GunTransfer } from './gunTransfer';
 import { createCharacter } from './scene/skeleton';
 import type { Attention } from './attention';
@@ -49,7 +50,7 @@ export type SceneProps = {
   ambientEvent?: AmbientEvent | null;
   aiShotStartedAt?: number | null;
   aiShotDurationMs?: number;
-  gunTransfer?: GunTransfer | null;
+  gunTransfer?: GunTransfer | null;reaction?:Reaction|null;
   attention?: Attention; stress?: number; caught?: 'host' | 'captive' | 'ai' | null;
   peekStartedAt?: number | null; forceShotAt?: number | null;
   onOpponentInView?: (visible: boolean) => void;
@@ -298,6 +299,7 @@ export default function Scene(props: SceneProps) {
     canvas.addEventListener('pointercancel', pointerUp);
     canvas.addEventListener('lostpointercapture', pointerUp);
 
+    const reactionSounds=new Set<number>();
     let frame = 0, lastTime = performance.now(), startTime = lastTime;
     let previousCards: Round | null | undefined;
     let previousRound = -1, previousRevealed = false, previousEffect: SceneProps['shotEffect'] = null;
@@ -405,6 +407,9 @@ export default function Scene(props: SceneProps) {
       const shotProgress=state.phase==='PLAYER_SHOOTING'?state.triggerProgress??0:state.phase==='HOST_FORCE_SHOT'?Math.min(1,(epoch-(state.forceShotAt??epoch))/3200*.85):state.phase==='AI_SHOOTING'&&state.aiShotStartedAt?Math.min(1,(epoch-state.aiShotStartedAt)/Math.max(1,(state.aiShotDurationMs??2000)-1000)*.85):0;
       tableAudio.setSoundState({active:state.phase!=='START'&&!state.dead,fired:state.chambersFired??0,room:roomNumber,progress:shotProgress,holding:!!state.triggerHeld,hesitating:state.phase==='AI_SHOOTING',stress:state.stress??.2,nervous:roomNumber===1,speaking:!!state.speaker});
       actors.update(time, dt, { ...state,worldSound:tableAudio.getWorldSound(), roomNumber, event, voiceLevel, hostVoiceLevel, captiveVoiceLevel, reducedMotion: motionPreference.matches });
+      const reactionImpact=actors.captive.userData.reactionImpact;
+      if(reactionImpact&&!reactionSounds.has(reactionImpact.id)){reactionSounds.add(reactionImpact.id);if(reactionSounds.size>64)reactionSounds.delete(reactionSounds.values().next().value!);tableAudio.playReaction(reactionImpact.sound,reactionImpact.position);}
+      camera.rotation.z+=actors.reactionShake*(motionPreference.matches?.25:1);camera.updateMatrixWorld(true);
       tableAudio.setEmitter('gun',actors.gun.getWorldPosition(new THREE.Vector3()).toArray());
       tableAudio.setListener([camera.position.x,camera.position.y-1.2,camera.position.z-1.05],camera.getWorldDirection(new THREE.Vector3()).toArray(),new THREE.Vector3(0,1,0).applyQuaternion(camera.quaternion).toArray());
       for(const [speaker,head]of [['host',actors.hostHead],['captive',actors.captiveHead]] as const)tableAudio.setVoicePosition(speaker,head.getWorldPosition(new THREE.Vector3()).sub(new THREE.Vector3(0,1.2,1.05)).toArray());

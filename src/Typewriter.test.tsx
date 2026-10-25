@@ -49,11 +49,11 @@ describe('spoken subtitle timing', () => {
     expect(displayed()).toBe('');
   });
 
-  it('fades on a skip and notifies the queue once, while natural completion leaves queue timing to the engine', () => {
+  it('finishes text on the first click and advances only on the second click', () => {
     const text = 'You know the rules.', onFinish = vi.fn();
     act(() => root.render(<Typewriter text={text} category="intro_rules" speaker="host" profile={HOST.voice} onFinish={onFinish}/>));
     advance(100); act(() => container.querySelector<HTMLButtonElement>('.dialogue')!.click());
-    expect(displayed()).toBe(text); expect(onFinish).toHaveBeenCalledTimes(1); expect(tableAudio.stopVoice).toHaveBeenCalled();
+    expect(displayed()).toBe(text); expect(onFinish).not.toHaveBeenCalled(); expect(tableAudio.stopVoice).toHaveBeenCalled();
     act(() => container.querySelector<HTMLButtonElement>('.dialogue')!.click()); expect(onFinish).toHaveBeenCalledTimes(1);
     const next = 'Then take your seat.';
     act(() => root.render(<Typewriter text={next} category="intro_rules" speaker="host" profile={HOST.voice} onFinish={onFinish}/>));
@@ -68,7 +68,7 @@ describe('spoken subtitle timing', () => {
     act(() => root.render(<Typewriter text={text} category="intro_rules" speaker="host" profile={{ ...HOST.voice }} onFinish={nextFinish}/>));
     expect(tableAudio.startVoice).toHaveBeenCalledTimes(1);
     act(() => container.querySelector<HTMLButtonElement>('.dialogue')!.click());
-    expect(oldFinish).not.toHaveBeenCalled(); expect(nextFinish).toHaveBeenCalledTimes(1);
+    expect(oldFinish).not.toHaveBeenCalled();expect(nextFinish).not.toHaveBeenCalled();act(()=>container.querySelector<HTMLButtonElement>('.dialogue')!.click());expect(nextFinish).toHaveBeenCalledTimes(1);
   });
   it('starts one murmur plan and reveals subtitles on that same clock', () => {
     const text = 'The room is patient.';

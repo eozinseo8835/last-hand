@@ -609,3 +609,8 @@ describe('Bug Update 1 single report and positioned world cues',()=>{
   audio.mute(true);audio.setEmitter('gun',[.3,1.1,.7]);audio.play('hammer');expect(audio.getWorldSound()).toMatchObject({position:[.3,1.1,.7],source:'hammer'});expect(Context.instances).toHaveLength(0);
  });
 });
+
+it('synthesizes only click-unlocked reaction impacts at the fist position through the existing mixer',()=>{
+ const at=[.22,.79,-.43] as const;audio.playReaction('thud',at);expect(Context.instances).toHaveLength(0);expect(audio.getWorldSound()).toMatchObject({source:'reaction:thud',position:at});
+ audio.init();const ctx=context(),before=ctx.nodes.length;audio.mute(true);audio.playReaction('slap',at);expect(ctx.nodes).toHaveLength(before);audio.mute(false);audio.playReaction('thud',at);expect(ctx.nodes.slice(before).some(n=>n.kind==='source')).toBe(true);expect(ctx.nodes.slice(before).some(n=>n.kind==='oscillator'&&n.frequency.setValueAtTime.mock.calls.some(c=>c[0]===95))).toBe(true);expect(audio.shotLog).toEqual([]);
+});

@@ -1,3 +1,4 @@
+import { TEXT_SPEEDS, type TextSpeed } from './readability';
 import { CONFIG } from './game';
 import type { VoiceProfile } from './campaign';
 
@@ -43,10 +44,11 @@ export function voiceParameters(category: string, danger = false, chambersFired 
 const VOWELS: readonly [number, number][] = [[350, 900], [420, 780], [620, 1150], [250, 650]];
 
 /** One clock drives both visible letters and nonverbal syllables; all times are milliseconds. */
-export function createVoicePlan(text: string, category: string, danger = false, chambersFired = 0, profile?: VoiceProfile): VoicePlan {
+export function createVoicePlan(text: string, category: string, danger = false, chambersFired = 0, profile?: VoiceProfile, textSpeed:TextSpeed='Normal'): VoicePlan {
   const seed = textSeed(text), random = voiceRandom(seed), parameters = voiceParameters(category, danger, chambersFired, profile);
   const steps: VoiceStep[] = [];
-  let at = 30 / parameters.speed, count = 0, letters = 0, group = 2 + Math.floor(random() * 2);
+  const letterMs=1000/TEXT_SPEEDS[textSpeed]/Math.max(.95,Math.min(1.05,parameters.speed));
+  let at = letterMs, count = 0, letters = 0, group = 2 + Math.floor(random() * 2);
   let pitch = parameters.pitch;
   for (const character of text) {
     count += character.length;
@@ -70,7 +72,7 @@ export function createVoicePlan(text: string, category: string, danger = false, 
     if (/[,;:]/.test(character)) pause = 140;
     // Treat an ellipsis as one long pause rather than pausing after every dot.
     if (/[.!?…]/.test(character) && text[count] !== '.') pause = character === '…' || text[count - 2] === '.' ? 360 : 280;
-    at += (30 + pause) / parameters.speed;
+    at += letterMs + pause / parameters.speed;
   }
   const last = steps.at(-1);
   return { steps, parameters, duration: last ? Math.max(at, last.at + (last.syllable?.duration ?? 0)) : 0, seed };

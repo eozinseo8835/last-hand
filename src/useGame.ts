@@ -1,3 +1,5 @@
+import {DialogueMemory,openingWords,readingHold,type TextSpeed} from './readability';
+import type {Reaction,ReactionKind} from './reactions';
 import { GUN_SLIDE_MS, GUN_SET_DOWN_MS, type GunTransfer } from './gunTransfer';
 import { attentionAt, canOpponentPeek, planAttention, type Attention, type AttentionPlan } from './attention';
 import { approachStress, stressTarget } from './bodyLanguage';
@@ -11,7 +13,7 @@ import { chooseRoundEvent, cosmeticRandom, freshAbilities } from './tension';
 import type { AbilityState, EventPlan, OpponentTell, RoundEvent, Side } from './tension';
 import { HOST, OPPONENTS, feedKillsForRound, feedsForRoom, finishRunStats, freshRunStats, opponentAction, opponentBreakdownCategory, opponentOpeningCategory, opponentTell, recordAbility, recordHand } from './campaign';
 import type { RoomNumber, RunStats } from './campaign';
-import { FINAL_HOST_LINE, OPENING_LINES, ROOM_ARRIVAL, SHORT_INTRO, chooseBeggingLine, chooseExchange, chooseHostLine, chooseOpponentLine, shouldExchange } from './campaignDialogue';
+import { HOST_DIALOGUE,OPPONENT_DIALOGUE,NERVOUS_BEGGING,FINAL_HOST_LINE, OPENING_LINES, ROOM_ARRIVAL, SHORT_INTRO, chooseExchange, chooseHostLine, shouldExchange } from './campaignDialogue';
 import type { HostCategory, SpeechLine } from './campaignDialogue';
 import { createVoicePlan } from './voice';
 import { OPENING_STAGES, TRANSFER_STAGES, stageDurationMs, tiesForStage, type CinematicMode, type CinematicStage, type CinematicState } from './cinematics';
@@ -21,6 +23,7 @@ export type Session = {
   phase: GamePhase; round: Round | null; roundNumber: number; folds: number;
   roomNumber: RoomNumber; guestsRemaining: number; feedDeaths: number[]; feedDeathSerial: number;
   speech: SpeechLine | null; speechQueue: SpeechLine[];
+  dialogueLog:Array<SpeechLine & {name:string}>;reaction:Reaction|null;
   introIndex: number; introShort: boolean; storyStage: string; stats: RunStats;
   revolver: Revolver; dialogue: string; dialogueCategory: DialogueCategory; dialogueDanger: boolean;
   dialogueChambersFired: number; revealed: boolean; result: HandWinner | null;
@@ -41,7 +44,7 @@ export type Session = {
 const initial = (): Session => ({
   phase: 'START', round: null, roundNumber: 0, folds: CONFIG.MAX_FOLDS,
   roomNumber: 1, guestsRemaining: 8, feedDeaths: [], feedDeathSerial: 0,
-  speech: null, speechQueue: [], introIndex: 0, introShort: false, storyStage: 'table', stats: freshRunStats(),
+  speech: null, speechQueue: [],dialogueLog:[],reaction:null, introIndex: 0, introShort: false, storyStage: 'table', stats: freshRunStats(),
   revolver: createRevolver(), dialogue: chooseDialogue('intro'), dialogueCategory: 'intro', dialogueDanger: false,
   dialogueChambersFired: 0, revealed: false, result: null,
   message: '', suspense: false, awaitingTrigger: false, hasHit: false, dead: null, shotEffect: null,
@@ -58,9 +61,11 @@ type PendingDeath = { id: string; room: RoomNumber; table: number; announce: boo
 let engineInstances = 0;
 
 /** The state machine owns gameplay and cancelable time; the scene only presents its public state. */
-export function useGame() {
+export function useGame(textSpeed:TextSpeed='Normal') {
   const [game, setGame] = useState<Session>(initial);
   const [instanceId] = useState(() => `${Date.now()}:${++engineInstances}`);
+  const currentTextSpeed=useRef(textSpeed);currentTextSpeed.current=textSpeed;
+  const dialogueMemory=useRef(new DialogueMemory()),typedAt=useRef(0),reactionSerial=useRef(0),lastSpokenOpening=useRef('');
   const current = useRef(game), mounted = useRef(true);
   const timers = useRef(new Set<Timer>()), holdTimers = useRef(new Set<Timer>()), drainTimers = useRef(new Set<Timer>());
   const eventStart = useRef<Timer | null>(null), eventEnd = useRef<Timer | null>(null), impatient = useRef<Timer | null>(null);
@@ -214,16 +219,49 @@ export function useGame() {
   function voiceFired(room: RoomNumber, fired: number) {
     return fired + 1 >= OPPONENTS[room].breakdownStart ? fired : 0;
   }
+  function contextualText(text:string){
+    const state=current.current;
+    if(text.includes('{playerTotal}')&&!state.revealed)return '';
+    return text.replaceAll('{pulls}',String(Math.max(0,state.revolver.currentChamber-1)))
+      .replaceAll('{folds}',String(state.folds)).replaceAll('{playerTotal}',String(state.round?handTotal(state.round.player):0))
+      .replaceAll('{upcard}',state.round?.ai[0]?.rank??'card');
+  }
+  function selectText(pool:readonly string[]){
+    const available=pool.map(contextualText).filter(t=>dialogueMemory.current.available(t));
+    return available.length?available[Math.min(available.length-1,Math.floor(cosmeticRandom()*available.length))]:'';
+  }
   function line(speaker: 'host' | 'captive', category: HostCategory | DialogueCategory, text: string): SpeechLine {
     const fired = Math.max(0, current.current.revolver.currentChamber - 1);
-    return { id: ++speechId.current, speaker, category, text,
+    let candidate=contextualText(text);
+    if(!dialogueMemory.current.available(candidate))candidate=selectText(speaker==='host'?HOST_DIALOGUE[category as HostCategory]??[]:OPPONENT_DIALOGUE[current.current.roomNumber][category as DialogueCategory]??[]);
+    if(candidate)dialogueMemory.current.reserve(candidate);
+    return { id: ++speechId.current, speaker, category, text:candidate,
       danger: speaker === 'captive' && current.current.revolver.currentChamber >= CONFIG.DANGER_CHAMBER,
       chambersFired: speaker === 'host' ? 0 : voiceFired(current.current.roomNumber, fired) };
   }
   function publishSpeech(next: SpeechLine | null) {
-    update({ speech: next, ...(next ? { dialogue: next.text,
-      dialogueCategory: next.speaker === 'captive' ? next.category as DialogueCategory : 'intro',
-      dialogueDanger: next.danger, dialogueChambersFired: next.chambersFired } : {}) });
+    if(next&&!next.text)return;
+    if(next&&openingWords(next.text)===lastSpokenOpening.current){const pool=next.speaker==='host'?HOST_DIALOGUE[next.category as HostCategory]:OPPONENT_DIALOGUE[current.current.roomNumber][next.category as DialogueCategory];const replacement=selectText((pool??[]).filter(text=>openingWords(contextualText(text))!==lastSpokenOpening.current));if(replacement){dialogueMemory.current.reserve(replacement);next={...next,text:replacement};}else return;}
+    if(next)lastSpokenOpening.current=openingWords(next.text);
+    const speech=next?{...next,textSpeed:currentTextSpeed.current}:null;
+    update({ speech, ...(speech ? { dialogue: speech.text,
+      dialogueCategory: speech.speaker === 'captive' ? speech.category as DialogueCategory : 'intro',
+      dialogueDanger: speech.danger, dialogueChambersFired: speech.chambersFired,
+      dialogueLog:[...current.current.dialogueLog,{...speech,name:speech.speaker==='host'?HOST.name:OPPONENTS[current.current.roomNumber].name}].slice(-20) } : {}) });
+    if(speech){const profile=speech.speaker==='host'?HOST.voice:OPPONENTS[current.current.roomNumber].voice;
+      const plan=createVoicePlan(speech.text,speech.category,speech.danger,speech.chambersFired,profile,speech.textSpeed);
+      typedAt.current=Date.now()+plan.duration;scheduleReadingEnd(speech);
+    }
+  }
+  function scheduleReadingEnd(speech:SpeechLine){
+    cancel(speechTimer.current);speechTimer.current=null;
+    if(current.current.phase==='OPENING'&&current.current.storyStage==='rules')return;
+    speechTimer.current=later(()=>{speechTimer.current=null;if(current.current.speech?.id===speech.id)finishSpeech();},Math.max(0,typedAt.current-Date.now())+readingHold(speech.text));
+  }
+  function finishTyping(skipped:boolean){const speech=current.current.speech;if(!speech)return;if(skipped)typedAt.current=Date.now();scheduleReadingEnd(speech);}
+  function react(kind:ReactionKind,duration=1500){
+    const state=current.current;if(state.dead||state.suspense||state.gunTransfer||['AI_SHOOTING','PLAYER_SHOOTING','HOST_FORCE_SHOT'].includes(state.phase))return;
+    update({reaction:{id:++reactionSerial.current,kind,room:state.roomNumber,startedAt:Date.now(),duration}});
   }
   function maybeSpeechIdle() {
     if (!current.current.speech && !speechEntries.current.length && speechGap.current === null) speechIdle.current?.();
@@ -233,17 +271,12 @@ export function useGame() {
     const entry = speechEntries.current.shift();
     update({ speechQueue: speechEntries.current.map(item => item.line) });
     if (!entry) { maybeSpeechIdle(); return; }
-    publishSpeech(entry.line);
-    const profile = entry.line.speaker === 'host' ? HOST.voice : OPPONENTS[current.current.roomNumber].voice;
-    const plan = createVoicePlan(entry.line.text, entry.line.category, entry.line.danger, entry.line.chambersFired, profile);
-    speechTimer.current = later(() => {
-      speechTimer.current = null;
-      if (current.current.speech?.id === entry.line.id) finishSpeech();
-    }, plan.duration + 500);
+    publishSpeech(entry.line);if(!current.current.speech)pumpSpeech();
   }
+
   function enqueue(entries: SpeechEntry[], replaceReactive = false) {
     if (replaceReactive) speechEntries.current = speechEntries.current.filter(entry => !entry.reactive);
-    speechEntries.current.push(...entries);
+    speechEntries.current.push(...entries.filter(entry=>entry.line.text));
     update({ speechQueue: speechEntries.current.map(entry => entry.line) });
     pumpSpeech();
   }
@@ -261,22 +294,19 @@ export function useGame() {
     tableAudio.stopVoice(); publishSpeech(null); update({ speechQueue: [] });
   }
   function hostSay(category: HostCategory, text?: string, urgent = false) {
-    const next = line('host', category, text ?? chooseHostLine(category, current.current.dialogue));
-    if (urgent) {
-      cancel(speechTimer.current); cancel(speechGap.current); speechTimer.current = null;
-      tableAudio.stopVoice(); publishSpeech(null);
-      speechEntries.current = [{ line: next, reactive: false }, ...speechEntries.current.filter(entry => !entry.reactive && entry.line.category !== 'waiting_for_trigger')];
-      update({ speechQueue: speechEntries.current.map(entry => entry.line) });
-      speechGap.current = later(() => { speechGap.current = null; pumpSpeech(); }, 100);
-    } else enqueue([{ line: next, reactive: false }]);
+    const next = line('host', category, text ?? selectText(HOST_DIALOGUE[category]));
+    if(!next.text)return;
+    if(urgent){speechEntries.current=[{line:next,reactive:false},...speechEntries.current.filter(entry=>!entry.reactive&&entry.line.category!=='waiting_for_trigger')];update({speechQueue:speechEntries.current.map(entry=>entry.line)});pumpSpeech();}
+    else enqueue([{line:next,reactive:false}]);
   }
   function say(requested: DialogueCategory, preserve = false) {
     const fired = Math.max(0, current.current.revolver.currentChamber - 1);
-    const category = ['opp_caught_player','caught_by_player','glance_away','distant_shot'].includes(requested) ? requested : opponentBreakdownCategory(current.current.roomNumber, requested, fired);
+    const category = ['opp_caught_player','caught_by_player','glance_away','distant_shot','player_loses_hand'].includes(requested) ? requested : opponentBreakdownCategory(current.current.roomNumber, requested, fired);
     const begging = current.current.roomNumber === 1 && requested === 'ai_loses_hand' && category === requested && cosmeticRandom() < .4;
-    const text = begging ? chooseBeggingLine(current.current.dialogue) : chooseOpponentLine(current.current.roomNumber, category, current.current.dialogue);
-    enqueue([{ line: line('captive', category, text), reactive: !preserve }], true);
+    const text=selectText(begging?NERVOUS_BEGGING:OPPONENT_DIALOGUE[current.current.roomNumber][category]);
+    if(text)enqueue([{line:line('captive',category,text),reactive:!preserve}],true);
   }
+
   function distantIsSafe() {
     const state = current.current;
     if (state.suspense || Date.now() < localShotUntil.current) return false;
@@ -375,8 +405,7 @@ export function useGame() {
     if (stage === 'cut-opponent') {
       const speech = line('host', 'cut_ties', chooseHostLine('cut_ties', current.current.dialogue));
       publishSpeech(speech);
-      const plan = createVoicePlan(speech.text, speech.category, false, 0, HOST.voice);
-      speechTimer.current = later(() => { speechTimer.current = null; if (current.current.speech?.id === speech.id) finishSpeech(); }, plan.duration + 500);
+
     }
     if (stage === 'cut-opponent' || stage === 'cut-player') later(() => tableAudio.playStory('snip'), duration * .94, storyTimers.current);
     if (stage === 'complete') {
@@ -537,6 +566,7 @@ export function useGame() {
     seenLoud.current.clear(); loudAt.current = reliefAt.current = -Infinity;
     clearTimers(); tableAudio.init(); tableAudio.stopVoice(); tableAudio.playAmbient(null);
     pendingDeaths.current = []; queuedDeaths.current.clear(); lastDistantAt.current = -Infinity; localShotUntil.current = 0;
+    dialogueMemory.current.reset();lastSpokenOpening.current='';
     runSerial.current++; localShotSerial.current = ambientSerial.current = 0;
     ambientDueAt.current = Date.now() + nextAmbientDelay();
     speechEntries.current = []; speechIdle.current = null; completedRounds.current.clear(); recordedHands.current.clear();
@@ -589,7 +619,7 @@ export function useGame() {
       else later(() => current.current.roomNumber < 3 ? transitionRoom() : endingWin(), 2400, storyTimers.current);
     }
     else {
-      later(() => wasForced ? hostSay('forced_shot') : say(current.current.revolver.currentChamber >= CONFIG.DANGER_CHAMBER ? 'danger' : shooter === 'ai' ? 'ai_survives_click' : 'player_survives_click'), 1000);
+      later(() => {react(shooter==='ai'?'survive':'player-click');wasForced?hostSay('forced_shot'):say(shooter==='ai'?'ai_survives_click':'player_survives_click',true);},GUN_SET_DOWN_MS+GUN_SLIDE_MS+50);
       later(() => {
         update({ forceShotAt: null });
         if (penaltyShot.current) { penaltyShot.current = false; update({ shotEffect: null, shotId: null }); enterDecision('The penalty is complete. Your hand continues.'); }
@@ -654,7 +684,7 @@ export function useGame() {
   function opponentShot() {
     update({ phase: 'AI_SHOOTING', suspense: true, awaitingTrigger: false, triggerHeld: false, triggerProgress: 0, aiShotStartedAt: null, aiShotDurationMs: null });
     slideGun('ai', 'to-shooter');
-    say('ai_loses_hand', true);
+    if(current.current.roomNumber!==3)say('ai_loses_hand', true);
     function hesitate() {
       tableAudio.play('tension');
       const fired = Math.max(0, current.current.revolver.currentChamber - 1);
@@ -696,6 +726,8 @@ export function useGame() {
     const playerBust = handScore(round.player).bust, aiBust = handScore(round.ai).bust;
     update({ phase: 'ROUND_RESULT', result, message: result === 'tie' ? 'PUSH — nobody shoots' : playerBust ? 'BUST — you lose the hand' : aiBust ? `${OPPONENTS[current.current.roomNumber].name} BUST — you win the hand` : result === 'player' ? 'You win the hand' : 'You lose the hand' });
     hostSay('round_result');
+    if(result==='player')react('loss');
+    else if(result==='ai'){react('relief');if(!playerBust)say('player_loses_hand',true);}
     if (result === 'tie') { say('push'); later(() => { completeRound(); sweep(); }, 2000); }
     else later(() => {
       if (result === 'player') opponentShot();
@@ -762,5 +794,5 @@ export function useGame() {
     }, CONFIG.PEEK_DURATION_MS);
   }
 
-  return { game, start, fold, hit, stand, pullTrigger, beginTriggerHold, endTriggerHold, spinCylinder, peek, finishSpeech, advanceOpening, skipOpening, setOpponentInView, forceShot };
+  return { game, finishTyping, start, fold, hit, stand, pullTrigger, beginTriggerHold, endTriggerHold, spinCylinder, peek, finishSpeech, advanceOpening, skipOpening, setOpponentInView, forceShot };
 }

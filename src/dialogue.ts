@@ -153,6 +153,7 @@ export const DIALOGUE = {
     'Let it pass.',
     'Enough of this.',
   ],
+  player_loses_hand: ['Keep your hands steady.', 'Take a breath first.', 'I cannot watch the pull.', 'Let me look down a moment.'],
   broken: [
     '...',
     '…',

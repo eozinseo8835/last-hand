@@ -160,3 +160,6 @@ Skeleton completion: forced-shot staging, PEEK visibility/reach, Host shuffle/de
 
 
 Latest presentation update: the Host stays seated, every shooter picks the same revolver up from the table center, cards use supported hand grips, and positioned sounds drive context-aware gaze. See the [Bug Update 1 changes, gunshot diagnosis and verification record](docs/bug-update-1.md).
+
+
+Small Update 2 adds readable subtitle pacing and text-speed settings, a live L/LOG dialogue history, rewritten human captive dialogue, and guarded reactions layered onto the Bug Update 2 rigs. See the [implementation and verification record](docs/small-update-2.md).

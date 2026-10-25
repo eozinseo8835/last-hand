@@ -5,9 +5,9 @@ import { measurePose, POSE_CASES, poseSelection } from './PoseViewer';
 
 describe('development production-pose inspection', () => {
   it('retains all original pose cases and adds the forced-shot and PEEK regressions', () => {
-    expect(POSE_CASES).toHaveLength(35);
-    for (const room of [1,2,3]) expect(POSE_CASES.filter(item=>item.room===room&&!item.pose.startsWith('host-')&&!item.pose.startsWith('guard-')&&!item.pose.startsWith('player-')&&!item.pose.startsWith('hood-')&&!item.pose.startsWith('pickup-')&&!['opponent-card-hand','gaze-test'].includes(item.pose))).toHaveLength(5);
-    expect(new Set(POSE_CASES.map(item=>`${item.room}:${item.pose}`)).size).toBe(35);
+    expect(POSE_CASES).toHaveLength(50);
+    for (const room of [1,2,3]) expect(POSE_CASES.filter(item=>item.room===room&&!item.pose.startsWith('host-')&&!item.pose.startsWith('guard-')&&!item.pose.startsWith('player-')&&!item.pose.startsWith('hood-')&&!item.pose.startsWith('pickup-')&&!item.pose.startsWith('reaction-')&&!['opponent-card-hand','gaze-test'].includes(item.pose))).toHaveLength(5);
+    expect(new Set(POSE_CASES.map(item=>`${item.room}:${item.pose}`)).size).toBe(50);
     expect(poseSelection('?pose=host-forced-shot')).toMatchObject({pose:'host-forced-shot'});
     expect(poseSelection('?pose=player-peek')).toMatchObject({pose:'player-peek'});
   });

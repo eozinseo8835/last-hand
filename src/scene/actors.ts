@@ -1,3 +1,4 @@
+import {reactionPose,type Reaction,type ReactionKind} from '../reactions';
 import {smooth} from '../pickup';
 import {soundReaction,type WorldSound} from '../worldSound';
 import {lookAtTarget} from './gaze';
@@ -38,7 +39,7 @@ export type ActorState = {
   peekedCard?: Card | null;
   event?: RoundEvent | null;
   roomNumber?: 1 | 2 | 3;
-  worldSound?:WorldSound|null;
+  worldSound?:WorldSound|null;reaction?:Reaction|null;
   addressedTo?: 'host'|'captive'|'player';
   speaker?: 'host' | 'captive' | null;
   hostVoiceLevel?: number;
@@ -644,9 +645,51 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     hostChair.visible=target===host;chair.visible=target===captive;deck.visible=false;gun.visible=false;heldRig.visible=false;captiveHood.visible=false;cutter.visible=false;
     for(const slot of cardSlots)slot.group.visible=false;
   }
+  let reactionShake=0;
+  function applyReaction(state:ActorState,epoch:number){
+    const pose=reactionPose(state.reaction,epoch,{phase:state.phase,suspense:state.suspense,dead:!!state.dead,holding:gunHolder!==null||!!state.gunTransfer});
+    reactionShake=0;captive.userData.reactionActive=pose.active;captive.userData.reactionImpact=null;captive.userData.jawClench=0;
+    head.traverse(o=>{if(o.name==='Mouth')o.rotation.x=0;});
+    if(!pose.active||!state.reaction)return pose;
+    const age=pose.age,kind=pose.kind,room=state.reaction.room,envelope=Math.sin(Math.min(1,age/(state.reaction.duration/1000))*Math.PI);
+    if(kind==='loss'){
+      const impact=pose.impact,raise=Math.sin(Math.min(1,age/impact)*Math.PI/2),settle=smooth(impact,1.4,age);
+      let wrist=new THREE.Vector3(.22,.79,-.43),palm=new THREE.Quaternion();
+      if(room===1){wrist.y+=.17*raise*(1-settle)*(1-smooth(impact-.18,impact,age));captiveRig.setGrip('right',1);}
+      else if(room===2){
+        const face=head.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(.10,-.015-age*.07,.09));
+        wrist.lerp(face,smooth(0,.2,age)*(1-smooth(.65,.95,age)));palm.setFromEuler(new THREE.Euler(-.3,0,0));
+        captiveRig.setGrip('right',.22);captive.userData.jawClench=envelope;head.traverse(o=>{if(o.name==='Mouth')o.rotation.x=-envelope*.35;});
+      }else {wrist.y+=.018*Math.sin(Math.min(1,age/impact)*Math.PI);captiveRig.setGrip('right',.20);captiveRig.arms.right.fingers[0].forEach(j=>j.rotation.x=-.12);}
+      solveWorld(captiveRig,'right',wrist,palm,room===2,true);
+      // Additive, analytic impulses start from freshly computed table transforms each frame.
+      const strength=room===1?1:room===2?.45:.10,jump=Math.abs(pose.ring)*.009*strength;
+      for(const slot of cardSlots)if(slot.active&&slot.group.visible&&slot.group.parent===scene)slot.group.position.y+=jump;
+      if(gunHolder===null){gun.position.y+=Math.abs(pose.ring)*.002*strength;gun.rotation.z+=pose.ring*.018*strength;}
+      reactionShake=pose.ring*.002*strength;
+      if(age>=impact)captive.userData.reactionImpact={id:state.reaction.id,sound:pose.sound,position:captiveRig.arms.right.hand.getWorldPosition(new THREE.Vector3()).toArray()};
+    }else if(kind==='survive'){
+      captiveRig.chest.rotation.x+=envelope*.035;captiveRig.arms.right.shoulder.rotation.x+=envelope*.045;
+      if(age>.12)captive.userData.reactionImpact={id:state.reaction.id,sound:pose.sound,position:head.getWorldPosition(new THREE.Vector3()).toArray()};
+    }else if(kind==='player-click'){
+      captiveRig.chest.rotation.z+=Math.sin(Math.min(1,age/.3)*Math.PI)*.025;
+    }else if(kind==='relief'){
+      captiveRig.chest.rotation.x+=envelope*.025;
+      if(age>.12)captive.userData.reactionImpact={id:state.reaction.id,sound:pose.sound,position:head.getWorldPosition(new THREE.Vector3()).toArray()};
+    }
+    if(!cardRevealed&&cardSlots.some(slot=>slot.active&&slot.owner==='ai'))holdCaptiveFan();
+    captiveRig.constrainFingers();return pose;
+  }
   function debugUpdate(time:number) {
     hideHostBody(false);
     const pose=debugPose!;
+    if(pose.startsWith('reaction-')){
+      const saved=debugPose;debugPose=null;setCards(demo,true);
+      const kind=pose.slice(9) as ReactionKind,age=time%2.5;
+      update(time,.05,{phase:'ROUND_RESULT',roundNumber:1,revealed:true,suspense:false,dead:null,shotEffect:null,roomNumber:debugRoom,
+        reaction:{id:Math.floor(time/2.5)+1,kind,room:debugRoom,startedAt:Date.now()-age*1000,duration:kind==='glare'?1800:1500}});
+      debugPose=saved;playerHands.visible=heldRig.visible=false;return captive;
+    }
     if(['host-forced-shot','player-peek','host-dealing','hood-on','hood-mid-removal','hood-off','player-empty-hand','host-open-hand','host-speaking','host-seated','opponent-card-hand','gaze-test','pickup-player','pickup-ai','pickup-host'].includes(pose)) {
       const saved=debugPose;debugPose=null;
       const isPickup=pose.startsWith('pickup-'),isCapGrip=pose==='opponent-card-hand'||pose==='gaze-test',pickupOwner=pose==='pickup-ai'?'ai':pose==='pickup-host'?'host':'player';
@@ -820,6 +863,7 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     animateCards(time,dt,state);
     if(hiddenCards){heldRig.visible=false;cardSlots.forEach(slot=>{slot.group.visible=false;slot.group.userData.held=false;slot.group.userData.tableFaceUp=false;});}
     if(state.dead==='ai'&&Number.isFinite(dropAt))slumpCaptive(time-dropAt);else slump=0;
+    const reaction=applyReaction(state,epoch);
     const eye=view.getWorldPosition(new THREE.Vector3()),ownCards=aiHeldRig.getWorldPosition(new THREE.Vector3()),gunPoint=gun.getWorldPosition(new THREE.Vector3()),hostPoint=hostHead.getWorldPosition(new THREE.Vector3());
     const sound=state.worldSound??debugSound,capSound=soundReaction(sound,epoch),hostSound=soundReaction(sound,epoch,true);
     const dealing=['SHUFFLING','DEALING','HITTING','DEALER_TURN','SWEEPING'].includes(state.phase),shooting=['AI_SHOOTING','PLAYER_SHOOTING','HOST_FORCE_SHOT'].includes(state.phase)||!!transfer;
@@ -828,10 +872,11 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     if(!shooting&&!state.speaker&&!dealing&&!recentPlayer){if(room===1){const glance=Math.floor(time/3)%3;captiveTarget=glance===0?ownCards:glance===1?eye:gunPoint;}else if(room===2)captiveTarget=time%13<1?ownCards:eye;}
     if(!shooting&&!state.speaker&&!dealing&&state.attention?.captive.away)captiveTarget=state.attention.captive.returning?eye:ownCards;
     const hostTarget=state.phase==='HOST_FORCE_SHOT'?eye:shooting?gunPoint:state.speaker==='host'?state.addressedTo==='captive'?head.getWorldPosition(new THREE.Vector3()):eye:state.speaker==='captive'?head.getWorldPosition(new THREE.Vector3()):dealing||state.attention?.host.away&&!state.attention.host.returning?deck.getWorldPosition(new THREE.Vector3()):eye;
+    if(reaction.active&&reaction.gaze)captiveTarget=reaction.gaze==='player'?eye:new THREE.Vector3(0,.76,-.27);
     if(capSound>0&&sound){captiveTarget=new THREE.Vector3(...sound.position);captiveRig.chest.rotation.z+=Math.sin(Math.min(1,(epoch-sound.at)/180)*Math.PI)*sound.loudness*(room===1?.08:room===3?.02:.045);}
     lookAtTarget(hostRig,hostSound>0&&sound?new THREE.Vector3(...sound.position):hostTarget,hostSound>0?dt*.55:dt,hv*.01*motion);
     if(state.dead!=='ai'&&gunHolder!=='ai'&&!captiveHood.visible)lookAtTarget(captiveRig,captiveTarget,capSound>0?dt*1.8:dt,cv*.01*motion);
-    captive.userData.gazePriority=capSound>0?'sound':shooting||recentPlayer||state.speaker||dealing?'context':'cards';
+    captive.userData.gazePriority=capSound>0?'sound':reaction.active&&reaction.gaze?'reaction':shooting||recentPlayer||state.speaker||dealing?'context':'cards';
     const forceActive=state.phase==='HOST_FORCE_SHOT'||state.forceShotAt!=null&&state.phase==='ROUND_RESULT';
     const allowed:THREE.Object3D[]=[];
     hostRig.updateCoat();hideHostBody(false);
@@ -840,7 +885,7 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     gun.updateWorldMatrix(true,false);gun.getWorldPosition(lastGunPosition);gun.getWorldQuaternion(lastGunQuaternion);
   }
   let debugTarget:THREE.Group=captive;
-  return {hostChair,aiHeldRig,chair,guards,cutter,captiveTie,playerTie,captiveLegs:captiveRig.legs,standingHostLegs:hostRig.legs,
+  return {get reactionShake(){return reactionShake;},hostChair,aiHeldRig,chair,guards,cutter,captiveTie,playerTie,captiveLegs:captiveRig.legs,standingHostLegs:hostRig.legs,
     stranger:captive,captive,head,captiveHead:head,leftHand,rightHand,host,hostHead,hostLeftHand,hostRightHand,captiveHood,
     playerHands,heldRig,deck,gun,hammer,cylinder:revolverCylinder,peekCard,peekFront,deckCorner,cardSlots,skeletons,
     setDebugSound:(sound:WorldSound)=>{debugSound=sound;},setCards,update,setDebugPose:(pose:string,room:1|2|3=1)=>{debugPose=pose as DebugPoseName;debugRoom=room;},get debugTarget(){return debugTarget;}};

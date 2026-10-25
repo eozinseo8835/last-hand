@@ -93,12 +93,12 @@ describe('Stranger murmur pattern', () => {
       const { steps } = createVoicePlan(text, 'confident');
       return steps[count].at - steps[count - 1].at;
     };
-    expect(gapAfter('a b', 1)).toBe(30);
-    expect(gapAfter('a,b', 2)).toBe(170);
-    expect(gapAfter('a.b', 2)).toBe(310);
-    expect(gapAfter('a?b', 2)).toBe(310);
-    expect(gapAfter('a...b', 4)).toBe(390);
-    expect(gapAfter('a…b', 2)).toBe(390);
+    expect(gapAfter('a b', 1)).toBeCloseTo(1000/30);
+    expect(gapAfter('a,b', 2)).toBeCloseTo(1000/30+140);
+    expect(gapAfter('a.b', 2)).toBeCloseTo(1000/30+280);
+    expect(gapAfter('a?b', 2)).toBeCloseTo(1000/30+280);
+    expect(gapAfter('a...b', 4)).toBeCloseTo(1000/30+360);
+    expect(gapAfter('a…b', 2)).toBeCloseTo(1000/30+360);
     expect(createVoicePlan('', 'intro')).toMatchObject({ steps: [], duration: 0 });
     expect(createVoicePlan(' ... ', 'intro').steps.every(step => !step.syllable)).toBe(true);
   });

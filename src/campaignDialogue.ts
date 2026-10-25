@@ -1,3 +1,4 @@
+import type {TextSpeed} from './readability';
 import type { DialogueCategory } from './dialogue';
 import type { RoomNumber, Speaker } from './campaign';
 import type { RandomSource } from './game';
@@ -6,6 +7,7 @@ import { cosmeticRandom } from './tension';
 export type HostCategory = 'intro_rules' | 'deal' | 'round_result' | 'other_room_death' |
   'waiting_for_trigger' | 'transition' | 'ending_win' | 'ending_death' | 'cut_ties' | 'host_caught_player' | 'trigger_warning' | 'forced_shot';
 export type SpeechLine = {
+  textSpeed?:TextSpeed;
   addressedTo?: Speaker | 'player';
   id: number; speaker: Speaker; text: string; category: DialogueCategory | HostCategory;
   danger: boolean; chambersFired: number;
@@ -14,63 +16,78 @@ export type DialogueExchange = { captive: string; host: string };
 
 /** The Host has no opinion about a hand: these lines describe procedure only. */
 export const HOST_DIALOGUE: Record<HostCategory, readonly string[]> = {
-  host_caught_player: ["Unauthorized contact has been observed.", "Return your hand. A penalty will follow.", "The audience has an unobstructed view.", "An attempted violation has been recorded."],
-  trigger_warning: ["Ten seconds.", "Last chance to do it yourself.", "Five seconds remain in your allocation.", "The allotted time is nearly complete."],
-  forced_shot: ["Your time has elapsed.", "The required action has now been completed.", "Assistance has been entered in your record.", "Future hesitation will receive the same assistance."],
-  intro_rules: [
-    'Eight guests have been assigned to four tables.',
-    'The guest closest to twenty-one wins the hand.',
-    'The losing guest will operate the shared revolver.',
-    'One SPIN is allocated per room. A PEEK is unauthorized.',
+  "host_caught_player": [
+    "Unauthorized.",
+    "Hands back.",
+    "A penalty is due.",
+    "The violation is recorded."
   ],
-  deal: [
-    'The next hand will now be dealt.',
-    'Both guests will receive their opening cards.',
-    'The dealing sequence is in progress.',
-    'Keep your hands clear while cards are distributed.',
+  "trigger_warning": [
+    "Ten seconds.",
+    "Last chance to do it yourself.",
+    "Five seconds.",
+    "Complete the pull."
   ],
-  round_result: [
-    'The hand is concluded. Its result is final.',
-    'The totals have been recorded.',
-    'The table has completed this hand.',
-    'The next procedure follows the recorded result.',
+  "forced_shot": [
+    "Your time has elapsed.",
+    "Procedure complete.",
+    "Assistance recorded.",
+    "Your turn is concluded."
   ],
-  other_room_death: [
-    'A guest at another table has been eliminated.',
-    'The number of active guests has been updated.',
-    'Another table has concluded its match.',
-    'One fewer guest remains in the selection.',
+  "intro_rules": [
+    "Eight guests. Four tables.",
+    "Closest to twenty-one wins.",
+    "The loser pulls the trigger.",
+    "One SPIN. PEEK is unauthorized."
   ],
-  waiting_for_trigger: [
-    'The assigned guest will complete the pull.',
-    'Keep pressure on the trigger until the procedure concludes.',
-    'The table is waiting for the required action.',
-    'No substitution is permitted. Complete your turn.',
+  "deal": [
+    "Cards.",
+    "Check your cards.",
+    "Hands clear.",
+    "Your decision."
   ],
-  transition: [
-    'Your next table is prepared.',
-    'Remain seated until the hood is secured.',
-    'Do not resist the transfer.',
-    'The next match will begin in another room.',
+  "round_result": [
+    "Result recorded.",
+    "The hand is concluded.",
+    "The odds have changed.",
+    "Proceed as assigned."
   ],
-  ending_win: [
-    'Your participation in this selection is complete.',
-    'The exit has been made available.',
-    'You are the final active guest.',
-    'See you next season.',
+  "other_room_death": [
+    "One guest has left us.",
+    "The count is updated.",
+    "Another table is concluded.",
+    "One fewer guest."
   ],
-  cut_ties: [
-    'Keep your wrists still. The restraints will be removed.',
-    'Both guests will now be released from their restraints.',
-    'Do not move until the cutter is clear.',
-    'Your hands are required for the next procedure.',
+  "waiting_for_trigger": [
+    "The audience is waiting.",
+    "Complete your turn.",
+    "Maintain pressure.",
+    "The assigned guest must proceed."
   ],
-  ending_death: [
-    'Your participation has ended.',
-    'This table will be reassigned.',
-    'This guest is no longer active.',
-    'The remaining schedule is unchanged.',
+  "transition": [
+    "Your next table is ready.",
+    "Remain seated.",
+    "Do not resist.",
+    "Secure the hood."
   ],
+  "ending_win": [
+    "Selection complete.",
+    "The exit has been made available.",
+    "One guest remains.",
+    "See you next season."
+  ],
+  "cut_ties": [
+    "Wrists still.",
+    "Release the restraints.",
+    "Keep clear of the cutter.",
+    "Hands on the table."
+  ],
+  "ending_death": [
+    "Participation ended.",
+    "Reassign this table.",
+    "This guest is inactive.",
+    "The schedule is unchanged."
+  ]
 };
 
 export const OPENING_LINES = [
@@ -91,457 +108,598 @@ export const FINAL_HOST_LINE = 'See you next season.';
 
 type CaptiveBanks = Record<DialogueCategory, readonly string[]>;
 export const OPPONENT_DIALOGUE: Record<RoomNumber, CaptiveBanks> = {
-  1: {
-    intro: [
-      'Where is this? I had a phone.',
-      'Please tell me you know a way out.',
-      'They took my shoes. Why take my shoes?',
-      'I was supposed to be home before dark.',
+  "1": {
+    "intro": [
+      "Where... where'd they bring us?",
+      "Hey. You awake? Please be awake.",
+      "My phone. They took my damn phone.",
+      "Someone's got to know we're missing. Right?"
     ],
-    confident: [
-      'Maybe I can do this. Maybe this one.',
-      'I think I am all right. For once.',
-      'These might be enough. Please let them be enough.',
-      'You should stop. I think you should stop.',
+    "confident": [
+      "Okay. Okay, these'll do.",
+      "Maybe... maybe I get through this one.",
+      "Don't ask me to show you yet. Please.",
+      "Look, I've got a {upcard}. That's... that's something."
     ],
-    nervous: [
-      'I cannot make my hands stay dry.',
-      'I used to know these numbers.',
-      'Please stop looking at me like that.',
-      'The paper keeps sliding in my fingers.',
+    "nervous": [
+      "Sorry. My hands won't stop.",
+      "Wait, I... I forgot what I was counting.",
+      "Please don't stare. I can't think.",
+      "God, the cards keep sticking to me."
     ],
-    bluff: [
-      'You do not want me to turn these over.',
-      'I have something good. I mean it.',
-      'You could fold. You really could.',
-      'I am not the one who should be scared.',
+    "bluff": [
+      "You should fold. Seriously. Please.",
+      "I've got enough. I do. Stop looking.",
+      "Go on, then. I'm... I'm fine.",
+      "Don't make me turn these over. You'll regret it."
     ],
-    player_folds: [
-      'Thank you. I was not ready.',
-      'That is another moment we both get.',
-      'Please keep doing that. Please.',
-      'I thought I was about to lose you.',
+    "player_folds": [
+      "Thank you. Oh, thank you.",
+      "Wait... neither of us? We just go again?",
+      "Please save one for later. Please.",
+      "Only {folds} folds left. Oh, God."
     ],
-    player_goes: [
-      'Wait. I need to look again.',
-      'Do we really have to see them?',
-      'All right. Just do it slowly.',
-      'I cannot tell if I want to know.',
+    "player_goes": [
+      "Hang on. Let me count again.",
+      "Do it slow. I... I need a second.",
+      "All right. Turn them over, then.",
+      "Maybe I read mine wrong. Can I check?"
     ],
-    ai_survives_click: [
-      'It did not. It did not.',
-      'I thought that was everything.',
-      'My ears are still waiting for it.',
-      'I can breathe. I can still breathe.',
+    "ai_survives_click": [
+      "Ha... hah. Sorry. I can't stop.",
+      "Oh, God. Oh, God, I'm still here.",
+      "That... that wasn't it. It wasn't it.",
+      "{pulls} empty now. I can't keep doing this."
     ],
-    player_survives_click: [
-      'You are still here. Thank God.',
-      'I could not make myself look away.',
-      'Please say something. Anything.',
-      'I felt that in my own teeth.',
+    "player_survives_click": [
+      "Jesus... you made me jump.",
+      "Hey. Hey, you're okay. Say something.",
+      "Don't... don't point it anywhere yet.",
+      "That's {pulls} empty. We're still here. Somehow."
     ],
-    danger: [
-      'There cannot be much room left in it.',
-      'My mother does not know where I am.',
-      'I keep counting and getting the same answer.',
-      'Please, I do not want to be next.',
+    "danger": [
+      "Please. I don't want to die here.",
+      "Someone call my mum. She won't know.",
+      "No, stop. I keep losing count.",
+      "{pulls} gone. There can't be many left. Can there?"
     ],
-    ai_loses_hand: [
-      'No. I was trying so hard.',
-      'Please ask him if I can wait.',
-      'I do not think I can lift it.',
-      'There must be something else I can do.',
+    "ai_loses_hand": [
+      "No, no. I counted. I counted!",
+      "Wait! That's not... let me look again.",
+      "Please don't make me pick that up.",
+      "You got {playerTotal}? No. No, I can't do this."
     ],
-    player_hits: [
-      'Why would you ask for more?',
-      'Please do not make this worse.',
-      'I wish I could tell you to stop.',
-      'I hate the sound that card makes.',
+    "player_hits": [
+      "Why? Why would you want another?",
+      "Please... just stop when it's enough.",
+      "Careful. I can't watch you do that.",
+      "Shit. That card scared me."
     ],
-    player_stands: [
-      'You have decided? Already?',
-      'Then I have to find out.',
-      'I was hoping you would take longer.',
-      'All right. I will try not to shake.',
+    "player_stands": [
+      "Already? You're... you're sure?",
+      "Okay. Now I have to look.",
+      "Wait. I wasn't ready for you to stop.",
+      "I've only got this {upcard} showing. Don't look at me."
     ],
-    player_busts: [
-      'I am sorry. I needed that.',
-      'That does not feel like winning.',
-      'Please do not look at me.',
-      'I did not want it to be you either.',
+    "player_busts": [
+      "I'm sorry. I... I'm so sorry.",
+      "Don't look at me. Please don't.",
+      "God. I wanted to win, but... not like this.",
+      "That last one... you shouldn't have taken it."
     ],
-    ai_hits: [
-      'Please, one that does not hurt.',
-      'I cannot stay where I am.',
-      'I think I need another. I think.',
-      'Just let the next one be small.',
+    "ai_hits": [
+      "Small one. Please, a small one.",
+      "I need another. I think I do.",
+      "Just... just slide it over.",
+      "Come on. Don't do this to me."
     ],
-    ai_busts: [
-      'I should have stopped. I knew it.',
-      'No, that is not what I meant to do.',
-      'I cannot count with you watching.',
-      'Please say I added it wrong.',
+    "ai_busts": [
+      "No! I knew I should've stopped.",
+      "Please tell me I added it wrong.",
+      "Wait, that ace... can't it be one?",
+      "Why'd I ask? Why the hell did I ask?"
     ],
-    push: [
-      'Neither of us has to. Right?',
-      'We get to sit here a little longer.',
-      'I never thought I would love a tie.',
-      'Could we just keep doing that?',
+    "push": [
+      "A tie? So we don't... right?",
+      "Oh. Oh, thank God.",
+      "Nobody touches it. Leave it there.",
+      "Can we do that again? Just... again?"
     ],
-    impatient: [
-      'Please. I cannot keep watching this.',
-      'I am scared it will happen while I blink.',
-      'Do not make me wait for the sound.',
-      'I wish I could hold your hand instead.',
+    "impatient": [
+      "Please. I can't keep watching.",
+      "Do it before I... no. Sorry.",
+      "God, I'm scared to blink.",
+      "Whatever happens... I'm sorry."
     ],
-    opp_spins: [
-      'Maybe it will not remember me now.',
-      'I need it somewhere else. Anywhere else.',
-      'Please let that have helped.',
-      'I cannot face the same place again.',
+    "opp_spins": [
+      "I need it somewhere else. Please.",
+      "Maybe... maybe this helps.",
+      "Don't count. Please don't count with me.",
+      "There. I used it. That's it, then."
     ],
-    opp_peeks: [
-      'I have to know before I touch it.',
-      'Just a corner. I can manage a corner.',
-      'Please do not be something terrible.',
-      'I cannot take another blind guess.',
+    "opp_peeks": [
+      "Just a corner. No one... just a corner.",
+      "I can't guess again. I can't.",
+      "Please don't look at my hand.",
+      "One second. That's all I need."
     ],
-    player_spins: [
-      'That sound makes my stomach turn.',
-      'Do you feel safer? Please say yes.',
-      'I tried not to count the clicks.',
-      'I hope it went far away from both of us.',
+    "player_spins": [
+      "I hate that sound. God, I hate it.",
+      "Did it help? You think it helped?",
+      "Stop... sorry. Keep going, I guess.",
+      "Now I've lost count. Maybe that's good."
     ],
-    player_peeks: [
-      'Did you see something you can live with?',
-      'I wish I could read your face.',
-      'Knowing does not make your hands steadier.',
-      'Please do not tell me what comes after.',
+    "player_peeks": [
+      "Did you see it? Don't tell me.",
+      "Hey, your hand's shaking too.",
+      "Careful. He'll see you.",
+      "Please put it back. Please."
     ],
-    opp_caught_player: ["No! Stop touching it. I was watching.", "Your fingers. I can see your fingers.", "Please do not make this worse by cheating.", "Host, their hand went under the card."],
-    caught_by_player: ["Please. I did not get a proper look.", "I am putting it down. Do not shout.", "You caught me. I just panicked.", "I know. I know. My hands are back here."],
-    glance_away: ["Was that a boot outside?", "I cannot watch this table for another second.", "That screen went dark. Did you see?", "If I look at the door, maybe it opens."],
-    distant_shot: [
-      'Was that the room next to us?',
-      'I heard someone fall. I heard it.',
-      'Please do not tell me who that was.',
-      'There was a person breathing over there.',
+    "opp_caught_player": [
+      "Hey! No, I saw your hand.",
+      "Stop! You're going to get us both...",
+      "Host! They touched the deck!",
+      "Don't cheat. Please, it's all I've got."
     ],
-    short: ['Please, not me.', 'Someone stop this.', 'I cannot breathe.', 'My hands will not.'],
-    broken: ['...please...', '[A thin, panicked breath]', '[Muffled sobbing]', '...no...'],
+    "caught_by_player": [
+      "Sorry! Sorry, I'm putting it back.",
+      "Please don't tell him. I panicked.",
+      "Look, my hands are here. See?",
+      "You saw me. Okay. Okay, I'm done."
+    ],
+    "glance_away": [
+      "Was that someone outside?",
+      "Sorry... I can't look at it anymore.",
+      "That screen. It... it went dark.",
+      "Maybe someone's coming. Maybe..."
+    ],
+    "distant_shot": [
+      "Oh, God. Was that next door?",
+      "Someone was screaming. Now they're...",
+      "Please don't tell me who.",
+      "That... that was real. That was a person."
+    ],
+    "short": [
+      "Please, not yet.",
+      "God, help me.",
+      "Can't do it.",
+      "Someone, please stop."
+    ],
+    "broken": [
+      "...no. Please...",
+      "[A breath catches]",
+      "Mum... I'm sorry.",
+      "[A quiet sob]"
+    ],
+    "player_loses_hand": [
+      "Oh... oh, it's not me. I'm sorry.",
+      "Please don't hate me. I didn't...",
+      "Can't look. Sorry, I can't look.",
+      "You had {playerTotal}. I thought... never mind."
+    ]
   },
-  2: {
-    intro: [
-      'They moved me before I could collect my chips.',
-      'You made it through one. So did I.',
-      'Never liked a room without a clock.',
-      'Let us see whether surviving taught you anything.',
+  "2": {
+    "intro": [
+      "Hey. You came from the other room?",
+      "Christ, I need a cigarette.",
+      "Don't ask me how I got here.",
+      "My tie's... can you see if it's crooked?"
     ],
-    confident: [
-      'I have sat behind worse felt than this.',
-      'My hands know when a table is friendly.',
-      'That is the look I used to get paid for.',
-      'I can afford to let you decide.',
+    "confident": [
+      "All right. I can work with this.",
+      "Don't rush me. I know what I'm doing.",
+      "Yeah. These'll do. They'll have to.",
+      "That {upcard} isn't all I've got."
     ],
-    nervous: [
-      'This knot gets tighter every time I breathe.',
-      'Funny how quiet a bad room can get.',
-      'I would usually order a drink about now.',
-      'There is a mark on that card I do not like.',
+    "nervous": [
+      "Damn. My jaw won't unclench.",
+      "Wait... let me check that again.",
+      "Could use a drink. A real one.",
+      "Sorry. That light's getting to me."
     ],
-    bluff: [
-      'I would hate to waste a hand like this.',
-      'Go on. Give me something worth collecting.',
-      'You can read my face if it helps you lose.',
-      'I have been waiting all night for these.',
+    "bluff": [
+      "Take another. Go on. See what happens.",
+      "Yeah, I'd stand if I were you.",
+      "Don't smile at me. I've got this.",
+      "You're staring awful hard for someone who's winning."
     ],
-    player_folds: [
-      'An expensive habit, caution.',
-      'You saved your chair. I keep the momentum.',
-      'I have seen fortunes spent on another minute.',
-      'That was almost a sensible wager.',
+    "player_folds": [
+      "Fine. More time. I'll take it.",
+      "Didn't think you'd fold that one.",
+      "Good. Neither of us was ready.",
+      "Down to {folds} folds. Don't waste them."
     ],
-    player_goes: [
-      'There it is. The moment a face becomes a number.',
-      'Let us see what all that staring bought.',
-      'I will show mine if you can stomach yours.',
-      'No more stories for this hand.',
+    "player_goes": [
+      "Show me, then. Just show me.",
+      "All right. No more talking.",
+      "Let's get it over with.",
+      "Wait. Let me put mine straight."
     ],
-    ai_survives_click: [
-      'Still in the game. That is enough.',
-      'A house edge I can live with.',
-      'I was not planning to tip for that.',
-      'You will have to beat me again.',
+    "ai_survives_click": [
+      "Ha. Hah... shit. Sorry.",
+      "Jesus. I really thought... never mind.",
+      "Still here. That's enough. That's enough.",
+      "{pulls} empty. Don't tell me what that leaves."
     ],
-    player_survives_click: [
-      'Try not to spend that breath too quickly.',
-      'You wear relief badly. Everyone can see it.',
-      'I suppose we both get another hand.',
-      'That was a generous little nothing.',
+    "player_survives_click": [
+      "Shit... keep your finger still.",
+      "Easy. Put it down slow.",
+      "You flinched. So did I.",
+      "{pulls} now. I heard every one."
     ],
-    danger: [
-      'I have stopped liking the shape of these odds.',
-      'My fingers used to do this for applause.',
-      'No drink would settle that sound now.',
-      'There is a point where a wager becomes a debt.',
+    "danger": [
+      "I can't keep pretending I'm fine.",
+      "Look at my hand. It's shaking now.",
+      "No. Don't tell me the odds.",
+      "{pulls} used. Yeah, I can count. I wish I couldn't."
     ],
-    ai_loses_hand: [
-      'I have swallowed worse losses. I think.',
-      'Give me a second to straighten this tie.',
-      'That is an ugly way to close a hand.',
-      'I would offer double, if anyone here took credit.',
+    "ai_loses_hand": [
+      "Damn... no. That's not right.",
+      "Wait. Let me... give me a second.",
+      "Don't look so pleased. Please.",
+      "{playerTotal}? And I stood. I bloody stood."
     ],
-    player_hits: [
-      'There is the appetite. I knew you had it.',
-      'Keep reaching. The table likes an eager hand.',
-      'You remind me of my first bad decision.',
-      'I can almost hear the arithmetic turning sour.',
+    "player_hits": [
+      "Another? You sure about that?",
+      "Go ahead. I won't stop you.",
+      "Careful. You're doing what I did.",
+      "Yeah. Keep your hand steady."
     ],
-    player_stands: [
-      'Found the edge you can tolerate?',
-      'Then I had better earn my seat.',
-      'You leave the worrying to me. How thoughtful.',
-      'I wondered how long you would keep reaching.',
+    "player_stands": [
+      "That's it? Fine. My turn.",
+      "All right... let me look.",
+      "Don't say anything. I'm counting.",
+      "This {upcard}... I thought it'd be enough."
     ],
-    player_busts: [
-      'I know that feeling. I prefer it in your chair.',
-      'A little appetite is an expensive thing.',
-      'You should have left that last card lonely.',
-      'I would be sorry if I could afford it.',
+    "player_busts": [
+      "Shit. Sorry. I didn't want...",
+      "Don't look at me like that.",
+      "Yeah, I saw. Put the cards down.",
+      "That's too many. I'm sorry."
     ],
-    ai_hits: [
-      'I did not come this far to sit on that.',
-      'Let it ride a little further.',
-      'There is still room to make this interesting.',
-      'I can feel another card in my fingers.',
+    "ai_hits": [
+      "One more. Slow, please.",
+      "Can't stay on this. Can't.",
+      "Come on. Something small.",
+      "Yeah. Deal it. Before I change my mind."
     ],
-    ai_busts: [
-      'That was a dreadful read.',
-      'I used to charge people for advice like that.',
-      'The table finally called me on it.',
-      'I should have kept my hands in my pockets.',
+    "ai_busts": [
+      "Damn it. Damn it!",
+      "Why didn't I stop? I knew better.",
+      "No. Check it again.",
+      "There goes my... no. Never mind."
     ],
-    push: [
-      'A wash. I can work with a wash.',
-      'Neither of us gets to feel clever.',
-      'I have walked away happy with less.',
-      'The table owes us another argument.',
+    "push": [
+      "Even? Okay. Nobody moves.",
+      "Fine. I'll take another minute.",
+      "Don't touch it. We tied.",
+      "Hah... neither of us. Right?"
     ],
-    impatient: [
-      'I can smell the waiting from over here.',
-      'You are making the silence expensive.',
-      'I would rather hear it than keep imagining it.',
-      'My nerve is not part of your wager.',
+    "impatient": [
+      "Look, I can't watch this all night.",
+      "Please. Just... decide.",
+      "God, the waiting's worse.",
+      "Do what you have to. I'm sorry."
     ],
-    opp_spins: [
-      'I have one last way to change the conversation.',
-      'Never leave a bad arrangement untouched.',
-      'I will take a fresh uncertainty.',
-      'There. Now neither of us gets to count comfortably.',
+    "opp_spins": [
+      "Not leaving it there. No.",
+      "One turn. Then I've got nothing.",
+      "Don't count the clicks out loud.",
+      "Come on... be somewhere else."
     ],
-    opp_peeks: [
-      'I never turn down a little information.',
-      'Let me see what kind of invitation that is.',
-      'I have lost enough on blind faith.',
-      'One small advantage. I intend to enjoy it.',
+    "opp_peeks": [
+      "Just checking. Don't make a thing of it.",
+      "I need to know. That's all.",
+      "Give me a second. Look away.",
+      "Can't afford another guess."
     ],
-    player_spins: [
-      'So you do know how to change a bad bet.',
-      'I heard every one of those teeth.',
-      'You look almost pleased with uncertainty.',
-      'Careful. A fresh start still has an ending.',
+    "player_spins": [
+      "Yeah. I'd have done that too.",
+      "Careful with it. Christ.",
+      "Now neither of us knows. Great.",
+      "Don't grin. It's still loaded."
     ],
-    player_peeks: [
-      'Now try not to let your eyebrows spend it.',
-      'That is a familiar little appetite for certainty.',
-      'I used to pay good money for that look.',
-      'You have information. Let us see if you have nerve.',
+    "player_peeks": [
+      "Keep your face still. He'll notice.",
+      "Saw something? Don't say it.",
+      "Easy. Hand back, slow.",
+      "Now you've got to live with knowing."
     ],
-    opp_caught_player: ["Nice reach. Shame about the audience.", "I know that move. Take your hand back.", "A little too bold with your fingers there.", "Dealer. Our friend is shopping ahead."],
-    caught_by_player: ["You have a better eye than I gave you.", "Fine. No advantage taken.", "Caught clean. I will give you that.", "Old habit. Forget the card; watch my hands."],
-    glance_away: ["That monitor has awful timing.", "Give me a second. Something knocked.", "I am checking the exit. Professional curiosity.", "Let the cameras have my good side."],
-    distant_shot: [
-      'That sounded expensive for somebody.',
-      'Another chair the house can put away.',
-      'I thought I had learned to ignore that sound.',
-      'That wall is thinner than I would like.',
+    "opp_caught_player": [
+      "Hey. I know that move.",
+      "Hand back. I saw you.",
+      "Host. Look at their fingers.",
+      "Don't try that with me. Please."
     ],
-    short: ['Let it ride.', 'Hold that smile.', 'Not my chair.', 'Another bad bet.'],
-    broken: ['...I misread it...', '[A smile without air]', 'That was not...', '[An uneven breath]'],
+    "caught_by_player": [
+      "All right. Fair enough. You saw.",
+      "Old habit. Bad habit, I know.",
+      "Look, I'm putting it down.",
+      "Please. Don't make this worse."
+    ],
+    "glance_away": [
+      "Something knocked. You heard it?",
+      "Sorry. Need to look away a second.",
+      "That screen's... never mind.",
+      "Door's still shut. Of course it is."
+    ],
+    "distant_shot": [
+      "Jesus. That was close.",
+      "Don't tell me whose table.",
+      "I... I used to ignore noises like that.",
+      "Someone's chair just... yeah."
+    ],
+    "short": [
+      "Easy. Stay steady.",
+      "Not yet, please.",
+      "Give me time.",
+      "Can't watch this."
+    ],
+    "broken": [
+      "...I screwed up...",
+      "[A laugh breaks]",
+      "Didn't mean to...",
+      "[A shaking breath]"
+    ],
+    "player_loses_hand": [
+      "Okay... it's you. God, I'm sorry.",
+      "Can't look at you right now.",
+      "Don't thank me. I didn't help.",
+      "{playerTotal}. You were close. Too damn close."
+    ]
   },
-  3: {
-    intro: [
-      'This room is darker than it used to be.',
-      'You have learned to follow the footsteps.',
-      'Do not waste your strength asking him why.',
-      'I hoped the next chair would stay empty.',
+  "3": {
+    "intro": [
+      "Sit slow. The chair catches.",
+      "You made it. I... didn't think you would.",
+      "Don't ask him why. I did.",
+      "Sorry. I was hoping no one would come."
     ],
-    confident: [
-      'I have had a long time to learn this feeling.',
-      'My hands remember when to stop.',
-      'You can take your time. I have done mine.',
-      'Some silences are easier to sit inside.',
+    "confident": [
+      "Enough. I think it's enough.",
+      "Take your time. I'll wait.",
+      "Don't watch me. Watch your cards.",
+      "A {upcard}. Seen worse. Seen better, too."
     ],
-    nervous: [
-      'He is standing closer than I remember.',
-      'They changed the light, but not the smell.',
-      'That card has a crease I remember.',
-      'I thought I had stopped noticing that sound.',
+    "nervous": [
+      "Something's different. Can't place it.",
+      "Wait... that noise again.",
+      "Sorry. Thought I was past this.",
+      "My hand's doing it again. See?"
     ],
-    bluff: [
-      'I have watched this hand end from your chair.',
-      'You will not like what I have kept.',
-      'There is nothing in my face you can use.',
-      'I knew what I was waiting for before you sat down.',
+    "bluff": [
+      "Can't tell from my face. Don't try.",
+      "Go on. See if you're right.",
+      "You looked away first.",
+      "Think what you like. I'm staying."
     ],
-    player_folds: [
-      'Time can be a kind of shelter.',
-      'I used to save mine for later too.',
-      'You are learning what a minute costs.',
-      'The chair is easier to keep than to leave.',
+    "player_folds": [
+      "Good. Another minute.",
+      "Keep one. You'll want it.",
+      "Don't apologize. I'd do it too.",
+      "{folds} left. Remember that."
     ],
-    player_goes: [
-      'I know this part by the scrape of the paper.',
-      'Look at the cards. It helps, sometimes.',
-      'I cannot make the answer kinder.',
-      'We both deserve to know where we are.',
+    "player_goes": [
+      "Slowly. Put them down slowly.",
+      "All right. Let's see.",
+      "Don't look at him. Look here.",
+      "Wait. I need to see yours."
     ],
-    ai_survives_click: [
-      'Again. It has let me hear it again.',
-      'I had forgotten how heavy an empty sound can be.',
-      'Do not ask me how many times that has happened.',
-      'I am beginning to resent that small mercy.',
+    "ai_survives_click": [
+      "Hah... sorry. Didn't expect that.",
+      "Again. I'm... still here.",
+      "Give me a second. Just one.",
+      "{pulls} empty. I know. I know."
     ],
-    player_survives_click: [
-      'Breathe before you try to speak.',
-      'You will remember that sound outside this room.',
-      'For now, you still belong to yourself.',
-      'I used to look at my hands afterward too.',
+    "player_survives_click": [
+      "Easy... breathe first.",
+      "Put it down. You're shaking.",
+      "Sorry. I jumped too.",
+      "{pulls}. Don't count the next one yet."
     ],
-    danger: [
-      'I did not think the counting could frighten me again.',
-      'He said I would not have to sit here anymore.',
-      'There is an old promise getting louder in my head.',
-      'I remember what comes after this silence.',
+    "danger": [
+      "They said I wouldn't do this again.",
+      "Don't... don't look away.",
+      "Thought I'd stopped being scared.",
+      "{pulls} gone. Same as before. God."
     ],
-    ai_loses_hand: [
-      'I was certain I had paid for this already.',
-      'Do not let him tell you this feels ordinary.',
-      'I need a moment I thought I would never need again.',
-      'My hands know the weight. That is the worst part.',
+    "ai_loses_hand": [
+      "Need a second. That's all.",
+      "Don't say you're sorry.",
+      "Look after yourself. Please.",
+      "You got {playerTotal}. I should've... no."
     ],
-    player_hits: [
-      'You still believe the next one will be different.',
-      'I recognize that reach.',
-      'There is courage in that. There is something else too.',
-      'I wish wanting less had come to me sooner.',
+    "player_hits": [
+      "Careful. You don't have to rush.",
+      "Another? All right.",
+      "Don't ask me. I don't know.",
+      "That's how I reached last time."
     ],
-    player_stands: [
-      'You have found a place you can bear to stop.',
-      'Then let me carry the uncertainty a while.',
-      'I would have stopped there once.',
-      'I know how difficult it is to leave a card alone.',
+    "player_stands": [
+      "Fine. Leave them there.",
+      "Don't change your mind now.",
+      "Okay... let me see mine.",
+      "This {upcard} won't help by itself."
     ],
-    player_busts: [
-      'I am sorry. I know what the chair will feel like.',
-      'I would rather not have recognized that ending.',
-      'Do not waste your last quiet moment hating the paper.',
-      'I have seen that little mistake take a great deal.',
+    "player_busts": [
+      "I'm sorry. Look at me. I'm sorry.",
+      "Don't argue with him. Please.",
+      "Put them down. Slow.",
+      "Wish I hadn't seen that."
     ],
-    ai_hits: [
-      'I do not trust myself to stay here.',
-      'There is a familiar pull in the next card.',
-      'I know the feeling. I have to move past it.',
-      'Let me see whether memory is worth anything.',
+    "ai_hits": [
+      "Another. Please.",
+      "Can't stop on this.",
+      "Small one. Just this once.",
+      "Go on. I'll look."
     ],
-    ai_busts: [
-      'So memory has finally failed me.',
-      'I thought recognizing the room would help.',
-      'I have made that mistake before. I know I have.',
-      'There is no comfort in knowing the shape of it.',
+    "ai_busts": [
+      "...damn.",
+      "No. Not again.",
+      "Should've known. Should've stopped.",
+      "Wait... I remember doing this."
     ],
-    push: [
-      'A small postponement. I remember those.',
-      'For a moment, we can both stay people.',
-      'I wish an answer could remain unfinished.',
-      'Take the breath. Do not ask what it means.',
+    "push": [
+      "Neither of us. Good.",
+      "Leave it. We don't need it.",
+      "Take a breath. I will too.",
+      "Another hand. Okay."
     ],
-    impatient: [
-      'The waiting follows you longer than the sound.',
-      'I cannot listen to another breath held that way.',
-      'I know what you are trying to put off.',
-      'Please do not make me remember it slowly.',
+    "impatient": [
+      "Easy. He's watching.",
+      "Can't hold it forever.",
+      "I'm sorry you're doing this.",
+      "Don't think about the sound."
     ],
-    opp_spins: [
-      'I learned not to leave the pattern where it was.',
-      'Even a familiar circle can be moved.',
-      'I have been saving this small refusal.',
-      'I will not trust the old arrangement again.',
+    "opp_spins": [
+      "Didn't use it last time. Should have.",
+      "There. Done.",
+      "Can't trust where it was.",
+      "One change. That's all I get."
     ],
-    opp_peeks: [
-      'I will not close my eyes to that corner again.',
-      'I remember what ignorance cost me.',
-      'Let me look before memory decides for me.',
-      'There are things I refuse to learn the hard way twice.',
+    "opp_peeks": [
+      "I need to see. Sorry.",
+      "Just the edge.",
+      "Don't look at me yet.",
+      "Can't do this blind again."
     ],
-    player_spins: [
-      'You have refused the pattern. I understand.',
-      'It still sounds the same after all this time.',
-      'I hope not knowing is kinder to you.',
-      'Watch your hands. Relief makes them careless.',
+    "player_spins": [
+      "Good. Now put it flat.",
+      "Don't grip it so hard.",
+      "Heard that. We're starting over.",
+      "Maybe it helps. Maybe."
     ],
-    player_peeks: [
-      'You will remember that little glimpse for a long time.',
-      'I cannot tell you whether knowing helps.',
-      'I have seen people wish they had not looked.',
-      'Keep what you saw to yourself. It is yours.',
+    "player_peeks": [
+      "Hand back. Slow.",
+      "Don't show it on your face.",
+      "Saw it? Remember it.",
+      "Careful. That's how he caught me."
     ],
-    opp_caught_player: ["Bring your hand back slowly.", "I have watched that trick end badly.", "The deck is not yours to touch.", "Host. There has been a breach."],
-    caught_by_player: ["I misjudged where you were looking.", "Seen. I will not use it.", "My hands are here now.", "That was a mistake. Let it remain one."],
-    glance_away: ["The monitor changed again.", "I count the footsteps when they pass.", "I need to check that door.", "The Host is watching a different table."],
-    distant_shot: [
-      'They always wait for us to listen.',
-      'I remember the sound through that wall.',
-      'One less table. It never gets quieter.',
-      'Do not count the echoes. Count the people.',
+    "opp_caught_player": [
+      "Stop. I can see your hand.",
+      "Put it back. Please.",
+      "Host's watching. Don't.",
+      "Not worth it. Hand back."
     ],
-    short: ['Not another season.', 'They said finished.', 'I was released.', 'The season ended.'],
-    broken: ['They promised me this was the last season.', '...I already left...', '[A breath that catches]', '...not again...'],
-  },
+    "caught_by_player": [
+      "Yes. You saw. I'm stopping.",
+      "Sorry. Couldn't help it.",
+      "Look. Hands back.",
+      "Don't say anything else. Please."
+    ],
+    "glance_away": [
+      "That door... still shut.",
+      "Sorry. Need a second.",
+      "Heard someone walking.",
+      "Screen's gone. Don't look."
+    ],
+    "distant_shot": [
+      "Someone else. God.",
+      "Don't ask who.",
+      "I knew that voice. I think.",
+      "Wait... listen. Nothing now."
+    ],
+    "short": [
+      "Stay with me.",
+      "Easy. Hands down.",
+      "Not this again.",
+      "Please, look here."
+    ],
+    "broken": [
+      "They promised me this was the last season.",
+      "...can't. Not again.",
+      "[Breathing falters]",
+      "Please... I believed them."
+    ],
+    "player_loses_hand": [
+      "Sorry. I can't watch this part.",
+      "Take your time. I'll look down.",
+      "Don't look at me. Please.",
+      "{playerTotal}. Close doesn't... sorry."
+    ]
+  }
 };
 
-export const NERVOUS_BEGGING = [
-  'Please let me call my mother. She will be waiting.',
-  'I will do anything else. Please ask for anything else.',
-  'I have not even started my life yet.',
-  'Please do not make me disappear in this room.',
-] as const;
-
-export const EXCHANGES: Record<RoomNumber, readonly DialogueExchange[]> = {
-  1: [
-    { captive: 'Can I call someone? Just once?', host: 'Communication is not part of the procedure.' },
-    { captive: 'Does anybody know we are here?', host: 'Your presence has been recorded.' },
-    { captive: 'Please, can you take this thing off my wrist?', host: 'Guest equipment remains in place until release.' },
-    { captive: 'What if I cannot make my hand move?', host: 'Your assigned action remains unchanged.' },
-    { captive: 'How long have you kept us down here?', host: 'Elapsed time does not affect the schedule.' },
-    { captive: 'My mother will come looking. Will you tell her?', host: 'Outside inquiries are not handled at this table.' },
+export const NERVOUS_BEGGING = ["Please. I've got to get home.", "No, wait... I can't. I can't.", "Someone tell him to stop. Please.", "Let me call my mum first. Please."] as const;
+export const EXCHANGES:Record<RoomNumber,readonly DialogueExchange[]> = {
+  "1": [
+    {
+      "captive": "Please, can't you just let us go?",
+      "host": "Remain seated."
+    },
+    {
+      "captive": "My mum... can I call her?",
+      "host": "No calls."
+    },
+    {
+      "captive": "Does anyone know we're here?",
+      "host": "Your turn continues."
+    },
+    {
+      "captive": "Why'd you take my shoes?",
+      "host": "Personal items are withheld."
+    },
+    {
+      "captive": "Can we just stop for a minute?",
+      "host": "The schedule stands."
+    },
+    {
+      "captive": "What if I can't lift it?",
+      "host": "Assistance is available."
+    }
   ],
-  2: [
-    { captive: 'What is the house taking from this?', host: 'The terms of participation are not negotiable.' },
-    { captive: 'Does a table like this ever come with a drink?', host: 'No additional service is scheduled.' },
-    { captive: 'Do I get a receipt for what I lost in the other room?', host: 'All concluded matches remain on record.' },
-    { captive: 'You ever sit down and try your own game?', host: 'My assignment does not include a guest seat.' },
-    { captive: 'If I win, do you at least straighten my tie?', host: 'The exit procedure does not include that service.' },
-    { captive: 'Who taught you to deal like a machine?', host: 'The dealing sequence is standardized.' },
+  "2": [
+    {
+      "captive": "Look, how much would it take?",
+      "host": "Payment is closed."
+    },
+    {
+      "captive": "Who the hell's watching this?",
+      "host": "The audience."
+    },
+    {
+      "captive": "Can I at least have a drink?",
+      "host": "No refreshments."
+    },
+    {
+      "captive": "You do this every night?",
+      "host": "Attend to your table."
+    },
+    {
+      "captive": "Will you tell my brother?",
+      "host": "No messages."
+    },
+    {
+      "captive": "Could you stop staring at me?",
+      "host": "Observation continues."
+    }
   ],
-  3: [
-    { captive: 'Was the last room not supposed to be the last room?', host: 'Your current assignment is the final table.' },
-    { captive: 'Do they remember people from the earlier seasons?', host: 'Audience records are not available to guests.' },
-    { captive: 'How many times have you brought this chair back?', host: 'The equipment is maintained between selections.' },
-    { captive: 'Was the daylight real the last time?', host: 'The exit remains at the end of the designated route.' },
-    { captive: 'Why am I looking at that hood again?', host: 'Transfers follow the current schedule.' },
-    { captive: 'Do you ever learn our names?', host: 'Your assigned identification is sufficient.' },
-  ],
+  "3": [
+    {
+      "captive": "You said I was done, didn't you?",
+      "host": "Your assignment remains."
+    },
+    {
+      "captive": "Do they remember me?",
+      "host": "Audience records are sealed."
+    },
+    {
+      "captive": "That chair... is it the same one?",
+      "host": "Equipment is retained."
+    },
+    {
+      "captive": "Was there really daylight last time?",
+      "host": "Follow the exit route."
+    },
+    {
+      "captive": "Why's the hood back?",
+      "host": "Transfer procedure."
+    },
+    {
+      "captive": "Do you even know my name?",
+      "host": "Identification is sufficient."
+    }
+  ]
 };
 
 function select(lines: readonly string[], previous: string, random: RandomSource): string {

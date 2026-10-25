@@ -1,3 +1,4 @@
+import {readingHold} from './readability';
 import { GUN_SLIDE_MS, GUN_SET_DOWN_MS } from './gunTransfer';
 import { planAttention } from './attention';
 // @vitest-environment jsdom
@@ -496,15 +497,10 @@ describe('trigger commitment and hesitation', () => {
     expect(tableAudio.play).not.toHaveBeenCalledWith('click'); expect(localShots()).toHaveLength(0);
   });
 
-  it('warns at ten and five seconds remaining with a voice fade gap', () => {
-    startPlayerShot();
-    advance(4999); expect(allSpeech().some(line=>line.category==='trigger_warning')).toBe(false);
-    advance(1); expect(latest.game.speech).toBeNull();
-    advance(100); expect(latest.game.speech?.speaker).toBe('host');
-    expect(latest.game.speech?.text).toBe('Ten seconds.');
-    advance(4900); expect(latest.game.speech).toBeNull();
-    advance(100); expect(latest.game.speech?.text).toBe('Last chance to do it yourself.');
-    expect(latest.game.revolver.currentChamber).toBe(1);
+  it('queues the timed Host warnings without cutting off a readable line',()=>{
+    startPlayerShot();advance(4999);const current=latest.game.speech;
+    advance(1);expect(allSpeech().some(line=>line.text==='Ten seconds.')).toBe(true);expect(latest.game.speech?.id).toBe(current?.id);
+    advance(5000);expect(allSpeech().some(line=>line.text==='Last chance to do it yourself.')).toBe(true);expect(latest.game.revolver.currentChamber).toBe(1);
   });
 
   it('makes the opponent hesitate longer after more fired chambers, without using a hidden card total', () => {
@@ -872,7 +868,7 @@ describe('campaign rules, personality policies, and serialized speakers', () => 
     const line = latest.game.speech!;
     expect(line.speaker).toBe('captive');
     const duration = createVoicePlan(line.text, line.category, line.danger, line.chambersFired, OPPONENTS[1].voice).duration;
-    advance(duration + 499); expect(latest.game.dead).toBeNull(); expect(latest.game.speech?.id).toBe(line.id);
+    advance(duration + readingHold(line.text)-1); expect(latest.game.dead).toBeNull(); expect(latest.game.speech?.id).toBe(line.id);
     advance(1 + 100); expect(latest.game.speech).toBeNull();
     advance(AI_INITIAL_HESITATION - 1); expect(latest.game.dead).toBeNull();
     advance(1); expect(latest.game.dead).toBe('ai'); expect(latest.game.shotEffect).toBe('shot');
@@ -1276,4 +1272,24 @@ describe('shared centered revolver pickup and controlled return', () => {
     expect(latest.game.phase).toBe('DEALING'); expect(latest.game.awaitingTrigger).toBe(false);
     expect(latest.game.triggerDeadline).toBeNull(); expect(latest.game.revolver).toBe(revolver);
   });
+});
+
+describe('Small Update 2 reading and public reactions',()=>{
+ it('keeps a completed or skipped line for its full reading time, while an explicit second click advances',()=>{
+  vi.mocked(dealRound).mockImplementation(()=>copy(safeHits));startDecision();finishQueuedSpeech();act(()=>latest.hit());const speech=latest.game.speech!;expect(speech).toBeTruthy();
+  act(()=>latest.finishTyping(true));advance(readingHold(speech.text)-1);expect(latest.game.speech?.id).toBe(speech.id);advance(1);expect(latest.game.speech).toBeNull();advance(100);
+  if(latest.game.speech){const id=latest.game.speech.id;act(()=>latest.finishTyping(true));expect(latest.game.speech.id).toBe(id);act(()=>latest.finishSpeech());expect(latest.game.speech).toBeNull();}
+ });
+ it('holds both revealed totals before shooting and starts the loss reaction while the gun is still at rest',()=>{
+  startDecision();act(()=>latest.stand());advance(950);expect(latest.game.phase).toBe('ROUND_RESULT');expect(latest.game.revealed).toBe(true);expect(latest.game.reaction).toMatchObject({kind:'loss',room:1});expect(latest.game.gunTransfer).toBeNull();advance(1499);expect(latest.game.phase).toBe('ROUND_RESULT');advance(1);expect(latest.game.phase).toBe('AI_SHOOTING');
+ });
+ it('logs only shown lines, retains speaker names, caps at twenty, and never repeats during a match',()=>{
+  vi.mocked(dealRound).mockImplementation(()=>copy(tied));startDecision();const seen=new Set<string>();let last=0;
+  const collect=()=>{for(const line of latest.game.dialogueLog.filter(l=>l.id>last)){expect(seen.has(line.text)).toBe(false);expect(line.name).toBe(line.speaker==='host'?HOST.name:OPPONENTS[1].name);seen.add(line.text);last=line.id;}expect(latest.game.dialogueLog.length).toBeLessThanOrEqual(20);};
+  for(let round=0;round<10;round++){collect();for(let i=0;i<30&&latest.game.speech;i++){act(()=>latest.finishSpeech());advance(100);collect();}act(()=>latest.stand());advance(950+2000+700+DEAL_COMPLETE);collect();}
+  expect(seen.size).toBeGreaterThan(20);expect(latest.game.dialogueLog).toHaveLength(20);
+ });
+ it('waits until the empty-click return has finished before the survival reaction',()=>{
+  startPlayerShot();holdTrigger();expect(latest.game.reaction?.kind).not.toBe('player-click');advance(GUN_SET_DOWN_MS+GUN_SLIDE_MS+49);expect(latest.game.reaction?.kind).not.toBe('player-click');advance(1);expect(latest.game.gunTransfer).toBeNull();expect(latest.game.reaction).toMatchObject({kind:'player-click'});
+ });
 });
