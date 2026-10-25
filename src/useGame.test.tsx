@@ -1,3 +1,4 @@
+import { GUN_SLIDE_MS, GUN_SET_DOWN_MS } from './gunTransfer';
 import { planAttention } from './attention';
 // @vitest-environment jsdom
 import { act, type ReactNode } from 'react';
@@ -15,6 +16,7 @@ import { chooseRoundEvent, cosmeticRandom } from './tension';
 import { OPENING_STAGES, stageDurationMs, type CinematicStage } from './cinematics';
 import { DISTANT_SHOT_GAP_MS } from './roomLife';
 
+vi.mock('./Scene', () => ({ default: () => null }));
 vi.mock('./attention', async importOriginal => { const actual = await importOriginal<typeof import('./attention')>(); return { ...actual, planAttention: vi.fn(actual.planAttention) }; });
 vi.mock('./audio', () => ({ tableAudio: { init: vi.fn(), play: vi.fn(), mute: vi.fn(), startVoice: vi.fn(), stopVoice: vi.fn(), getVoiceLevel: vi.fn(() => 0), setHeartbeat: vi.fn(), setEvent: vi.fn(), playStory: vi.fn(), getHeartbeatLevel: vi.fn(() => 0), playShot: vi.fn(() => true), setHooded: vi.fn(), playAmbient: vi.fn() } }));
 vi.mock('./tension', async importOriginal => {
@@ -93,7 +95,7 @@ function advanceStoryUntil(predicate: () => boolean, maxMs = 60000) {
   expect(predicate()).toBe(true);
 }
 function finishQueuedSpeech() {
-  for (let i = 0; i < 40 && (latest.game.speech || latest.game.speechQueue.length); i++) {
+  for (let i = 0; i < 40 && (latest.game.speech || latest.game.speechQueue.length || latest.game.gunTransfer?.stage === 'to-shooter'); i++) {
     if (latest.game.speech) act(() => latest.finishSpeech());
     advance(100);
   }
@@ -113,7 +115,7 @@ const distantShots = () => vi.mocked(tableAudio.playShot).mock.calls.filter(([sh
 function holdTrigger() { act(() => latest.beginTriggerHold()); advance(CONFIG.TRIGGER_HOLD_MS); }
 function startPlayerShot() {
   vi.mocked(dealRound).mockImplementation(() => copy(playerLoses)); startDecision();
-  act(() => latest.stand()); advance(950 + 1500);
+  act(() => latest.stand()); advance(950 + 1500 + GUN_SLIDE_MS);
   expect(latest.game.phase).toBe('PLAYER_SHOOTING');
 }
 function nextDecisionAfterEmptyShot() { advance(3400 + 700 + DEAL_COMPLETE); expect(latest.game.phase).toBe('PLAYER_DECISION'); }
@@ -206,7 +208,7 @@ describe('blackjack outcomes and dealer rules', () => {
     expect(handTotal(latest.game.round!.player)).toBe(24);
     expect(latest.game.round!.ai).toEqual(playerBusts.ai); expect(latest.game.round!.deck).toHaveLength(47);
     assertCaptiveLine('player_busts');
-    advance(950 + 1500); expect(latest.game.phase).toBe('PLAYER_SHOOTING');
+    advance(950 + 1500 + GUN_SLIDE_MS); expect(latest.game.phase).toBe('PLAYER_SHOOTING');
     advance(1000); expect(latest.game.awaitingTrigger).toBe(true);
     expect(latest.game.round!.ai).toEqual(playerBusts.ai); expect(latest.game.revolver.currentChamber).toBe(1);
   });
@@ -272,7 +274,7 @@ describe('shared revolver, continuous trigger hold, and replay', () => {
   });
 
   it('automatically makes only a losing Stranger shoot after a visible hesitation', () => {
-    startDecision(); act(() => latest.stand()); advance(950 + 1500);
+    startDecision(); act(() => latest.stand()); advance(950 + 1500 + GUN_SLIDE_MS);
     expect(latest.game.result).toBe('player'); expect(latest.game.phase).toBe('AI_SHOOTING');
     expect(latest.game.awaitingTrigger).toBe(false); act(() => latest.beginTriggerHold());
     expect(latest.game.triggerHeld).toBe(false); expect(latest.game.suspense).toBe(true);
@@ -282,18 +284,18 @@ describe('shared revolver, continuous trigger hold, and replay', () => {
   });
 
   it('keeps the same chamber pointer when the shooter changes across rounds', () => {
-    startDecision(); act(() => latest.stand()); advance(950 + 1500); finishQueuedSpeech(); advance(AI_INITIAL_HESITATION);
+    startDecision(); act(() => latest.stand()); advance(950 + 1500 + GUN_SLIDE_MS); finishQueuedSpeech(); advance(AI_INITIAL_HESITATION);
     expect(latest.game.revolver.currentChamber).toBe(2);
     vi.mocked(dealRound).mockImplementation(() => copy(playerLoses)); nextDecisionAfterEmptyShot();
     expect(latest.game.roundNumber).toBe(2); expect(latest.game.revolver.currentChamber).toBe(2);
-    act(() => latest.stand()); advance(950 + 1500); holdTrigger();
+    act(() => latest.stand()); advance(950 + 1500 + GUN_SLIDE_MS); holdTrigger();
     expect(latest.game.revolver.currentChamber).toBe(3); expect(latest.game.shotEffect).toBe('click');
   });
 
   it.each(['player', 'ai'] as const)('ends with %s dead only when that loser fires the loaded chamber', dead => {
     vi.mocked(createRevolver).mockReturnValue({ bulletChamber: 1, currentChamber: 1 });
     vi.mocked(dealRound).mockImplementation(() => copy(dead === 'player' ? playerLoses : playerWins));
-    startDecision(); act(() => latest.stand()); advance(950 + 1500);
+    startDecision(); act(() => latest.stand()); advance(950 + 1500 + GUN_SLIDE_MS);
     if (dead === 'player') holdTrigger(); else { finishQueuedSpeech(); advance(AI_INITIAL_HESITATION); }
     expect(latest.game.dead).toBe(dead); expect(latest.game.shotEffect).toBe('shot');
     expect(latest.game.revolver.currentChamber).toBe(2); advance(2400); expect(latest.game.phase).toBe(dead === 'player' ? 'ENDING_DEATH' : 'TRANSITION');
@@ -306,7 +308,7 @@ describe('shared revolver, continuous trigger hold, and replay', () => {
     vi.mocked(createRevolver).mockReturnValue({ bulletChamber: 1, currentChamber: 1 }); startDecision();
     peekSuccessfully();
     vi.mocked(dealRound).mockImplementation(() => copy(playerBusts)); act(() => latest.fold()); advance(FOLD_TO_DECISION);
-    act(() => latest.hit()); advance(CONFIG.DEAL_SPEED + 950 + 1500);
+    act(() => latest.hit()); advance(CONFIG.DEAL_SPEED + 950 + 1500 + GUN_SLIDE_MS);
     act(() => latest.spinCylinder()); advance(800); holdTrigger(); advanceStoryUntil(() => latest.game.phase === 'GAME_OVER');
     expect(latest.game.phase).toBe('GAME_OVER'); expect(latest.game.hasHit).toBe(true); expect(latest.game.folds).toBe(2);
     expect(latest.game.abilities.player).toEqual({ spin: false, peek: false });
@@ -325,7 +327,7 @@ describe('shared revolver, continuous trigger hold, and replay', () => {
 describe('rendered blackjack controls and hidden information', () => {
   it('keeps an actual pointer hold active through progress rerenders and cancels an early release', () => {
     vi.mocked(dealRound).mockImplementation(() => copy(playerLoses));
-    mount(<App/>); click('Sit down'); advance(DEAL_COMPLETE); click('STAND'); advance(950 + 1500);
+    mount(<App/>); click('Sit down'); advance(DEAL_COMPLETE); click('STAND'); advance(950 + 1500 + GUN_SLIDE_MS);
     function pointer(type: 'pointerdown' | 'pointerup') {
       const event = new Event(type, { bubbles: true, cancelable: true });
       Object.assign(event, { button: 0, pointerId: 1, isPrimary: true });
@@ -347,7 +349,7 @@ describe('rendered blackjack controls and hidden information', () => {
 
   it('unmounts an App with an active pointer hold without recreating drain timers or firing', () => {
     vi.mocked(dealRound).mockImplementation(() => copy(playerLoses));
-    mount(<App/>); click('Sit down'); advance(DEAL_COMPLETE); click('STAND'); advance(950 + 1500);
+    mount(<App/>); click('Sit down'); advance(DEAL_COMPLETE); click('STAND'); advance(950 + 1500 + GUN_SLIDE_MS);
     const down = new Event('pointerdown', { bubbles: true, cancelable: true });
     Object.assign(down, { button: 0, pointerId: 1, isPrimary: true });
     act(() => button('HOLD TO PULL').dispatchEvent(down)); advance(1000);
@@ -507,7 +509,7 @@ describe('trigger commitment and hesitation', () => {
 
   it('makes the opponent hesitate longer after more fired chambers, without using a hidden card total', () => {
     vi.mocked(createRevolver).mockReturnValue({ bulletChamber: 6, currentChamber: 3 });
-    startDecision(); act(() => latest.stand()); advance(950 + 1500);
+    startDecision(); act(() => latest.stand()); advance(950 + 1500 + GUN_SLIDE_MS);
     expect(latest.game.phase).toBe('AI_SHOOTING');
     finishQueuedSpeech(); advance(AI_INITIAL_HESITATION); expect(latest.game.revolver.currentChamber).toBe(3);
     advance(600); expect(latest.game.revolver.currentChamber).toBe(4);
@@ -520,7 +522,7 @@ describe('one-time SPIN per side and match', () => {
     vi.mocked(dealRound).mockImplementation(() => copy(playerLoses)); startDecision();
     act(() => latest.spinCylinder());
     expect(latest.game.revolver.currentChamber).toBe(4); expect(latest.game.abilities.player.spin).toBe(true);
-    act(() => latest.stand()); advance(950 + 1500);
+    act(() => latest.stand()); advance(950 + 1500 + GUN_SLIDE_MS);
     vi.mocked(createRevolver).mockReturnValue({ bulletChamber: 3, currentChamber: 1 });
     act(() => latest.spinCylinder());
     expect(latest.game.spinning).toBe('player'); expect(latest.game.abilities.player.spin).toBe(false);
@@ -564,7 +566,7 @@ describe('one-time SPIN per side and match', () => {
       holdTrigger(); expect(latest.game.revolver.currentChamber).toBe(pull + 1);
       if (pull < CONFIG.NUM_CHAMBERS) {
         expect(latest.game.dead).toBeNull(); nextDecisionAfterEmptyShot();
-        act(() => latest.stand()); advance(950 + 1500);
+        act(() => latest.stand()); advance(950 + 1500 + GUN_SLIDE_MS);
         act(() => latest.spinCylinder()); expect(latest.game.abilities.player.spin).toBe(false);
       }
     }
@@ -580,7 +582,7 @@ describe('one-time SPIN per side and match', () => {
     expect(latest.game.revolver.currentChamber).toBe(2); expect(latest.game.abilities.ai.spin).toBe(false);
     const creations = vi.mocked(createRevolver).mock.calls.length;
     for (let chamber = 2; chamber <= 4; chamber++) {
-      nextDecisionAfterEmptyShot(); act(() => latest.stand()); advance(950 + 1500);
+      nextDecisionAfterEmptyShot(); act(() => latest.stand()); advance(950 + 1500 + GUN_SLIDE_MS);
       expect(latest.game.phase).toBe('AI_SHOOTING'); expect(latest.game.spinning).toBeNull();
       expect(latest.game.revolver.currentChamber).toBe(chamber);
       finishQueuedSpeech(); advance(AI_INITIAL_HESITATION + (chamber - 1) * 300);
@@ -676,7 +678,7 @@ describe('cosmetic events and chamber-only breakdown', () => {
     vi.mocked(dealRound).mockImplementation(() => copy(playerLoses));
     mount(); startMatch(); advance(DEAL_COMPLETE - 1); expect(latest.game.event).toBeNull();
     advance(1); act(() => latest.stand()); expect(latest.game.event).toBeNull();
-    advance(950 + 1500); expect(latest.game.phase).toBe('PLAYER_SHOOTING');
+    advance(950 + 1500 + GUN_SLIDE_MS); expect(latest.game.phase).toBe('PLAYER_SHOOTING');
     advance(14000); expect(latest.game.event).toBeNull(); expect(latest.game.revolver.currentChamber).toBe(1);
   });
 
@@ -701,7 +703,7 @@ describe('cosmetic events and chamber-only breakdown', () => {
 
 function winCurrentRoom() {
   const room = latest.game.roomNumber;
-  act(() => latest.stand()); advance(950 + 1500);
+  act(() => latest.stand()); advance(950 + 1500 + GUN_SLIDE_MS);
   expect(latest.game.phase).toBe('AI_SHOOTING');
   finishQueuedSpeech(); advance(AI_INITIAL_HESITATION);
   expect(latest.game.dead).toBe('ai');
@@ -736,7 +738,7 @@ describe('three-room campaign, bracket, and run statistics', () => {
     vi.mocked(dealRound).mockImplementation(() => copy(playerLoses)); startDecision();
     peekSuccessfully(); act(() => latest.fold()); advance(FOLD_TO_DECISION);
     expect(latest.game.folds).toBe(2); expect(latest.game.abilities.player.peek).toBe(false);
-    act(() => latest.stand()); advance(950 + 1500);
+    act(() => latest.stand()); advance(950 + 1500 + GUN_SLIDE_MS);
     act(() => latest.spinCylinder()); advance(800); holdTrigger();
     expect(latest.game.revolver.currentChamber).toBe(2); expect(latest.game.abilities.player.spin).toBe(false);
     expect(latest.game.stats.highestChamber).toBe(2);
@@ -755,7 +757,7 @@ describe('three-room campaign, bracket, and run statistics', () => {
 
   it('resets an opponent SPIN at the next table while retaining its usage in run stats', () => {
     vi.mocked(createRevolver).mockReturnValue({ bulletChamber: 6, currentChamber: 4 }); startDecision();
-    act(() => latest.stand()); advance(950 + 1500);
+    act(() => latest.stand()); advance(950 + 1500 + GUN_SLIDE_MS);
     vi.mocked(createRevolver).mockReturnValue({ bulletChamber: 1, currentChamber: 1 }); finishQueuedSpeech();
     expect(latest.game.spinning).toBe('ai'); expect(latest.game.abilities.ai.spin).toBe(false);
     advance(800 + AI_INITIAL_HESITATION); expect(latest.game.dead).toBe('ai');
@@ -790,7 +792,7 @@ describe('three-room campaign, bracket, and run statistics', () => {
   it.each([2, 3] as const)('death in Room %i shows correct stats and Play Again fully restarts Room 1', room => {
     enterRoom(room);
     act(() => latest.hit()); advance(CONFIG.DEAL_SPEED);
-    act(() => latest.hit()); advance(CONFIG.DEAL_SPEED + 950 + 1500);
+    act(() => latest.hit()); advance(CONFIG.DEAL_SPEED + 950 + 1500 + GUN_SLIDE_MS);
     expect(latest.game.phase).toBe('PLAYER_SHOOTING'); holdTrigger();
     expect(latest.game.phase).toBe('ENDING_DEATH'); expect(latest.game.storyStage).toBe('fall');
     expect(latest.game.stats.guestsRemainingWhenFell).toBe(room === 2 ? 3 : 1);
@@ -864,7 +866,7 @@ describe('campaign rules, personality policies, and serialized speakers', () => 
 
   it('does not fire an opponent shot until its protected pre-pull line has played and hesitation completes', () => {
     vi.mocked(createRevolver).mockReturnValue({ bulletChamber: 1, currentChamber: 1 }); startDecision();
-    act(() => latest.stand()); advance(950 + 1500);
+    act(() => latest.stand()); advance(950 + 1500 + GUN_SLIDE_MS);
     expect(latest.game.phase).toBe('AI_SHOOTING'); expect(latest.game.dead).toBeNull();
     advanceStoryUntil(() => latest.game.speech?.category === 'ai_loses_hand');
     const line = latest.game.speech!;
@@ -877,7 +879,7 @@ describe('campaign rules, personality policies, and serialized speakers', () => 
   });
 
   it('delivers the last Host line during the stairs, after earlier speech has cleared', () => {
-    enterRoom(3); act(() => latest.stand()); advance(950 + 1500); finishQueuedSpeech(); advance(AI_INITIAL_HESITATION + 2400);
+    enterRoom(3); act(() => latest.stand()); advance(950 + 1500 + GUN_SLIDE_MS); finishQueuedSpeech(); advance(AI_INITIAL_HESITATION + 2400);
     expect(latest.game.phase).toBe('ENDING_WIN');
     advanceStoryUntil(() => latest.game.storyStage === 'door');
     expect(latest.game.speech).toBeNull(); expect(latest.game.speechQueue).toEqual([]);
@@ -988,7 +990,7 @@ describe('guard hoods, restraints, and safe room arrivals', () => {
   it('runs a fresh guard and restraint opening in both later rooms rather than dealing into an uncovered arrival', () => {
     vi.mocked(createRevolver).mockReturnValue({ bulletChamber: 1, currentChamber: 1 }); startDecision();
     for (const room of [2, 3] as const) {
-      act(() => latest.stand()); advance(950 + 1500); finishQueuedSpeech(); advance(AI_INITIAL_HESITATION);
+      act(() => latest.stand()); advance(950 + 1500 + GUN_SLIDE_MS); finishQueuedSpeech(); advance(AI_INITIAL_HESITATION);
       expect(latest.game.dead).toBe('ai');
       advanceStoryUntil(() => latest.game.roomNumber === room && latest.game.phase === 'OPENING');
       expect(latest.game.cinematic).toMatchObject({ mode: 'arrival', stage: 'hooded' });
@@ -1021,7 +1023,7 @@ describe('single-id shots, synchronized monitor deaths, and ambient room life', 
     vi.mocked(createRevolver).mockReturnValue({ bulletChamber: 1, currentChamber: 1 });
     vi.mocked(dealRound).mockImplementation(() => copy(playerBusts)); startDecision();
     for (let run = 0; run < 2; run++) {
-      act(() => latest.hit()); advance(CONFIG.DEAL_SPEED + 950 + 1500);
+      act(() => latest.hit()); advance(CONFIG.DEAL_SPEED + 950 + 1500 + GUN_SLIDE_MS);
       act(() => { latest.beginTriggerHold(); latest.beginTriggerHold(); }); advance(CONFIG.TRIGGER_HOLD_MS);
       const id = latest.game.shotId;
       expect(id).toBeTruthy(); expect(latest.game.revolver.currentChamber).toBe(2);
@@ -1039,7 +1041,7 @@ describe('single-id shots, synchronized monitor deaths, and ambient room life', 
     const played: { id: string; kind: 'local' | 'distant'; at: number }[] = [];
     vi.mocked(tableAudio.playShot).mockImplementation(shot => { played.push({ id: shot.id, kind: shot.kind, at: Date.now() }); return true; });
     vi.mocked(createRevolver).mockReturnValue({ bulletChamber: 1, currentChamber: 1 }); startDecision();
-    act(() => latest.stand()); advance(950 + 1500);
+    act(() => latest.stand()); advance(950 + 1500 + GUN_SLIDE_MS);
     expect(latest.game.phase).toBe('AI_SHOOTING');
     expect(distantShots()).toHaveLength(0); // protected local suspense
     finishQueuedSpeech();
@@ -1134,7 +1136,9 @@ describe('Big Update 2 sneaky PEEK and readable catches', () => {
     advance(1000); act(()=>latest.peek()); advance(500);
     expect(latest.game.caught).toBe(catcher); expect(latest.game.phase).toBe('PLAYER_SHOOTING');
     expect(latest.game.peekedCard).toBeNull(); expect(latest.game.peekActor).toBeNull();
-    expect(latest.game.triggerRemainingMs).toBe(CONFIG.TRIGGER_TIMEOUT_MS); expect(tableAudio.play).toHaveBeenCalledWith('sting');
+    expect(latest.game.awaitingTrigger).toBe(false); expect(latest.game.triggerRemainingMs).toBeNull();
+    expect(tableAudio.play).toHaveBeenCalledWith('sting');
+    advance(GUN_SLIDE_MS); expect(latest.game.triggerRemainingMs).toBe(CONFIG.TRIGGER_TIMEOUT_MS);
     const category=catcher==='host'?'host_caught_player':'opp_caught_player';
     advance(100); expect(allSpeech().some(l=>l.category===category&&l.speaker===catcher)).toBe(true);
     holdTrigger(); expect(latest.game.revolver.currentChamber).toBe(2);
@@ -1216,8 +1220,56 @@ describe('Big Update 2 Host trigger deadline', () => {
   });
   it('applies the same timeout to a caught PEEK penalty and resumes that hand after an empty forced shot', ()=>{
     timedGazes(1500,5000); startDecision(); const hand=latest.game.round; advance(1000); act(()=>latest.peek()); advance(500);
-    advance(CONFIG.TRIGGER_TIMEOUT_MS); expect(latest.game.phase).toBe('HOST_FORCE_SHOT');
+    advance(GUN_SLIDE_MS + CONFIG.TRIGGER_TIMEOUT_MS); expect(latest.game.phase).toBe('HOST_FORCE_SHOT');
     advance(3500+3400); expect(latest.game.phase).toBe('PLAYER_DECISION'); expect(latest.game.round).toBe(hand);
     expect(latest.game.stats.forcedShots).toBe(1); expect(latest.game.stats.handsLost).toBe(0);
+  });
+});
+
+describe('Host revolver transfers before a reachable pickup', () => {
+  it('slides once before enabling either player input or the absolute deadline', () => {
+    vi.mocked(dealRound).mockImplementation(()=>copy(playerLoses)); startDecision();
+    act(()=>latest.stand()); advance(950+1500);
+    const transfer=latest.game.gunTransfer;
+    expect(transfer).toMatchObject({stage:'to-shooter',side:'player',startedAt:Date.now(),duration:GUN_SLIDE_MS});
+    expect(latest.game.awaitingTrigger).toBe(false); expect(latest.game.triggerDeadline).toBeNull();
+    const chamber=latest.game.revolver, randomCalls=vi.mocked(Math.random).mock.calls.length;
+    act(()=>{latest.beginTriggerHold(); latest.spinCylinder(); latest.pullTrigger();});
+    expect(latest.game.triggerHeld).toBe(false); expect(latest.game.abilities.player.spin).toBe(true);
+    advance(GUN_SLIDE_MS-1); expect(latest.game.awaitingTrigger).toBe(false);
+    advance(1); expect(latest.game.gunTransfer).toBeNull(); expect(latest.game.awaitingTrigger).toBe(true);
+    expect(latest.game.triggerDeadline).toBe(Date.now()+CONFIG.TRIGGER_TIMEOUT_MS);
+    expect(latest.game.revolver).toBe(chamber); expect(vi.mocked(Math.random).mock.calls).toHaveLength(randomCalls);
+    expect(vi.mocked(tableAudio.play).mock.calls.filter(([sound])=>sound==='slide')).toHaveLength(1);
+  });
+  it('waits for the entire slide even if the captive finishes its pre-shot line immediately', () => {
+    startDecision(); act(()=>latest.stand()); advance(950+1500);
+    const started=latest.game.gunTransfer!.startedAt;
+    for(let i=0;i<20&&(latest.game.speech||latest.game.speechQueue.length);i++) {
+      if(latest.game.speech) act(()=>latest.finishSpeech());
+      advance(100);
+    }
+    expect(Date.now()-started).toBeLessThan(GUN_SLIDE_MS);
+    expect(latest.game.aiShotStartedAt).toBeNull();
+    advance(started+GUN_SLIDE_MS-Date.now()-1); expect(latest.game.aiShotStartedAt).toBeNull();
+    advance(1); expect(latest.game.aiShotStartedAt).toBe(Date.now());
+    expect(latest.game.revolver.currentChamber).toBe(1);
+  });
+  it('sets down for 700ms, then slides back once, without advancing a second chamber or delaying the next round', () => {
+    startPlayerShot(); holdTrigger(); const shotAt=Date.now(), chamber=latest.game.revolver;
+    expect(latest.game.gunTransfer).toBeNull();
+    advance(GUN_SET_DOWN_MS-1); expect(latest.game.gunTransfer).toBeNull();
+    advance(1); expect(latest.game.gunTransfer).toMatchObject({stage:'return',side:'player',startedAt:Date.now(),duration:GUN_SLIDE_MS});
+    advance(GUN_SLIDE_MS); expect(latest.game.gunTransfer).toBeNull(); expect(latest.game.revolver).toBe(chamber);
+    expect(vi.mocked(tableAudio.play).mock.calls.filter(([sound])=>sound==='slide')).toHaveLength(2);
+    advance(shotAt+3400-Date.now()); expect(latest.game.phase).toBe('SWEEPING');
+  });
+  it('cancels an in-flight delivery on replay and never enables an old trigger or consumes the fresh cylinder', () => {
+    vi.mocked(dealRound).mockImplementation(()=>copy(playerLoses)); startDecision(); act(()=>latest.stand()); advance(950+1500);
+    expect(latest.game.gunTransfer?.stage).toBe('to-shooter'); advance(300);
+    startMatch(); const revolver=latest.game.revolver;
+    expect(latest.game.gunTransfer).toBeNull(); advance(GUN_SLIDE_MS);
+    expect(latest.game.phase).toBe('DEALING'); expect(latest.game.awaitingTrigger).toBe(false);
+    expect(latest.game.triggerDeadline).toBeNull(); expect(latest.game.revolver).toBe(revolver);
   });
 });

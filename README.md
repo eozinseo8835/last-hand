@@ -96,7 +96,9 @@ The `pixel-3d` branch retains its existing Three.js bunker, masked Host design, 
 - `src/dialogue.ts`: original dialogue categories and legacy default banks; no live AI or API.
 - `src/Scene.tsx`: WebGL rendering, postprocessing, mouse/WASD input, and scene lifecycle.
 - `src/scene/room.ts`, `src/scene/monitors.ts`: procedural rooms, props, lighting, and bounded low-resolution monitor feeds.
-- `src/scene/actors.ts`: character, hands, revolver, dealer deck, held fan, and per-card animations.
+- `src/scene/actors.ts`: production cast choreography, dealer deck, held fan, and per-card animations.
+- `src/scene/skeleton.ts`, `poses.ts`: shared hierarchical characters, fixed bone lengths, joint limits and numeric poses.
+- `src/scene/revolver.ts`, `src/gunTransfer.ts`: one procedural revolver model, wrist socket and timed table delivery.
 - `src/scene/camera.ts`, `merge.ts`: constrained look controls and static geometry batching.
 - `src/audio.ts`: existing effects and voice, synthesized heartbeat/mechanisms/events, ducking, and master mute.
 - `src/HoldTrigger.tsx`: pointer/keyboard hold input, progress ring, and cancellation on release or lost focus.
@@ -143,3 +145,9 @@ The Nervous Man now stands at 16 instead of 15 to meet this update's requested b
 The front table rail is thinner and the steel support is an open frame so the captive's articulated legs have an unobstructed sight line below the opaque felt. Card rows share `src/tableLayout.ts`; this keeps even an eleven-card hand within its assigned area and clear of the gun. Guard pocket meshes carry both removed hoods out of the room.
 
 Final Big Update 2 verification: **344 tests across 21 files pass**, production build succeeds, and Chromium checks cover all three desktop HUD sizes, PEEK/HIT, Host enforcement, the complete campaign, both endings, replay, and positional voices without console errors. See [the section-by-section completion record](docs/big-update-2.md).
+
+The character skeleton rebuild replaces the production cast with nested joints and fixed metre-scale limbs, articulated skin-tone hands, and one hand-sized revolver. The Host slides the weapon within reach before pickup. Forced shots show only its bent forearm, hand and gun from the left, with its body outside the view and close-mesh protection enabled.
+
+For development inspection, open **`http://localhost:5173/?debug=poses`** after `npm run dev`. The viewer uses the actual production models, with front/side views and the pixel effect off/on. The [pose review record](docs/character-pose-review.md) lists all 11 pose categories and the 84-image review; this viewer is excluded from production builds.
+
+Skeleton completion: forced-shot staging, PEEK visibility/reach, Host shuffle/dealing/gaze and look-around regressions pass. The viewer includes `?debug=poses&pose=host-forced-shot` (front uses the seated camera) and `?debug=poses&pose=player-peek`. Final validation passes **374 tests across 25 files** and the production build; targeted Chromium checks report no console errors. See the completion section of the pose review record for the limited rechecks after the WIP checkpoint.

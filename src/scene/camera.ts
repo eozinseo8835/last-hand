@@ -90,14 +90,14 @@ function leanLimit(limit: number) { return Number.isFinite(limit) ? Math.min(MAX
 /** Wheel movement leans the seated torso; it never turns into walking or unrestricted zoom. */
 export function wheelLean(state: LeanState, deltaY: number, limit: number, allowed: boolean): void {
   if (!allowed || !Number.isFinite(deltaY)) return;
-  state.target = Math.max(0, Math.min(leanLimit(limit), state.target - deltaY * .0015));
+  state.target = Math.max(-leanLimit(limit), Math.min(leanLimit(limit), state.target - deltaY * .0015));
 }
 
 export function updateLean(state: LeanState, delta: number, limit: number, locked: boolean): void {
   const maximum = leanLimit(limit);
-  state.target = locked ? 0 : Math.max(0, Math.min(maximum, state.target));
+  state.target = locked ? 0 : Math.max(-maximum, Math.min(maximum, state.target));
   state.amount += (state.target - state.amount) * (1 - Math.exp(-12 * Math.max(0, delta)));
-  state.amount = Math.max(0, Math.min(maximum, state.amount));
+  state.amount = Math.max(-maximum, Math.min(maximum, state.amount));
 }
 
 /** Covered players can turn their head before the guard takes hold of the hood. */

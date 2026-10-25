@@ -1,3 +1,5 @@
+import type { GunTransfer } from './gunTransfer';
+import { createCharacter } from './scene/skeleton';
 import type { Attention } from './attention';
 import { bodyLanguage, shotBodyOnly } from './bodyLanguage';
 import { useEffect, useRef, useState } from 'react';
@@ -11,6 +13,7 @@ import { createCeilingFeed, createMonitorWall } from './scene/monitors';
 import { cameraRecenter, createLeanState, createLookKeys, createLookState, dragLook, updateKeyboardLook, updateLean, updateLook, wheelLean } from './scene/camera';
 import { cinematicProgress, focusRecovery, hoodCoverage, type CinematicState } from './cinematics';
 import type { AmbientEvent, DistantShot } from './roomLife';
+import { playerPeekDeck } from './tableLayout';
 
 export type SceneProps = {
   phase: GamePhase;
@@ -45,6 +48,7 @@ export type SceneProps = {
   ambientEvent?: AmbientEvent | null;
   aiShotStartedAt?: number | null;
   aiShotDurationMs?: number;
+  gunTransfer?: GunTransfer | null;
   attention?: Attention; stress?: number; caught?: 'host' | 'captive' | 'ai' | null;
   peekStartedAt?: number | null; forceShotAt?: number | null;
   onOpponentInView?: (visible: boolean) => void;
@@ -186,7 +190,7 @@ export default function Scene(props: SceneProps) {
     const world = new THREE.Scene();
     world.background = new THREE.Color('#090d0b');
     world.fog = new THREE.FogExp2('#0c110f', .135);
-    const camera = new THREE.PerspectiveCamera(58, 16 / 9, .055, 28);
+    const camera = new THREE.PerspectiveCamera(68, 16 / 9, .055, 28);
     camera.rotation.order = 'YXZ';
     const room = createRoom(world);
     world.add(camera);
@@ -196,23 +200,13 @@ export default function Scene(props: SceneProps) {
     monitors.setCeilingTexture(ceilingFeed.target.texture);
     // The first-person hands and this overhead body represent the same player.
     // Only the surveillance camera sees layer 1, so the seated POV stays intact.
-    const surveillancePlayer = new THREE.Group();
+    const surveillanceRig = createCharacter('captive',1);
+    const surveillancePlayer = surveillanceRig.group;
     surveillancePlayer.name = 'surveillance-player-body';
     surveillancePlayer.userData.actorRole = 'player';
-    surveillancePlayer.position.set(0, .68, 1.80);
-    const playerCloth = new THREE.MeshStandardMaterial({ color: 0x354032, roughness: .9, flatShading: true });
-    const playerSkin = new THREE.MeshStandardMaterial({ color: 0x9d9079, roughness: .9, flatShading: true });
-    const playerHair = new THREE.MeshStandardMaterial({ color: 0x242b22, roughness: .95, flatShading: true });
-    const playerTorso = new THREE.Mesh(new THREE.BoxGeometry(.49, .56, .26), playerCloth);
-    playerTorso.position.y = .31;
-    const playerShoulders = new THREE.Mesh(new THREE.BoxGeometry(.62, .15, .28), playerCloth);
-    playerShoulders.position.y = .60;
-    const playerHead = new THREE.Mesh(new THREE.SphereGeometry(1, 8, 6), playerSkin);
-    playerHead.scale.set(.185, .23, .17); playerHead.position.set(0, .91, .02);
-    const playerCrown = new THREE.Mesh(new THREE.SphereGeometry(1, 8, 4, 0, Math.PI * 2, 0, Math.PI * .48), playerHair);
-    playerCrown.scale.set(.19, .235, .175); playerCrown.position.copy(playerHead.position);
-    surveillancePlayer.add(playerTorso, playerShoulders, playerHead, playerCrown);
-    surveillancePlayer.traverse(object => object.layers.set(1)); world.add(surveillancePlayer);
+    surveillancePlayer.position.set(0,.45,.90); surveillancePlayer.rotation.y=Math.PI;
+    surveillanceRig.pose('seated-resting');
+    surveillancePlayer.traverse(object=>object.layers.set(1)); world.add(surveillancePlayer);
     const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
     const blood = new THREE.Group();
     const bloodMap = splatterTexture();
@@ -221,7 +215,7 @@ export default function Scene(props: SceneProps) {
     wallStain.position.set(0, 1.7, -4.075);
     const tableStain = new THREE.Mesh(new THREE.PlaneGeometry(1.1, .9), bloodMaterial);
     tableStain.rotation.x = -Math.PI / 2;
-    tableStain.position.set(0, .889, -.62);
+    tableStain.position.set(0,.752,-.28);
     blood.add(wallStain, tableStain); blood.visible = false; world.add(blood);
     const muzzle = new THREE.PointLight('#fff1bd', 0, 4, 2); world.add(muzzle);
 
@@ -354,16 +348,16 @@ export default function Scene(props: SceneProps) {
       if (state.dead === 'player') deathProgress = Math.min(1, deathProgress + dt / 1.8);
       else deathProgress = 0;
       const feedSlump = state.dead === 'player' && state.phase === 'ENDING_DEATH' && state.storyStage !== 'fall' ? 1 : deathProgress;
-      surveillancePlayer.rotation.set(-feedSlump * 1.3, 0, -feedSlump * .14);
-      surveillancePlayer.position.y = .68 - feedSlump * .05;
+      surveillancePlayer.rotation.set(-feedSlump * 1.3, Math.PI, -feedSlump * .14);
+      surveillancePlayer.position.y = .45 - feedSlump * .05;
       blood.visible = state.dead === 'ai' && CONFIG.GORE_LEVEL !== 'low';
       const sway = Math.sin(time * 1.15) * .0025;
       const distantAge = state.distantShot ? (epoch - state.distantShot.startedAt) / 1000 : -1;
       const distantShake = distantAge >= 0 && distantAge < .65 ? Math.exp(-distantAge * 8) : 0;
       const doorShake = (eventDoorPulse(event, epoch) + distantShake * .55) * (motionPreference.matches ? .2 : 1);
-      camera.position.set(Math.sin(time * .7) * .005, 1.45 + Math.sin(time * 1.1) * .007 - deathProgress * .38 - lean.amount * .16 + hood.cameraY * (motionPreference.matches ? .2 : 1), 2.65 - lean.amount + hood.cameraZ * (motionPreference.matches ? .2 : 1));
+      camera.position.set(Math.sin(time * .7) * .005, 1.20 + Math.sin(time * 1.1) * .007 - deathProgress * .38 - lean.amount * .16 + hood.cameraY * (motionPreference.matches ? .2 : 1), 1.05 - lean.amount + hood.cameraZ * (motionPreference.matches ? .2 : 1));
       camera.position.x += Math.sin(time * 79) * doorShake * .006 + hood.cameraX;
-      camera.rotation.set(-.173 + look.pitch + sway + Math.sin(time * 73) * impulse * .025, look.yaw + Math.sin(time * 61) * impulse * .018, -deathProgress * .62 + Math.cos(time * 82) * impulse * .012);
+      camera.rotation.set(-.12 + look.pitch + sway + Math.sin(time * 73) * impulse * .025, look.yaw + Math.sin(time * 61) * impulse * .018, -deathProgress * .62 + Math.cos(time * 82) * impulse * .012);
       camera.rotation.x += Math.sin(time * 87 + .7) * doorShake * .005 + hood.cameraPitch * (motionPreference.matches ? .2 : 1);
       camera.rotation.z += Math.cos(time * 73) * doorShake * .003;
       if (isExitStage(state.phase, state.storyStage)) {
@@ -374,7 +368,7 @@ export default function Scene(props: SceneProps) {
           // Walk around the table before climbing the actual stair geometry outside the door.
           const approach = Math.min(1, progress / .36), climb = Math.max(0, (progress - .36) / .64);
           camera.position.set(2.7 * Math.min(1, approach * 2.2), 1.85 + climb * 2.8,
-            approach < 1 ? THREE.MathUtils.lerp(2.65, -4.8, approach) : THREE.MathUtils.lerp(-4.8, -10.0, climb));
+            approach < 1 ? THREE.MathUtils.lerp(1.05, -4.8, approach) : THREE.MathUtils.lerp(-4.8, -10.0, climb));
           if (!motionPreference.matches && stage === 'stairs') camera.position.y += Math.sin(stageElapsed * 10) * .016;
           camera.lookAt(2.7, THREE.MathUtils.lerp(1.65, 4.35, climb), -10.6);
           if (stage === 'viewers') camera.lookAt(3.18, 3.35, -8.45);
@@ -386,9 +380,9 @@ export default function Scene(props: SceneProps) {
       if (state.phase === 'PLAYER_PEEKING') {
         const age = state.peekStartedAt == null ? 0 : Math.max(0,(epoch-state.peekStartedAt)/CONFIG.PEEK_DURATION_MS);
         const leanPeek = Math.sin(Math.min(1,age)*Math.PI);
-        camera.position.x -= leanPeek * .65;
-        camera.position.z -= leanPeek * .60;
-        const deckLook = new THREE.Vector3(-1.20, .99, -.10);
+        camera.position.x -= leanPeek * .16;
+        camera.position.z -= leanPeek * .14;
+        const deckLook = new THREE.Vector3(...playerPeekDeck(age).position);
         const facing = camera.quaternion.clone(); camera.lookAt(deckLook);
         camera.quaternion.slerpQuaternions(facing, camera.quaternion.clone(), Math.min(1,leanPeek*2));
       }

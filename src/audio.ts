@@ -4,7 +4,7 @@ import { voiceRandom, type VoicePlan } from './voice';
 import { eventBangOffsets, heartbeatSettings, type RoundEvent } from './tension';
 import type { AmbientEvent } from './roomLife';
 
-type Sound = 'card' | 'click' | 'shot' | 'tension' | 'hammer' | 'clack' | 'spin' | 'sting';
+type Sound = 'card' | 'click' | 'shot' | 'tension' | 'hammer' | 'clack' | 'spin' | 'sting' | 'slide';
 export type ShotSoundEvent = { id: string; kind: 'local' | 'distant'; roomId?: number; direction?: number };
 export type StoryCue = 'hood' | 'drag' | 'door' | 'feed-shot' | 'escape' |
   'door-creak' | 'door-slam' | 'boots' | 'burlap-tug' | 'hood-cinch' | 'gasp' | 'sob' | 'snip';
@@ -709,6 +709,14 @@ export class TableAudio {
     setTimeout(() => this.disposeLayer(layer), 500);
   }
   play(sound: Sound) {
+    if (sound === 'slide') {
+      const ctx = this.context;
+      if (!ctx || !this.master || this.muted || ctx.state !== 'running') return;
+      const layer = this.makeLayer(this.master), random = voiceRandom(this.soundSeed(`felt-slide:${this.revolverSerial++}`));
+      // One dry friction sweep, not a metallic strike or a second report.
+      this.noise(layer, ctx.currentTime, .72, .035, 750, random, 'lowpass', true);
+      setTimeout(() => this.disposeLayer(layer), 850); return;
+    }
     if (sound === 'sting') {
       const ctx = this.context;
       if (!ctx || this.muted || ctx.state !== 'running' || !this.master) return;
