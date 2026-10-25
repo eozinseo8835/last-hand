@@ -13,6 +13,8 @@ export const POSE_CASES = [
   { pose: 'player-hold-to-pull', room: 1 as const, label: 'Player · hold to pull' },
   { pose: 'host-forced-shot', room: 1 as const, label: 'Host · forced shot (front = seated view)' },
   { pose: 'player-peek', room: 1 as const, label: 'Player · PEEK' },
+ ...['hood-on','hood-mid-removal','hood-off','player-empty-hand','host-open-hand'].map(pose=>({pose,room:1 as const,label:pose.replaceAll('-',' ')})),
+
 ];
 export type PoseSelection = { pose: string; room: 1 | 2 | 3; view: 'front' | 'side'; pixel: boolean; animate: boolean; time: number };
 export function poseSelection(search: string): PoseSelection {
@@ -145,7 +147,7 @@ export default function PoseViewer() {
     const table = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1.56, .025, 1.20)), new THREE.LineBasicMaterial({ color: 0x72857b, transparent: true, opacity: .38 })); table.position.y = .75; world.add(table);
     const target = new THREE.WebGLRenderTarget(640, 360, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
     target.texture.colorSpace = THREE.LinearSRGBColorSpace;
-    const material = new THREE.ShaderMaterial({ uniforms: { sceneTexture: { value: target.texture }, time: { value: 0 }, triggerDarkening: { value: 0 }, heartbeatPulse: { value: 0 }, hoodCovered: { value: 0 }, hoodLift: { value: 0 }, hoodDrop: { value: 1 }, focusBlur: { value: 0 }, glare: { value: 0 }, squint: { value: 0 } },
+    const material = new THREE.ShaderMaterial({ uniforms: { sceneTexture: { value: target.texture }, time: { value: 0 }, triggerDarkening: { value: 0 }, heartbeatPulse: { value: 0 }, forcedContact: {value:0}, hoodCovered: { value: 0 }, hoodLift: { value: 0 }, hoodDrop: { value: 1 }, focusBlur: { value: 0 }, glare: { value: 0 }, squint: { value: 0 } },
       vertexShader: 'varying vec2 vUv; void main(){vUv=uv;gl_Position=vec4(position.xy,0.,1.);}', fragmentShader: retroFragment, depthTest: false, depthWrite: false, toneMapped: false });
     const post = new THREE.Scene(), postCamera = new THREE.Camera();
     const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material); post.add(quad);
@@ -157,6 +159,7 @@ export default function PoseViewer() {
         if (!actors.setDebugPose) { setError('The production pose rebuild is not available in this checkout.'); frame = requestAnimationFrame(animate); return; }
         if (changed) actors.setDebugPose(state.pose, state.room);
         const time = state.animate ? now / 1000 : state.time;
+        productionCamera.aspect=width/height;productionCamera.updateProjectionMatrix();
         productionCamera.position.set(0,1.2,1.05);productionCamera.rotation.set(-.12,0,0);
         if(state.pose==='player-peek'){
           productionCamera.position.x-=.16;productionCamera.position.z-=.14;
@@ -183,6 +186,7 @@ export default function PoseViewer() {
         const h = state.pixel ? 360 : Math.round(height), w = Math.round(h * width / height);
         renderer.setSize(w, h, false); target.setSize(w, h); canvas.style.imageRendering = state.pixel ? 'pixelated' : 'auto';
         canvas.dataset.pose = state.pose; canvas.dataset.room = String(state.room); canvas.dataset.view = state.view; canvas.dataset.pixel = String(state.pixel);
+        material.uniforms.forcedContact.value=state.pose==='host-forced-shot'?1:0;
         if (state.pixel) { renderer.setRenderTarget(target); renderer.render(world, camera); renderer.setRenderTarget(null); material.uniforms.time.value = time; renderer.render(post, postCamera); }
         else { renderer.setRenderTarget(null); renderer.render(world, camera); }
         const rigs = actors.skeletons;

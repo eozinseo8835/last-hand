@@ -1,5 +1,7 @@
 # LAST HAND
 
+Small Update 1 adds the restrained left-edge temple-contact shot, relaxed empty hands and inward-curling fingers, and a rounded woven sack with smoothly deforming removal. The development pose viewer includes hood on/mid-removal/off, the empty resting hand and the Host gesture. See [the update and validation record](docs/small-update-1.md). Validation: 378 tests pass and the production build succeeds.
+
 A single-player psychological blackjack campaign in a procedural pixelated 3D bunker. Eight kidnapped guests enter four tables; only one leaves. Survive three rooms against other captives while the masked Host deals. The loser of each hand faces one shared six-chamber revolver. All interface and dialogue text is in English.
 
 ## Develop

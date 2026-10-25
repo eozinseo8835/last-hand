@@ -93,6 +93,7 @@ export const retroFragment = `
   uniform float time;
   uniform float triggerDarkening;
   uniform float heartbeatPulse;
+  uniform float forcedContact;
   uniform float hoodCovered;
   uniform float hoodLift;
   uniform float hoodDrop;
@@ -110,7 +111,7 @@ export const retroFragment = `
   }
   void main() {
     vec2 pixel = vec2(1. / 640., 1. / 360.);
-    float radius = focusBlur * 7. + hoodCovered * 10.;
+    float radius = forcedContact * (1. - smoothstep(0., .12, vUv.x)) * 1.8 + focusBlur * 7. + hoodCovered * 10.;
     vec3 color = texture2D(sceneTexture, vUv).rgb;
     if (radius > .01) {
       color *= .28;
@@ -225,7 +226,7 @@ export default function Scene(props: SceneProps) {
     const postScene = new THREE.Scene();
     const postCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     const postMaterial = new THREE.ShaderMaterial({
-      uniforms: { sceneTexture: { value: target.texture }, time: { value: 0 }, triggerDarkening: { value: 0 }, heartbeatPulse: { value: 0 }, hoodCovered: { value: 0 }, hoodLift: { value: 0 }, hoodDrop: { value: 1 }, focusBlur: { value: 0 }, glare: { value: 0 }, squint: { value: 0 } },
+      uniforms: { sceneTexture: { value: target.texture }, time: { value: 0 }, triggerDarkening: { value: 0 }, heartbeatPulse: { value: 0 }, forcedContact: {value:0}, hoodCovered: { value: 0 }, hoodLift: { value: 0 }, hoodDrop: { value: 1 }, focusBlur: { value: 0 }, glare: { value: 0 }, squint: { value: 0 } },
       vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }',
       fragmentShader: retroFragment,
       depthTest: false, depthWrite: false, toneMapped: false,
@@ -386,6 +387,8 @@ export default function Scene(props: SceneProps) {
         const facing = camera.quaternion.clone(); camera.lookAt(deckLook);
         camera.quaternion.slerpQuaternions(facing, camera.quaternion.clone(), Math.min(1,leanPeek*2));
       }
+      const contact=state.phase==='HOST_FORCE_SHOT'&&state.forceShotAt!=null?THREE.MathUtils.smoothstep((epoch-state.forceShotAt)/1000,1.1,1.35):0;
+      camera.rotation.y-=contact*.055;
       camera.updateMatrixWorld(true);
       room.update(time, dt, state.danger, state.suspense, impulse, event, epoch, {
         roomNumber: state.roomNumber, phase: state.phase === 'GAME_OVER' && winPose ? 'ENDING_WIN' : state.phase,
@@ -409,7 +412,8 @@ export default function Scene(props: SceneProps) {
       monitors.update(state, time, epoch);
       const signalLost = (state.phase === 'ENDING_DEATH' && state.storyStage === 'no-signal') || (state.phase === 'GAME_OVER' && state.dead === 'player');
       monitors.setSignalLost(signalLost);
-      postMaterial.uniforms.triggerDarkening.value = state.phase === 'PLAYER_SHOOTING' ? Math.max(0, Math.min(1, state.triggerProgress ?? 0)) : 0;
+      postMaterial.uniforms.forcedContact.value=contact;
+      postMaterial.uniforms.triggerDarkening.value = contact>0 ? .7*contact : state.phase === 'PLAYER_SHOOTING' ? Math.max(0, Math.min(1, state.triggerProgress ?? 0)) : 0;
       postMaterial.uniforms.heartbeatPulse.value = heartbeat * (motionPreference.matches ? .2 : 1);
       postMaterial.uniforms.hoodCovered.value = hood.covered;
       postMaterial.uniforms.hoodLift.value = hood.lift;
