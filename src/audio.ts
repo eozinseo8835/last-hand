@@ -1,3 +1,4 @@
+import { SoundStage, type MixState } from './soundStage';
 import { CONFIG } from './game';
 import type { Speaker } from './campaign';
 import { voiceRandom, type VoicePlan } from './voice';
@@ -6,16 +7,20 @@ import type { AmbientEvent } from './roomLife';
 
 type Sound = 'card' | 'click' | 'shot' | 'tension' | 'hammer' | 'clack' | 'spin' | 'sting' | 'slide';
 export type ShotSoundEvent = { id: string; kind: 'local' | 'distant'; roomId?: number; direction?: number };
-export type StoryCue = 'hood' | 'drag' | 'door' | 'feed-shot' | 'escape' |
+export type StoryCue = 'host-step' | 'hood' | 'drag' | 'door' | 'feed-shot' | 'escape' |
   'door-creak' | 'door-slam' | 'boots' | 'burlap-tug' | 'hood-cinch' | 'gasp' | 'sob' | 'snip';
 export type HeartbeatState = { active: boolean; chambersFired: number; pulling: boolean; urgency?: number };
 type AudioLayer = { gain: GainNode; sources: Set<AudioScheduledSourceNode>; nodes: Set<AudioNode>; closed: boolean };
 type SpeakingVoice = {
-  plan: VoicePlan; speaker: Speaker; start: number; end: number; gain: GainNode;
+  behind:boolean; plan: VoicePlan; speaker: Speaker; start: number; end: number; gain: GainNode;
   nodes: AudioNode[]; sources: AudioScheduledSourceNode[]; stopped: boolean;
 };
 
 export class TableAudio {
+  private stage:SoundStage|null=null;
+  private levels={master:1,effects:1,voice:1};
+  setVolumes(levels:{master:number;effects:number;voice:number}){this.levels={master:Math.max(0,Math.min(1,levels.master)),effects:Math.max(0,Math.min(1,levels.effects)),voice:Math.max(0,Math.min(1,levels.voice))};this.stage?.volumes(this.levels,this.muted);if(!this.stage&&this.master&&this.context)this.master.gain.setValueAtTime(this.muted?0:.6*this.levels.master,this.context.currentTime);}
+  setSoundState(state:MixState){if(this.muted||this.context?.state!=='running')return;if(!this.stage&&this.master&&this.hoodFilter){this.hoodFilter.disconnect();this.stage=new SoundStage(this.context,this.master,this.hoodFilter);this.tensionDuck?.disconnect();this.tensionDuck?.connect(this.stage.ambient);this.stage.volumes(this.levels,this.muted);}this.stage?.update(state);}
   private context: AudioContext | null = null;
   private master: GainNode | null = null;
   private muted = false;
@@ -49,15 +54,16 @@ export class TableAudio {
     try { this.context ??= new AudioContext(); } catch { return; }
     if (!this.master) this.master = this.context.createGain();
     if (!this.tensionDuck) {
-      this.tensionDuck = this.context.createGain(); this.tensionDuck.connect(this.master);
+      this.tensionDuck = this.context.createGain(); this.tensionDuck.connect(this.stage?.ambient??this.master);
     }
     if (!this.hoodFilter) {
       this.hoodFilter = this.context.createBiquadFilter();
       this.hoodFilter.type = 'lowpass'; this.hoodFilter.Q.value = .65;
       this.hoodFilter.frequency.value = this.hooded ? 350 : 19000;
-      this.master.connect(this.hoodFilter); this.hoodFilter.connect(this.context.destination);
+      this.master.connect(this.hoodFilter);this.hoodFilter.connect(this.context.destination);
     }
-    this.master.gain.value = this.muted ? 0 : .6;
+    if(!this.stage&&typeof this.context.createDynamicsCompressor==='function'){this.hoodFilter!.disconnect();this.stage=new SoundStage(this.context,this.master,this.hoodFilter!);this.tensionDuck?.disconnect();this.tensionDuck?.connect(this.stage.ambient);}
+    this.master.gain.value = this.muted ? 0 : .6*this.levels.master;this.stage?.volumes(this.levels,this.muted);
     this.unlock = this.context.resume().catch(() => { /* An unavailable audio device leaves the table playable. */ });
     void this.unlock.then(() => {
       this.startHeartbeat();
@@ -67,8 +73,8 @@ export class TableAudio {
     });
   }
   mute(value: boolean) {
-    this.muted = value;
-    if (this.context && this.master) this.master.gain.setValueAtTime(value ? 0 : .6, this.context.currentTime);
+    this.muted = value;this.stage?.volumes(this.levels,value);
+    if (this.context && this.master) this.master.gain.setValueAtTime(value ? 0 : .6*this.levels.master, this.context.currentTime);
     if (value) { this.stopHeartbeat(); this.stopEvent(); this.stopHood(); this.stopAmbient(); }
     else { this.startHeartbeat(); this.startEvent(); this.startHood(); this.startAmbient(); }
     if (this.context && this.voice) {
@@ -80,6 +86,8 @@ export class TableAudio {
       }
     }
   }
+  setListener(position:number[],forward:number[],up:number[]){const l=this.context?.listener;if(!l)return;const t=this.context!.currentTime;if(l.positionX){[l.positionX,l.positionY,l.positionZ,l.forwardX,l.forwardY,l.forwardZ,l.upX,l.upY,l.upZ].forEach((p,i)=>p.setTargetAtTime([...position,...forward,...up][i],t,.02));}}
+  setVoicePosition(speaker:Speaker,position:number[]){if(!this.voice||this.voice.behind||this.voice.speaker!==speaker||!this.context)return;for(const node of this.voice.nodes)if('positionX' in node){const p=node as PannerNode;[p.positionX,p.positionY,p.positionZ].forEach((a,i)=>a.setTargetAtTime(position[i],this.context!.currentTime,.02));}}
   startVoice(plan: VoicePlan, speaker: Speaker = 'captive', behind = false) {
     this.stopVoice();
     if (!this.context || !this.master || this.muted || !CONFIG.VOICE_ENABLED || plan.parameters.volume <= 0 || !plan.steps.some(step => step.syllable)) return;
@@ -119,7 +127,7 @@ export class TableAudio {
     }
     room.buffer = impulse;
     const voice: SpeakingVoice = {
-      plan, speaker, start: now, end: now, gain: line, stopped: false,
+      behind, plan, speaker, start: now, end: now, gain: line, stopped: false,
       nodes: [line, drive, distortion, mask, room, wet, echo, echoGain, ...(position ? [position] : [])], sources: [],
     };
     this.voice = voice;
@@ -178,27 +186,27 @@ export class TableAudio {
   private positionVoice(line: GainNode, speaker: Speaker, behind = false): AudioNode | null {
     const ctx = this.context!, pan = behind ? 0 : speaker === 'host' ? -.7 : 0;
     try {
-      if (behind && typeof ctx.createPanner === 'function') {
+      if (typeof ctx.createPanner === 'function') {
         const position = ctx.createPanner(); position.panningModel = 'HRTF';
         // The listener faces -Z by default, so +Z places the final line behind it.
         if (position.positionX) {
-          position.positionX.value = 0; position.positionY.value = 0; position.positionZ.value = 1;
-        } else position.setPosition(0, 0, 1);
-        line.connect(position); position.connect(this.master!); return position;
+          position.positionX.value = behind?0:speaker==='host'?-.7:0; position.positionY.value = 0; position.positionZ.value = behind?1:speaker==='host'?-1.4:-1.9;
+        } else position.setPosition(behind?0:speaker==='host'?-.7:0,0,behind?1:-1.9);
+        line.connect(position); position.connect(this.stage?.voices??this.master!); return position;
       }
       if (typeof ctx.createStereoPanner === 'function') {
         const position = ctx.createStereoPanner(); position.pan.value = pan;
-        line.connect(position); position.connect(this.master!); return position;
+        line.connect(position); position.connect(this.stage?.voices??this.master!); return position;
       }
       if (typeof ctx.createPanner === 'function') {
         const position = ctx.createPanner(); position.panningModel = 'equalpower';
         if (position.positionX) {
           position.positionX.value = pan * 1.5; position.positionY.value = 0; position.positionZ.value = -1;
         } else position.setPosition(pan * 1.5, 0, -1);
-        line.connect(position); position.connect(this.master!); return position;
+        line.connect(position); position.connect(this.stage?.voices??this.master!); return position;
       }
     } catch { /* Older audio devices retain the murmur even without stereo positioning. */ }
-    line.connect(this.master!); return null;
+    line.connect(this.stage?.voices??this.master!); return null;
   }
   stopVoice() {
     this.voiceRequest++;
@@ -234,6 +242,7 @@ export class TableAudio {
     if (kind === 'feed-shot') { this.playShot({ id: `legacy-feed:${++this.revolverSerial}`, kind: 'distant' }); return; }
     if (!this.context || !this.master || this.muted) return;
     const layer = this.makeLayer(this.master), now = this.context.currentTime + .005;
+    if(this.stage&&typeof this.context.createPanner==='function'){const rear=['boots','drag','door','door-creak','door-slam'].includes(kind);layer.gain.disconnect();const p=this.stage.position(layer.gain,rear?0:-.7,rear?2:-1.4,this.stage.effects);if(kind==='host-step'){p.positionX.linearRampToValueAtTime(-.9,now+1.1);p.positionZ.linearRampToValueAtTime(.2,now+1.1);}layer.nodes.add(p);}
     const random = voiceRandom(this.soundSeed(kind));
     if (kind === 'hood') {
       this.noise(layer, now, .62, .07, 360, random, 'lowpass', true);
@@ -253,7 +262,7 @@ export class TableAudio {
     } else if (kind === 'door-creak') {
       this.noise(layer, now, 1.1, .075, 730, random, 'bandpass', true);
       this.resonance(layer, now + .02, 1.2, .028, 97, 44, 'sawtooth');
-    } else if (kind === 'boots') {
+    } else if (kind === 'boots'||kind==='host-step') {
       for (let step = 0; step < 4; step++) {
         const at = now + step * .31;
         this.noise(layer, at, .14, .12, 700, random, 'lowpass');
@@ -349,9 +358,9 @@ export class TableAudio {
     if (elapsed >= event.duration) return;
     // Brief onsets must not replay merely because mute was toggled afterward.
     if (event.kind === 'bulb' && elapsed > 150) return;
-    const layer = this.makeLayer(this.master), now = ctx.currentTime + .005, random = voiceRandom(event.seed);
+    const layer = this.makeLayer(this.stage?.ambient??this.master), now = ctx.currentTime + .005, random = voiceRandom(event.seed);
     this.ambientLayer = layer;
-    this.positionLayer(layer, event.direction);
+    this.positionLayer(layer, event.direction,this.stage?.ambient);
     const at = (offset: number) => now + Math.max(0, offset - elapsed / 1000);
     const upcoming = (offset: number) => offset * 1000 >= elapsed;
     if (event.kind === 'bulb') {
@@ -432,7 +441,7 @@ export class TableAudio {
       });
       return;
     }
-    this.heartbeatLayer = this.makeLayer(this.tensionDuck);
+    this.heartbeatLayer = this.makeLayer(this.stage?.effects??this.tensionDuck);
     this.heartbeatNextBeat = ctx.currentTime + .025;
     this.heartbeatBeats = [];
     this.pumpHeartbeat();
@@ -502,7 +511,7 @@ export class TableAudio {
     }
     const elapsed = Math.max(0, Date.now() - event.startedAt);
     if (elapsed >= event.duration) return;
-    const layer = this.makeLayer(this.master); this.eventLayer = layer;
+    const layer = this.makeLayer(this.stage?.ambient??this.master!); this.eventLayer = layer;
     const now = ctx.currentTime, random = voiceRandom(event.seed ^ 0x9e3779b9);
     const at = (offset: number) => now + Math.max(.005, (offset - elapsed) / 1000);
     if (event.kind === 'door') {
@@ -578,8 +587,9 @@ export class TableAudio {
   private shotReport(event: ShotSoundEvent) {
     const ctx = this.context!, now = ctx.currentTime + .002, distant = event.kind === 'distant';
     const layer = this.makeLayer(this.master!);
-    const destination = distant ? this.positionLayer(layer, event.direction ?? (event.roomId === 3 ? 1 : -1)) : this.master!;
+    const destination = distant ? this.positionLayer(layer, event.direction ?? (event.roomId === 3 ? 1 : -1)) : this.stage?.effects??this.master!;
     const random = voiceRandom(this.soundSeed(event.id) ^ (distant ? 0xfead : 0x5a07));
+    const variation=distant?1:.96+random()*.08;
     // A single audio buffer combines crack and pressure body at the SAME onset.
     // Its energy decays continuously: no delayed copy can sound like another bang.
     const duration = distant ? .24 : .20;
@@ -590,41 +600,45 @@ export class TableAudio {
       const age = index / ctx.sampleRate, grain = random() * 2 - 1;
       const highNoise = grain - lastNoise * .82; lastNoise = grain;
       lowNoise += .12 * (grain - lowNoise);
-      phase += Math.PI * 2 * (distant ? 46 + 84 * Math.exp(-age * 24) : 48 + 122 * Math.exp(-age * 28)) / ctx.sampleRate;
+      phase += Math.PI * 2 * (distant ? 46 + 84 * Math.exp(-age * 24) : 48 + 72 * Math.exp(-age * 28)) * variation / ctx.sampleRate;
       const pressure = Math.sin(phase) * Math.exp(-age * (distant ? 20 : 28));
-      const attack = Math.min(1, age / .00065);
+      const attack = Math.min(1, age / (distant?.00065:.002));
       const signal = highNoise * Math.exp(-age * 74) * (distant ? .7 : 1.15)
         + lowNoise * Math.exp(-age * 24) * .55 + pressure * (distant ? .7 : .55);
       samples[index] = Math.tanh(signal * 1.35) * attack;
     }
     const source = ctx.createBufferSource(), tone = ctx.createBiquadFilter(), envelope = ctx.createGain();
     source.buffer = buffer; tone.type = 'lowpass'; tone.Q.value = .65;
-    tone.frequency.value = Math.min(ctx.sampleRate * .45, distant ? 1350 : 6500);
-    envelope.gain.setValueAtTime(distant ? .94 : 1.15, now);
+    tone.frequency.value = Math.min(ctx.sampleRate * .45, distant ? 1350 : 6500*variation);
+    envelope.gain.setValueAtTime(distant ? .94 : 4.2, now);
     envelope.gain.exponentialRampToValueAtTime(.0001, now + duration);
     source.connect(tone); tone.connect(envelope); envelope.connect(layer.gain);
     this.ownSource(layer, source, [tone, envelope]); source.start(now); source.stop(now + duration);
     const room = ctx.createConvolver(), wet = ctx.createGain();
-    const impulse = ctx.createBuffer(2, Math.ceil(ctx.sampleRate * .36), ctx.sampleRate);
+    const impulse = ctx.createBuffer(2, Math.ceil(ctx.sampleRate * (distant?.36:2.0)), ctx.sampleRate);
     for (let channel = 0; channel < 2; channel++) {
       const tail = impulse.getChannelData(channel);
       for (let index = 0; index < tail.length; index++) {
         const age = index / ctx.sampleRate;
-        tail[index] = (random() * 2 - 1) * Math.min(1, age / .016) * Math.exp(-age * 24) * .32;
+        tail[index] = (random() * 2 - 1) * Math.min(1, age / .016) * Math.exp(-age * (distant?24:3.8)) * .32;
       }
     }
     room.buffer = impulse; wet.gain.value = distant ? .20 : .16;
-    layer.gain.connect(room); room.connect(wet); wet.connect(destination);
+    layer.gain.connect(room);if(distant)room.connect(wet);else {const dark=ctx.createBiquadFilter();dark.type='lowpass';dark.frequency.value=1800;dark.Q.value=.4;room.connect(dark);dark.connect(wet);layer.nodes.add(dark);}wet.connect(destination);
     layer.nodes.add(room); layer.nodes.add(wet);
     if (!distant) {
       // This sustained quiet sine is ear ringing, never a second impact.
-      this.resonance(layer, now + .11, 1.05, .023, 2920, 2670);
+      this.resonance(layer,ctx.currentTime,.009,.055,2600,1600,'triangle');
+      this.resonance(layer,now+.08,.4,.035,1760,1700);
+      for(const delay of [.013,.026,.039]){const d=ctx.createDelay(.1),g=ctx.createGain(),f=ctx.createBiquadFilter();d.delayTime.value=delay;g.gain.value=.045;f.type='lowpass';f.frequency.value=2800;tone.connect(d);d.connect(f);f.connect(g);g.connect(destination);layer.nodes.add(d);layer.nodes.add(f);layer.nodes.add(g);}
+      this.stage?.deafen();
     }
     const finish = ctx.createBufferSource(); finish.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
-    this.ownSource(layer, finish, []); finish.connect(layer.gain); finish.start(now + .68);
+    this.ownSource(layer, finish, []); finish.connect(layer.gain); finish.start(now + (distant?.68:2.6));
     layer.closed = true;
   }
-  private positionLayer(layer: AudioLayer, direction: number): AudioNode {
+  private positionLayer(layer: AudioLayer, direction: number,destination:AudioNode=this.stage?.effects??this.master!): AudioNode {
+    if(this.stage&&this.context&&typeof this.context.createPanner==='function'){layer.gain.disconnect();const p=this.stage.position(layer.gain,direction*2.5,direction===0?-1.9:1,destination);layer.nodes.add(p);return p;}
     const ctx = this.context!, pan = Math.max(-.9, Math.min(.9, direction * .72));
     try {
       if (typeof ctx.createStereoPanner === 'function') {
@@ -645,6 +659,7 @@ export class TableAudio {
   }
   private playRevolver(sound: 'click' | 'shot') {
     if (sound === 'shot') { this.playShot({ id: `legacy-shot:${++this.revolverSerial}`, kind: 'local' }); return; }
+    this.stage?.empty();
     const ctx = this.context!, now = ctx.currentTime + .002, layer = this.makeLayer(this.master!);
     const random = voiceRandom(0xc11c ^ ++this.revolverSerial);
     this.impact(layer, now, .031, .38, 3300, random, 'highpass');
@@ -654,7 +669,7 @@ export class TableAudio {
     layer.closed = true;
   }
   private makeLayer(destination: AudioNode): AudioLayer {
-    const gain = this.context!.createGain(); gain.connect(destination);
+    const gain = this.context!.createGain(); gain.connect(destination===this.master?this.stage?.effects??destination:destination);
     return { gain, sources: new Set(), nodes: new Set(), closed: false };
   }
   private ownSource(layer: AudioLayer, source: AudioScheduledSourceNode, nodes: AudioNode[]) {
@@ -701,6 +716,7 @@ export class TableAudio {
     const ctx = this.context;
     if (!ctx || this.muted || ctx.state !== 'running' || !this.master) return;
     const layer = this.makeLayer(this.master), now = ctx.currentTime;
+    if(this.stage&&typeof ctx.createPanner==='function')this.positionLayer(layer,0);
     const random = voiceRandom(this.soundSeed(`contact:${kind}:${this.revolverSerial++}`));
     const level = .009 + Math.max(0, Math.min(1, stress)) * .012;
     if(kind==='metal') {this.resonance(layer,now,.18,.07,1870,1530,'triangle');this.resonance(layer,now,.12,.025,3100,2840);}
@@ -750,7 +766,7 @@ export class TableAudio {
     const source = ctx.createBufferSource(), gain = ctx.createGain(), filter = ctx.createBiquadFilter();
     source.buffer = buffer; filter.type = 'highpass'; filter.frequency.value = 900;
     gain.gain.value = .11;
-    source.connect(filter); filter.connect(gain); gain.connect(this.master); source.start();
+    source.connect(filter); filter.connect(gain); gain.connect(this.stage?.effects??this.master); source.start();
     source.onended = () => { source.disconnect(); filter.disconnect(); gain.disconnect(); };
   }
 }

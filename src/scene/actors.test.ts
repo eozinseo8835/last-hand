@@ -84,7 +84,7 @@ describe('production hierarchy, materials and speech',()=>{
  it('reduces speech motion and suppresses captive speech movement after death',()=>{
   settle();const time=now;actors.update(time,0,{...state,speaker:'captive',captiveVoiceLevel:0});const idle=actors.head.rotation.x;
   actors.update(time,0,{...state,speaker:'captive',captiveVoiceLevel:1,reducedMotion:true});expect(actors.head.rotation.x-idle).toBeCloseTo(.0025);
-  actors.update(time,0,{...state,speaker:'captive',captiveVoiceLevel:1,dead:'ai'});expect(actors.head.rotation.x).toBe(idle);
+  actors.update(time,0,{...state,speaker:'captive',captiveVoiceLevel:0,dead:'ai'});const deadIdle=actors.head.rotation.x;actors.update(time,0,{...state,speaker:'captive',captiveVoiceLevel:1,dead:'ai'});expect(actors.head.rotation.x).toBe(deadIdle);
  });
  it('does not leak a hidden hand through public body stress, and restricts tells to decisions',()=>{
   const round=settle(),time=now;actors.update(time,0,{...state,stress:.8,tell:null});const head=actors.head.rotation.clone();
@@ -92,9 +92,9 @@ describe('production hierarchy, materials and speech',()=>{
   actors.update(time,0,{...state,phase:'REVEAL',tell:{kind:'avert',disposition:'nervous'}});const reveal=actors.head.rotation.clone();actors.update(time,0,{...state,phase:'REVEAL',tell:null});expect(actors.head.rotation.equals(reveal)).toBe(true);
  });
  it('turns only the addressed heads and visibly returns before a distraction closes',()=>{
-  settle();const gaze={away:true,returning:false,amount:1,direction:-1};tick(.02,{attention:{host:gaze,captive:{...gaze,direction:1},window:true}});
+  settle();const gaze={away:true,returning:false,amount:1,direction:-1};advance(.6,{attention:{host:gaze,captive:{...gaze,direction:1},window:true}});
   const h=Math.abs(actors.hostHead.rotation.y),c=Math.abs(actors.head.rotation.y);expect(h).toBeGreaterThan(.4);expect(c).toBeGreaterThan(.4);
-  tick(.02,{attention:{host:{...gaze,returning:true,amount:.25},captive:{...gaze,direction:1,returning:true,amount:.25},window:true}});expect(Math.abs(actors.hostHead.rotation.y)).toBeLessThan(h);expect(Math.abs(actors.head.rotation.y)).toBeLessThan(c);
+  advance(.4,{attention:{host:{...gaze,returning:true,amount:.25},captive:{...gaze,direction:1,returning:true,amount:.25},window:true}});expect(Math.abs(actors.hostHead.rotation.y)).toBeLessThan(h);expect(Math.abs(actors.head.rotation.y)).toBeLessThan(c);
  });
 });
 

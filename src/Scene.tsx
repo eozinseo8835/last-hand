@@ -37,6 +37,7 @@ export type SceneProps = {
   peekedCard?: Card | null;
   event?: RoundEvent | null;
   roomNumber?: 1 | 2 | 3;
+  addressedTo?: 'host'|'captive'|'player';
   speaker?: 'host' | 'captive' | null;
   storyStage?: string;
   feedDeaths?: number[];
@@ -209,6 +210,7 @@ export default function Scene(props: SceneProps) {
     surveillanceRig.pose('seated-resting');
     surveillancePlayer.traverse(object=>object.layers.set(1)); world.add(surveillancePlayer);
     const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const dustGeometry=new THREE.BufferGeometry(),dustPositions=new Float32Array(90);for(let i=0;i<30;i++){dustPositions[i*3]=Math.sin(i*7)*.8;dustPositions[i*3+1]=1.4+(i%7)*.07;dustPositions[i*3+2]=-.3+(i%5)*.15;}dustGeometry.setAttribute('position',new THREE.BufferAttribute(dustPositions,3));const dust=new THREE.Points(dustGeometry,new THREE.PointsMaterial({color:0xb7ac8a,size:.006,transparent:true,opacity:0}));world.add(dust);let dustAt=-Infinity;
     const blood = new THREE.Group();
     const bloodMap = splatterTexture();
     const bloodMaterial = new THREE.MeshBasicMaterial({ map: bloodMap, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
@@ -321,7 +323,7 @@ export default function Scene(props: SceneProps) {
       const stageElapsed = time - storyStartedAt;
       if (replay || enteringRoom) {
         look = createLookState(); clearKeys(); lean.amount = lean.target = 0; impulse = flash = deathProgress = 0;
-        blood.visible = false; previousEffect = null; room.reset(); monitors.reset(); ceilingFeed.reset();
+        blood.visible = false; dustAt=-Infinity; previousEffect = null; room.reset(); monitors.reset(); ceilingFeed.reset();
         if (replay) winPose = false;
       }
       previousRoom = roomNumber;
@@ -339,9 +341,10 @@ export default function Scene(props: SceneProps) {
       updateKeyboardLook(look, keys, cameraDelta, CONFIG.LOOK_KEY_SPEED, locked || !!state.lookDisabled);
       updateLook(look, cameraDelta, locked);
       if (state.shotEffect && state.shotEffect !== previousEffect) {
-        impulse = state.shotEffect === 'shot' ? 1 : .28;
-        flash = state.shotEffect === 'shot' ? 1 : 0;
+        impulse = state.shotEffect === 'shot' ? 1.5 : .28;
+        flash = state.shotEffect === 'shot' ? 1 : 0;if(state.shotEffect==='shot')dustAt=time;
       }
+      dust.position.y=-Math.min(1.3,Math.max(0,time-dustAt)*.35);(dust.material as THREE.PointsMaterial).opacity=Math.max(0,1-(time-dustAt)/4)*.5;
       previousEffect = state.shotEffect;
       previousPhase = state.phase;
       impulse = Math.max(0, impulse - dt * 1.6);
@@ -396,8 +399,12 @@ export default function Scene(props: SceneProps) {
       });
       const hostVoiceLevel = tableAudio.getVoiceLevel('host'), captiveVoiceLevel = tableAudio.getVoiceLevel('captive');
       const voiceLevel = captiveVoiceLevel;
-      const heartbeat = tableAudio.getHeartbeatLevel();
+      const heartbeat = tableAudio.getHeartbeatLevel();camera.rotation.z+=heartbeat*.0015*(motionPreference.matches?.2:1);
+      const shotProgress=state.phase==='PLAYER_SHOOTING'?state.triggerProgress??0:state.phase==='HOST_FORCE_SHOT'?Math.min(1,(epoch-(state.forceShotAt??epoch))/2500*.85):state.phase==='AI_SHOOTING'&&state.aiShotStartedAt?Math.min(1,(epoch-state.aiShotStartedAt)/Math.max(1,(state.aiShotDurationMs??2000)-1000)*.85):0;
+      tableAudio.setSoundState({active:state.phase!=='START'&&!state.dead,fired:state.chambersFired??0,room:roomNumber,progress:shotProgress,holding:!!state.triggerHeld,hesitating:state.phase==='AI_SHOOTING',stress:state.stress??.2,nervous:roomNumber===1,speaking:!!state.speaker});
       actors.update(time, dt, { ...state, roomNumber, event, voiceLevel, hostVoiceLevel, captiveVoiceLevel, reducedMotion: motionPreference.matches });
+      tableAudio.setListener([camera.position.x,camera.position.y-1.2,camera.position.z-1.05],camera.getWorldDirection(new THREE.Vector3()).toArray(),new THREE.Vector3(0,1,0).applyQuaternion(camera.quaternion).toArray());
+      for(const [speaker,head]of [['host',actors.hostHead],['captive',actors.captiveHead]] as const)tableAudio.setVoicePosition(speaker,head.getWorldPosition(new THREE.Vector3()).sub(new THREE.Vector3(0,1.2,1.05)).toArray());
       const seen = actors.captiveHead.getWorldPosition(captiveScreen).project(camera);
       const inView = seen.z > -1 && seen.z < 1 && Math.abs(seen.x) <= .4 && Math.abs(seen.y) <= 1;
       if (inView !== opponentVisible) { opponentVisible = inView; state.onOpponentInView?.(inView); }
@@ -419,7 +426,7 @@ export default function Scene(props: SceneProps) {
       postMaterial.uniforms.hoodLift.value = hood.lift;
       postMaterial.uniforms.hoodDrop.value = hood.drop;
       postMaterial.uniforms.focusBlur.value = hood.blur;
-      postMaterial.uniforms.glare.value = hood.glare;
+      postMaterial.uniforms.glare.value = hood.glare+flash*.9;
       postMaterial.uniforms.squint.value = hood.squint;
       canvas.dataset.hoodCoverage = hood.covered.toFixed(3); canvas.dataset.hoodLift = hood.lift.toFixed(3);
       canvas.dataset.focusBlur = hood.blur.toFixed(3); canvas.dataset.glare = hood.glare.toFixed(3);
@@ -492,6 +499,7 @@ export default function Scene(props: SceneProps) {
 
     return () => {
       cancelAnimationFrame(frame); observer.disconnect();
+      tableAudio.setSoundState({active:false,fired:0,room:1,progress:0,holding:false,hesitating:false,stress:0,nervous:false,speaking:false});dustGeometry.dispose();(dust.material as THREE.PointsMaterial).dispose();
       room.reset(); room.dispose();
       monitors.dispose(); ceilingFeed.dispose();
       window.removeEventListener('keydown', keyDown);

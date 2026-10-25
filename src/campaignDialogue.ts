@@ -6,6 +6,7 @@ import { cosmeticRandom } from './tension';
 export type HostCategory = 'intro_rules' | 'deal' | 'round_result' | 'other_room_death' |
   'waiting_for_trigger' | 'transition' | 'ending_win' | 'ending_death' | 'cut_ties' | 'host_caught_player' | 'trigger_warning' | 'forced_shot';
 export type SpeechLine = {
+  addressedTo?: Speaker | 'player';
   id: number; speaker: Speaker; text: string; category: DialogueCategory | HostCategory;
   danger: boolean; chambersFired: number;
 };
