@@ -203,7 +203,7 @@ export function useGame() {
     update({ phase: 'HOST_FORCE_SHOT', forceShotAt: Date.now(), awaitingTrigger: false, suspense: true,
       spinning: null, triggerHeld: false, triggerProgress: 0, triggerRemainingMs: 0,
       stats: { ...state.stats, forcedShots: state.stats.forcedShots + 1 }, message: 'The Host will complete the procedure.' });
-    hostSay('forced_shot', 'Your time has elapsed.', true);
+    hostSay('forced_shot', 'Your time has elapsed.', true);tableAudio.playStory('host-step');
     later(() => { if (current.current.phase === 'HOST_FORCE_SHOT') tableAudio.playContact('metal',1); }, 1100, timeoutTimers.current);
     later(() => { if (current.current.phase === 'HOST_FORCE_SHOT') tableAudio.play('hammer'); }, 2100, timeoutTimers.current);
     later(() => { if (current.current.phase === 'HOST_FORCE_SHOT') resolveShot('player'); }, 3500, timeoutTimers.current);
@@ -511,8 +511,8 @@ export function useGame() {
           say(opponentOpeningCategory(current.current.roomNumber, handTotal(current.current.round!.ai)), true);
           if (shouldExchange()) {
             const exchange = chooseExchange(current.current.roomNumber);
-            enqueue([{ line: line('captive', 'nervous', exchange.captive), reactive: false },
-              { line: line('host', 'deal', exchange.host), reactive: false }]);
+            enqueue([{ line: {...line('captive', 'nervous', exchange.captive),addressedTo:'host'}, reactive: false },
+              { line: {...line('host', 'deal', exchange.host),addressedTo:'captive'}, reactive: false }]);
           }
           enterDecision('Your move. Hit, stand, or fold.');
         }, 600);

@@ -13,7 +13,7 @@ export const POSE_CASES = [
   { pose: 'player-hold-to-pull', room: 1 as const, label: 'Player · hold to pull' },
   { pose: 'host-forced-shot', room: 1 as const, label: 'Host · forced shot (front = seated view)' },
   { pose: 'player-peek', room: 1 as const, label: 'Player · PEEK' },
- ...['hood-on','hood-mid-removal','hood-off','player-empty-hand','host-open-hand'].map(pose=>({pose,room:1 as const,label:pose.replaceAll('-',' ')})),
+ ...['host-speaking','hood-on','hood-mid-removal','hood-off','player-empty-hand','host-open-hand'].map(pose=>({pose,room:1 as const,label:pose.replaceAll('-',' ')})),
 
 ];
 export type PoseSelection = { pose: string; room: 1 | 2 | 3; view: 'front' | 'side'; pixel: boolean; animate: boolean; time: number };

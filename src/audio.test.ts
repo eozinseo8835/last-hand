@@ -8,6 +8,7 @@ import { eventBangOffsets, type RoundEvent } from './tension';
 class Parameter {
   value = 1;
   setValueAtTime = vi.fn((value: number, _time: number) => { this.value = value; return this; });
+  setTargetAtTime = vi.fn((value:number,_time:number,_constant:number)=>{this.value=value;return this;});
   linearRampToValueAtTime = vi.fn((_value: number, _time: number) => this);
   exponentialRampToValueAtTime = vi.fn((_value: number, _time: number) => this);
   cancelScheduledValues = vi.fn((_time: number) => this);
@@ -399,8 +400,8 @@ describe('physical revolver reports', () => {
     expect(reports[0].start).toHaveBeenCalledWith(start);
     expect(reports[0].stop).toHaveBeenCalledWith(start + .20);
     const ring = shot.find(node => node.kind === 'oscillator')!;
-    expect(ring.start).toHaveBeenCalledWith(start + .11);
-    expect(ring.frequency.setValueAtTime).toHaveBeenCalledWith(2920, start + .11);
+    expect(ring.start).toHaveBeenCalledWith(ctx.currentTime);
+    expect(ring.frequency.setValueAtTime).toHaveBeenCalledWith(2600,ctx.currentTime);expect(shot.some(n=>n.kind==='oscillator'&&n.frequency.setValueAtTime.mock.calls.some(c=>c[0]===1760))).toBe(true);
     const room = shot.find(node => node.kind === 'reverb')!;
     expect(room.buffer!.getChannelData(0)).not.toEqual(room.buffer!.getChannelData(1));
     expect(shot.some(node => node.type === 'lowpass' && node.frequency.value <= ctx.sampleRate * .45)).toBe(true);
@@ -581,4 +582,12 @@ describe('felt revolver slide friction', () => {
     ctx.state='running'; const random=vi.spyOn(Math,'random').mockImplementation(()=>{throw Error('Slide touched gameplay randomness');});
     expect(()=>audio.play('slide')).not.toThrow(); expect(random).not.toHaveBeenCalled();
   });
+});
+
+describe('Big Update 3 mix and hearing',()=>{
+ const state={active:true,fired:0,room:1,progress:0,holding:false,hesitating:false,stress:0,nervous:false,speaking:false};
+ function stage(){return (audio as unknown as {stage:{ambient:Node;effects:Node;voices:Node;hearing:Node}}).stage;}
+ it('ducks ambience above 85 percent, restores it after an empty click and routes volume independently',()=>{audio.init();audio.setSoundState({...state,progress:.9,holding:true});expect(stage().ambient.gain.value).toBe(0);audio.setVolumes({master:.5,effects:.2,voice:.7});expect(stage().effects.gain.value).toBe(.2);expect(stage().voices.gain.value).toBe(.7);audio.play('click');audio.setSoundState(state);expect(stage().ambient.gain.value).toBe(0);context().currentTime+=1.1;audio.setSoundState(state);expect(stage().ambient.gain.value).toBe(1);audio.mute(true);expect(context().nodes[0].gain.value).toBe(0);});
+ it('uses a bounded final limiter and 5 second hearing recovery only on local reports',()=>{audio.init();audio.setSoundState({...state,active:false});const limiter=context().nodes.find(n=>n.kind==='distortion'&&n.curve?.length===16385)!;expect(Math.max(...limiter.curve!)).toBeLessThan(1);expect(limiter.connect).toHaveBeenCalledWith(context().destination);const hearing=stage().hearing;audio.playShot({id:'distant-safety',kind:'distant'});expect(hearing.frequency.exponentialRampToValueAtTime).not.toHaveBeenCalled();audio.playShot({id:'local-safety',kind:'local'});expect(hearing.frequency.exponentialRampToValueAtTime).toHaveBeenCalledWith(19000,context().currentTime+5);expect(context().nodes.some(n=>n.kind==='oscillator'&&n.frequency.setValueAtTime.mock.calls.some(c=>c[0]===4800))).toBe(true);});
+ it('uses HRTF positions for real table voices',()=>{audio.init();const ctx=context();Object.assign(ctx,{createPanner:()=>Object.assign(ctx.make('panner'),{panningModel:'',positionX:new Parameter(),positionY:new Parameter(),positionZ:new Parameter()})});audio.setSoundState({...state,active:false});audio.startVoice(plan(),'host');const p=ctx.nodes.find(n=>n.kind==='panner') as Node&{panningModel:string;positionX:Parameter;positionZ:Parameter};expect(p.panningModel).toBe('HRTF');expect([p.positionX.value,p.positionZ.value]).toEqual([-.7,-1.4]);});
 });

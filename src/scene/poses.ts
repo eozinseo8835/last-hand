@@ -30,4 +30,4 @@ export const FORCED_SHOT = {
   root: [-.9,-.50,.20] as Triple, turn:.60,
   muzzle: [-.16,.012,-.15] as Triple, cant:0, walkSeconds:1.1,
 } as const;
-export type DebugPoseName = PoseName | 'host-forced-shot' | 'player-peek' | 'hood-on' | 'hood-mid-removal' | 'hood-off' | 'player-empty-hand' | 'host-open-hand';
+export type DebugPoseName = PoseName | 'host-forced-shot' | 'player-peek' | 'hood-on' | 'hood-mid-removal' | 'hood-off' | 'player-empty-hand' | 'host-open-hand' | 'host-speaking';

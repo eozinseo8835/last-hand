@@ -1,3 +1,4 @@
+import {lookAtTarget} from './gaze';
 import { createBurlapHood } from './hood';
 import { restoreNearCameraHiding, applyNearCameraHiding } from './visibility';
 import * as THREE from 'three';
@@ -35,6 +36,7 @@ export type ActorState = {
   peekedCard?: Card | null;
   event?: RoundEvent | null;
   roomNumber?: 1 | 2 | 3;
+  addressedTo?: 'host'|'captive'|'player';
   speaker?: 'host' | 'captive' | null;
   hostVoiceLevel?: number;
   captiveVoiceLevel?: number;
@@ -163,7 +165,7 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
   const captiveRig=createCharacter('captive',1), hostRig=createCharacter('host',1), playerRig=createCharacter('player',1);
   const guardRigs=[createCharacter('guard',1),createCharacter('guard',1)];
   const captive=captiveRig.group, host=hostRig.group, playerHands=playerRig.group;
-  captive.position.set(0,.45,-.90); host.position.set(-.95,.90,-.10);
+  captive.position.set(0,.45,-.90); host.position.set(-.70,.90,-.35);
   scene.add(captive,host); view.add(playerHands); playerHands.position.set(0,-.75,0);
   captive.userData={actorRole:'captive',canShoot:true,canDie:true};
   host.userData={actorRole:'host',canShoot:true,canDie:false}; playerHands.userData.actorRole='player';
@@ -499,10 +501,10 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
   function debugUpdate(time:number) {
     hideHostBody(false);
     const pose=debugPose!;
-    if(['host-forced-shot','player-peek','host-dealing','hood-on','hood-mid-removal','hood-off','player-empty-hand','host-open-hand'].includes(pose)) {
+    if(['host-forced-shot','player-peek','host-dealing','hood-on','hood-mid-removal','hood-off','player-empty-hand','host-open-hand','host-speaking'].includes(pose)) {
       const saved=debugPose;debugPose=null;
-      const peek=pose==='player-peek',forced=pose==='host-forced-shot',hoodPose=pose.startsWith('hood-'),empty=pose==='player-empty-hand',gesture=pose==='host-open-hand',age=peek?.50:2.8;
-      update(time,0,{phase:hoodPose?'OPENING':empty||gesture?'PLAYER_DECISION':peek?'PLAYER_PEEKING':forced?'HOST_FORCE_SHOT':'DEALING',roundNumber:1,revealed:false,suspense:false,dead:null,shotEffect:null,
+      const peek=pose==='player-peek',forced=pose==='host-forced-shot',hoodPose=pose.startsWith('hood-'),empty=pose==='player-empty-hand',gesture=pose==='host-open-hand'||pose==='host-speaking',age=peek?.50:2.8;
+      update(time,.5,{phase:hoodPose?'OPENING':empty||gesture?'PLAYER_DECISION':peek?'PLAYER_PEEKING':forced?'HOST_FORCE_SHOT':'DEALING',roundNumber:1,revealed:false,suspense:false,dead:null,shotEffect:null,
         forceShotAt:forced?Date.now()-age*1000:null,peekActor:peek?'player':null,peekStartedAt:Date.now()-age*1000,
         speaker:gesture?'host':null,hostVoiceLevel:gesture?1:0,cinematic:hoodPose?{stage:pose==='hood-on'?'hooded':pose==='hood-off'?'rules':'opponent-unhood',mode:'full',startedAt:Date.now()-(pose==='hood-mid-removal'?3577:0)}:null,peekedCard:peek?demo.player[0]:null,tiesCut:{player:true,ai:true}});
       debugPose=saved;
@@ -550,7 +552,7 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     const shuffle=state.phase==='SHUFFLING'?Math.sin(Math.min(1,elapsedShoot/.50)*Math.PI*2):0;
     upperPack.position.set(shuffle*.045,.010+Math.abs(shuffle)*.015,0);upperPack.rotation.y=shuffle*.22;
     captive.visible=host.visible=playerHands.visible=true;chair.visible=true;deck.visible=true;heldRig.visible=true;gun.visible=true;
-    captive.position.set(0,.45,-.90);captive.rotation.set(0,0,0);host.position.set(-.95,.90,-.10);host.rotation.set(0,Math.PI/2,0);playerHands.position.set(0,-.75,0);
+    captive.position.set(0,.45,-.90);captive.rotation.set(0,0,0);host.position.set(-.70,.90,-.35);host.rotation.set(0,Math.PI/2,0);playerHands.position.set(0,-.75,0);
     captiveRig.pose('seated-resting');hostRig.pose('host-idle');playerPose();
     for(const rig of guardRigs){rig.group.visible=false;rig.pose('guard-walking',time);}
     const cine=state.cinematic,stage=cine?.stage??state.storyStage??'',p=cinematicProgress(cine,epoch);
@@ -584,7 +586,7 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     head.rotation.x-=eventDoorPulse(state.event,epoch)*.09;
     const hostHeadRotation=hostHead.rotation.clone();
     if(['SHUFFLING','DEALING','HITTING','DEALER_TURN','REVEAL','SWEEPING'].includes(state.phase)) {
-      hostRig.pose('host-dealing',time);hostRig.crouch(.15);host.position.x=-.94;
+      hostRig.pose('host-dealing',time);hostRig.crouch(.15);host.position.x=-.94;host.position.z=-.10;
       const palm=new THREE.Quaternion().setFromEuler(new THREE.Euler(1.05,0,0));
       const dealing=['DEALING','HITTING','DEALER_TURN'].includes(state.phase);
       const stroke=dealing?Math.sin((elapsedShoot*1000/CONFIG.DEAL_SPEED%1)*Math.PI):Math.abs(shuffle);
@@ -683,6 +685,12 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     animateCards(time,dt,state);
     if(hiddenCards){heldRig.visible=false;cardSlots.forEach(slot=>{slot.group.visible=false;slot.group.userData.held=false;slot.group.userData.tableFaceUp=false;});}
     if(state.dead==='ai'){slump=Math.min(1,slump+dt/1.2);captiveRig.spine.rotation.x=slump*1.3;}else slump=0;
+    const eye=view.getWorldPosition(new THREE.Vector3()),monitorTarget=new THREE.Vector3(1.0,1.6,-3.4);
+    const dealing=['SHUFFLING','DEALING','HITTING','DEALER_TURN','SWEEPING'].includes(state.phase);
+    const hostTarget=state.attention?.host.away?eye.clone().lerp(monitorTarget,state.attention.host.amount):dealing?deck.getWorldPosition(new THREE.Vector3()):state.phase==='AI_SHOOTING'||state.phase==='PEEKING'||state.addressedTo==='captive'||state.speaker==='captive'?head.getWorldPosition(new THREE.Vector3()):eye;
+    const captiveTarget=state.attention?.captive.away?eye.clone().lerp(new THREE.Vector3(state.attention.captive.direction*2,1.1,-.4),state.attention.captive.amount):(state.distantShot||state.ambientEvent)&&eventTurn>0?new THREE.Vector3((state.distantShot?.direction??state.ambientEvent?.direction??1)*3,1.1,-1):state.phase==='AI_SHOOTING'?gun.getWorldPosition(new THREE.Vector3()):state.speaker==='captive'&&state.addressedTo==='host'?hostHead.getWorldPosition(new THREE.Vector3()):dealing||state.phase==='PEEKING'?new THREE.Vector3(0,.76,-.27):eye;
+    if(state.phase!=='HOST_FORCE_SHOT')lookAtTarget(hostRig,hostTarget,dt,hv*.01*motion);
+    if(state.dead!=='ai'&&gunHolder!=='ai'&&!captiveHood.visible)lookAtTarget(captiveRig,captiveTarget,dt,cv*.01*motion);
     const forceActive=state.phase==='HOST_FORCE_SHOT'||state.forceShotAt!=null&&state.phase==='ROUND_RESULT';
     const allowed=forceActive?[hostRig.arms.right.forearm]:[];
     hideHostBody(forceActive);

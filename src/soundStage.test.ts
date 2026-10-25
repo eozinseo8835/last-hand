@@ -1,0 +1,2 @@
+import {it,expect} from 'vitest';import {tensionMix} from './soundStage';
+it('increases drone pitch and level with public fired chambers and resets with the cylinder',()=>{const s={active:true,fired:0,room:1,progress:0,holding:false,hesitating:false,stress:0,nervous:false,speaking:false};const base=tensionMix(s),last=tensionMix({...s,fired:5});expect(last.pitch).toBeGreaterThan(base.pitch);expect(last.drone).toBeGreaterThan(base.drone);expect(tensionMix({...s,room:2})).toEqual(base);expect(tensionMix({...s,progress:.85}).ambient).toBe(0);});
