@@ -1,5 +1,5 @@
 import {readingHold} from './readability';
-import { GUN_SLIDE_MS, GUN_SET_DOWN_MS } from './gunTransfer';
+import { GUN_SLIDE_MS, GUN_SET_DOWN_MS, SPIN_MS, SPIN_SWIPE_MS } from './gunTransfer';
 import { planAttention } from './attention';
 // @vitest-environment jsdom
 import { act, type ReactNode } from 'react';
@@ -18,6 +18,8 @@ import { OPENING_STAGES, stageDurationMs, type CinematicStage } from './cinemati
 import { DISTANT_SHOT_GAP_MS } from './roomLife';
 
 vi.mock('./Scene', () => ({ default: () => null }));
+// Pass-through spy so one test can hold a captive line open (a captive that keeps talking).
+vi.mock('./readability', async importOriginal => { const actual = await importOriginal<typeof import('./readability')>(); return { ...actual, readingHold: Object.assign(vi.fn(actual.readingHold), { actual: actual.readingHold }) }; });
 vi.mock('./attention', async importOriginal => { const actual = await importOriginal<typeof import('./attention')>(); return { ...actual, planAttention: vi.fn(actual.planAttention) }; });
 vi.mock('./audio', () => ({ tableAudio: { init: vi.fn(), play: vi.fn(), mute: vi.fn(), startVoice: vi.fn(), stopVoice: vi.fn(), getVoiceLevel: vi.fn(() => 0), setHeartbeat: vi.fn(), setEvent: vi.fn(), playStory: vi.fn(), getHeartbeatLevel: vi.fn(() => 0), playShot: vi.fn(() => true), setHooded: vi.fn(), playContact: vi.fn(), playAmbient: vi.fn() } }));
 vi.mock('./tension', async importOriginal => {
@@ -52,7 +54,6 @@ const FOLD_TO_DECISION = 700 + DEAL_COMPLETE;
 const DEALER_BUST_MS = 950 + CONFIG.PEEK_DURATION_MS + 2 * (CONFIG.DEAL_SPEED + 200);
 const AI_INITIAL_HESITATION = 2000;
 const GUARD_TO_RULES = OPENING_STAGES.slice(0, OPENING_STAGES.indexOf('rules')).reduce((sum, stage) => sum + stageDurationMs(stage), 0);
-const CUT_TO_DEAL = stageDurationMs('cut-opponent') + stageDurationMs('cut-player') + stageDurationMs('rub-wrists');
 
 let latest!: ReturnType<typeof useGame>;
 function Harness() { latest = useGame(); return null; }
@@ -310,7 +311,7 @@ describe('shared revolver, continuous trigger hold, and replay', () => {
     peekSuccessfully();
     vi.mocked(dealRound).mockImplementation(() => copy(playerBusts)); act(() => latest.fold()); advance(FOLD_TO_DECISION);
     act(() => latest.hit()); advance(CONFIG.DEAL_SPEED + 950 + 1500 + GUN_SLIDE_MS);
-    act(() => latest.spinCylinder()); advance(800); holdTrigger(); advanceStoryUntil(() => latest.game.phase === 'GAME_OVER');
+    act(() => latest.spinCylinder()); advance(SPIN_MS); holdTrigger(); advanceStoryUntil(() => latest.game.phase === 'GAME_OVER');
     expect(latest.game.phase).toBe('GAME_OVER'); expect(latest.game.hasHit).toBe(true); expect(latest.game.folds).toBe(2);
     expect(latest.game.abilities.player).toEqual({ spin: false, peek: false });
     vi.mocked(createRevolver).mockReturnValue({ bulletChamber: 4, currentChamber: 1 }); startMatch();
@@ -512,6 +513,46 @@ describe('trigger commitment and hesitation', () => {
   });
 });
 
+describe('captive trigger time limit', () => {
+  afterEach(() => { vi.mocked(readingHold).mockImplementation((readingHold as unknown as { actual: typeof readingHold }).actual); });
+  // In this harness captive speech never finishes by itself, so a captive left talking never reaches its own pull.
+  function captiveHoldsRevolver(bulletChamber: number) {
+    vi.mocked(createRevolver).mockReturnValue({ bulletChamber, currentChamber: 1 }); startDecision();
+    act(() => latest.stand()); for (let i = 0; i < 200 && latest.game.phase !== 'AI_SHOOTING'; i++) advance(25);
+    expect(latest.game.phase).toBe('AI_SHOOTING');
+    const transfer = latest.game.gunTransfer!; expect(transfer).toMatchObject({ stage: 'to-shooter', side: 'ai' });
+    // Keep the captive talking: its lines stay on screen for a minute, so it never reaches its own pull.
+    vi.mocked(readingHold).mockReturnValue(60000);
+    return transfer.startedAt + transfer.duration;
+  }
+  it('lets the Host complete a stalled captive pull at exactly 10 seconds after the revolver reaches its hand', () => {
+    const inHand = captiveHoldsRevolver(6);
+    advance(inHand + CONFIG.AI_TRIGGER_TIMEOUT_MS - 1 - Date.now()); expect(latest.game.phase).toBe('AI_SHOOTING'); expect(latest.game.revolver.currentChamber).toBe(1);
+    advance(1); expect(latest.game.phase).toBe('HOST_FORCE_SHOT'); expect(latest.game.forceTarget).toBe('ai');
+    expect(latest.game.speech?.speaker).not.toBe('captive');
+    advance(4200 - 1); expect(latest.game.phase).toBe('HOST_FORCE_SHOT'); advance(1);
+    expect(latest.game.phase).toBe('ROUND_RESULT'); expect(latest.game.shotEffect).toBe('click'); expect(latest.game.revolver.currentChamber).toBe(2);
+    expect(latest.game.dead).toBeNull();
+    advance(GUN_SET_DOWN_MS); expect(latest.game.gunTransfer).toMatchObject({ stage: 'return', side: 'ai', owner: 'host' });
+    advance(4000); expect(latest.game.forceTarget).toBeNull(); expect(latest.game.forceShotAt).toBeNull();
+    expect(vi.mocked(tableAudio.play).mock.calls.filter(([sound]) => sound === 'hammer')).toHaveLength(1);
+  });
+  it('fires one local shot when the forced chamber is live, kills the captive, and the Host sets the revolver down', () => {
+    const inHand = captiveHoldsRevolver(1);
+    advance(inHand + CONFIG.AI_TRIGGER_TIMEOUT_MS + 4200 - Date.now());
+    expect(latest.game.dead).toBe('ai'); expect(latest.game.shotEffect).toBe('shot'); expect(localShots()).toHaveLength(1);
+    expect(latest.game.guestsRemaining).toBe(7);
+    advance(GUN_SET_DOWN_MS); expect(latest.game.gunTransfer).toMatchObject({ stage: 'return', side: 'ai', owner: 'host' });
+    advance(1000); expect(localShots()).toHaveLength(1);
+  });
+  it('never forces a captive that pulls in time', () => {
+    captiveHoldsRevolver(6); finishQueuedSpeech(); advance(AI_INITIAL_HESITATION);
+    expect(latest.game.phase).toBe('ROUND_RESULT'); expect(latest.game.revolver.currentChamber).toBe(2);
+    advance(CONFIG.AI_TRIGGER_TIMEOUT_MS + 5000);
+    expect(latest.game.forceTarget).toBeNull(); expect(latest.game.revolver.currentChamber).toBe(2);
+  });
+});
+
 describe('one-time SPIN per side and match', () => {
   it('rejects non-shooters, consumes one player spin, resets the pointer, and still requires a full hold', () => {
     vi.mocked(createRevolver).mockReturnValue({ bulletChamber: 6, currentChamber: 4 });
@@ -523,10 +564,11 @@ describe('one-time SPIN per side and match', () => {
     act(() => latest.spinCylinder());
     expect(latest.game.spinning).toBe('player'); expect(latest.game.abilities.player.spin).toBe(false);
     expect(latest.game.abilities.ai.spin).toBe(true); expect(latest.game.revolver).toEqual({ bulletChamber: 3, currentChamber: 1 });
-    expect(tableAudio.play).toHaveBeenCalledWith('spin');
+    // The ratchet plays when the hand swipes the cylinder.
+    expect(tableAudio.play).not.toHaveBeenCalledWith('spin'); advance(SPIN_SWIPE_MS); expect(tableAudio.play).toHaveBeenCalledWith('spin');
     act(() => { latest.spinCylinder(); latest.beginTriggerHold(); });
     expect(latest.game.triggerHeld).toBe(false); expect(latest.game.spinSerial).toBe(1);
-    advance(800); expect(latest.game.spinning).toBeNull(); expect(latest.game.phase).toBe('PLAYER_SHOOTING');
+    advance(SPIN_MS - SPIN_SWIPE_MS); expect(latest.game.spinning).toBeNull(); expect(latest.game.phase).toBe('PLAYER_SHOOTING');
     expect(latest.game.awaitingTrigger).toBe(true); expect(latest.game.shotEffect).toBeNull();
     act(() => latest.spinCylinder()); expect(latest.game.spinSerial).toBe(1);
     holdTrigger(); expect(latest.game.revolver.currentChamber).toBe(2);
@@ -551,12 +593,12 @@ describe('one-time SPIN per side and match', () => {
       expect(latest.game.spinning).toBe('ai'); expect(latest.game.abilities.ai.spin).toBe(false);
       expect(latest.game.revolver).toEqual({ bulletChamber: 5, currentChamber: 1 });
       expect(latest.game.abilities.player.spin).toBe(true);
-      advance(800 + AI_INITIAL_HESITATION); expect(latest.game.revolver.currentChamber).toBe(2);
+      advance(SPIN_MS + AI_INITIAL_HESITATION); expect(latest.game.revolver.currentChamber).toBe(2);
     }
   });
 
   it('ends the match within six trigger pulls after its last SPIN', () => {
-    startPlayerShot(); act(() => latest.spinCylinder()); advance(800);
+    startPlayerShot(); act(() => latest.spinCylinder()); advance(SPIN_MS);
     expect(latest.game.abilities.player.spin).toBe(false);
     for (let pull = 1; pull <= CONFIG.NUM_CHAMBERS; pull++) {
       holdTrigger(); expect(latest.game.revolver.currentChamber).toBe(pull + 1);
@@ -574,7 +616,7 @@ describe('one-time SPIN per side and match', () => {
     vi.mocked(createRevolver).mockReturnValue({ bulletChamber: 6, currentChamber: 4 }); startDecision();
     act(() => latest.stand()); advance(950);
     vi.mocked(createRevolver).mockReturnValue({ bulletChamber: 6, currentChamber: 1 }); advance(1500); finishQueuedSpeech();
-    expect(latest.game.spinning).toBe('ai'); advance(800 + AI_INITIAL_HESITATION);
+    expect(latest.game.spinning).toBe('ai'); advance(SPIN_MS + AI_INITIAL_HESITATION);
     expect(latest.game.revolver.currentChamber).toBe(2); expect(latest.game.abilities.ai.spin).toBe(false);
     const creations = vi.mocked(createRevolver).mock.calls.length;
     for (let chamber = 2; chamber <= 4; chamber++) {
@@ -735,7 +777,7 @@ describe('three-room campaign, bracket, and run statistics', () => {
     peekSuccessfully(); act(() => latest.fold()); advance(FOLD_TO_DECISION);
     expect(latest.game.folds).toBe(2); expect(latest.game.abilities.player.peek).toBe(false);
     act(() => latest.stand()); advance(950 + 1500 + GUN_SLIDE_MS);
-    act(() => latest.spinCylinder()); advance(800); holdTrigger();
+    act(() => latest.spinCylinder()); advance(SPIN_MS); holdTrigger();
     expect(latest.game.revolver.currentChamber).toBe(2); expect(latest.game.abilities.player.spin).toBe(false);
     expect(latest.game.stats.highestChamber).toBe(2);
     vi.mocked(dealRound).mockImplementation(() => copy(dealerBusts)); nextDecisionAfterEmptyShot();
@@ -756,7 +798,7 @@ describe('three-room campaign, bracket, and run statistics', () => {
     act(() => latest.stand()); advance(950 + 1500 + GUN_SLIDE_MS);
     vi.mocked(createRevolver).mockReturnValue({ bulletChamber: 1, currentChamber: 1 }); finishQueuedSpeech();
     expect(latest.game.spinning).toBe('ai'); expect(latest.game.abilities.ai.spin).toBe(false);
-    advance(800 + AI_INITIAL_HESITATION); expect(latest.game.dead).toBe('ai');
+    advance(SPIN_MS + AI_INITIAL_HESITATION); expect(latest.game.dead).toBe('ai');
     advanceStoryUntil(() => latest.game.roomNumber === 2 && latest.game.phase === 'PLAYER_DECISION');
     expect(latest.game.abilities.ai.spin).toBe(true); expect(latest.game.stats.abilitiesUsed.ai.spin).toBe(1);
   });
@@ -820,11 +862,11 @@ describe('campaign rules, personality policies, and serialized speakers', () => 
       act(() => { latest.advanceOpening(); latest.advanceOpening(); });
       expect(latest.game.speech).toBeNull(); advance(99); expect(latest.game.speech).toBeNull(); advance(1);
     }
-    expect(latest.game.storyStage).toBe('cut-opponent'); expect(latest.game.stats.roundsPlayed).toBe(0);
-    advance(CUT_TO_DEAL); expect(latest.game.phase).toBe('SHUFFLING');
+    // Both restraints were already cut before the rules, so the last rule goes straight to the table.
+    expect(latest.game.storyStage).toBe('table'); expect(latest.game.phase).toBe('SHUFFLING'); expect(latest.game.tiesCut).toEqual({ player: true, ai: true });
     act(() => latest.start()); advance(GUARD_TO_RULES);
     expect(latest.game.introShort).toBe(true); expect(latest.game.speech?.text).toBe(SHORT_INTRO);
-    act(() => latest.advanceOpening()); advance(100 + CUT_TO_DEAL); expect(latest.game.phase).toBe('SHUFFLING');
+    act(() => latest.advanceOpening()); advance(100); expect(latest.game.phase).toBe('SHUFFLING');
   });
 
   it('can skip during the hood and cancels all old opening callbacks', () => {
@@ -932,39 +974,38 @@ function advanceOpeningTo(stage: CinematicStage) {
 }
 
 describe('guard hoods, restraints, and safe room arrivals', () => {
-  it('removes the player hood before the captive hood and keeps every game action locked until both ties are cut', () => {
+  it('unhoods both guests, cuts both restraints and only then lets the guard leave, keeping every game action locked until the rules end', () => {
     mount(); act(() => latest.start());
     const stages = OPENING_STAGES.slice(0, OPENING_STAGES.indexOf('rules'));
+    // Regression: the guard must not exit and then reappear to cut the restraints.
+    expect(stages.indexOf('cut-opponent')).toBeGreaterThan(stages.indexOf('opponent-unhood'));
+    expect(stages.indexOf('cut-player')).toBeGreaterThan(stages.indexOf('cut-opponent'));
+    expect(stages.indexOf('guard-exit')).toBeGreaterThan(stages.indexOf('rub-wrists'));
+    const ties = (stage: CinematicStage) => stage === 'cut-player' ? { player: false, ai: true }
+      : ['rub-wrists', 'guard-exit'].includes(stage) ? { player: true, ai: true } : { player: false, ai: false };
     expect(latest.game.tiesCut).toEqual({ player: false, ai: false });
     for (const stage of stages) {
       expect(latest.game.phase).toBe('OPENING');
       expect(latest.game.cinematic).toMatchObject({ stage, mode: 'full', startedAt: Date.now() });
-      expect(latest.game.tiesCut).toEqual({ player: false, ai: false });
+      expect(latest.game.tiesCut).toEqual(ties(stage));
       act(() => { latest.hit(); latest.stand(); latest.fold(); latest.peek(); latest.spinCylinder(); latest.beginTriggerHold(); });
       expect(latest.game.round).toBeNull(); expect(latest.game.folds).toBe(3);
       expect(latest.game.abilities.player).toEqual({ spin: true, peek: true });
       advance(stageDurationMs(stage) - 1); expect(latest.game.cinematic?.stage).toBe(stage);
       advance(1);
     }
-    expect(latest.game.cinematic?.stage).toBe('rules');
+    expect(latest.game.cinematic?.stage).toBe('rules'); expect(latest.game.tiesCut).toEqual({ player: true, ai: true });
     expect(tableAudio.setHooded).toHaveBeenCalledWith(true);
     expect(tableAudio.setHooded).toHaveBeenLastCalledWith(false);
     const cues = vi.mocked(tableAudio.playStory).mock.calls.map(([cue]) => cue);
     expect(cues.indexOf('door-creak')).toBeLessThan(cues.indexOf('burlap-tug'));
     expect(cues.filter(cue => cue === 'burlap-tug')).toHaveLength(2);
-    expect(cues).toContain('gasp'); expect(cues).toContain('door-slam');
-    advanceOpeningTo('cut-opponent');
-    expect(latest.game.tiesCut).toEqual({ player: false, ai: false });
-    expect(latest.game.round).toBeNull();
-    advance(stageDurationMs('cut-opponent'));
-    expect(latest.game.cinematic?.stage).toBe('cut-player');
-    expect(latest.game.tiesCut).toEqual({ player: false, ai: true });
-    act(() => latest.hit()); expect(latest.game.round).toBeNull();
-    advance(stageDurationMs('cut-player'));
-    expect(latest.game.cinematic?.stage).toBe('rub-wrists');
-    expect(latest.game.tiesCut).toEqual({ player: true, ai: true });
-    expect(latest.game.phase).toBe('OPENING');
-    advance(stageDurationMs('rub-wrists'));
+    expect(cues.filter(cue => cue === 'snip')).toHaveLength(2);
+    expect(cues).toContain('gasp');
+    // The door slams after both snips: the guard leaves last.
+    expect(cues.lastIndexOf('snip')).toBeLessThan(cues.indexOf('door-slam'));
+    act(() => latest.hit()); expect(latest.game.round).toBeNull(); expect(latest.game.phase).toBe('OPENING');
+    for (let index = 0; index < OPENING_LINES.length; index++) { act(() => latest.advanceOpening()); advance(100); }
     expect(latest.game.phase).toBe('SHUFFLING'); expect(latest.game.roundNumber).toBe(1);
     expect(vi.mocked(tableAudio.playStory).mock.calls.filter(([cue]) => cue === 'snip')).toHaveLength(2);
     advance(DEAL_COMPLETE); expect(latest.game.phase).toBe('PLAYER_DECISION');
@@ -994,9 +1035,10 @@ describe('guard hoods, restraints, and safe room arrivals', () => {
       expect(latest.game.round).toBeNull(); expect(latest.game.roundNumber).toBe(0);
       advanceOpeningTo('rules');
       expect(latest.game.speech?.speaker).toBe('host');
+      expect(latest.game.tiesCut).toEqual({ player: true, ai: true });
       act(() => latest.advanceOpening()); advance(100);
-      expect(latest.game.cinematic?.stage).toBe('cut-opponent');
-      advance(CUT_TO_DEAL + DEAL_COMPLETE);
+      expect(latest.game.phase).toBe('SHUFFLING');
+      advance(DEAL_COMPLETE);
       expect(latest.game.phase).toBe('PLAYER_DECISION'); expect(latest.game.roomNumber).toBe(room);
       expect(latest.game.tiesCut).toEqual({ player: true, ai: true });
     }

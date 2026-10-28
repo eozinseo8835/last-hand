@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { createCharacter, type CharacterRole } from './skeleton';
+import { createCharacter, TORSO_PROFILE, type CharacterRole } from './skeleton';
 import { HUMAN, POSE_NAMES, type PoseName } from './poses';
 import { createRevolverModel, GRIP_SOCKET } from './revolver';
 const pos=(o:THREE.Object3D)=>o.getWorldPosition(new THREE.Vector3());
@@ -85,3 +85,21 @@ it('overlaps the neck skin with the chest and skull instead of leaving a floatin
   expect(neck.min.y).toBeLessThan(torso.max.y);expect(neck.max.y).toBeGreaterThan(skull.min.y);
  }
 });
+
+it('builds sloped shoulders: one tapered torso, with each shoulder cap sitting inside the shoulder line instead of poking up from a box corner',()=>{
+ for(const role of ['captive','guard'] as const){
+  const rig=createCharacter(role);rig.pose('seated-resting');rig.group.updateWorldMatrix(true,true);
+  const torso=rig.group.getObjectByName('Chest clothing') as THREE.Mesh;expect(torso.geometry.type).toBe('BufferGeometry');
+  expect(rig.group.getObjectByName('Relaxed clavicles')).toBeUndefined();
+  // Wider at the shoulders than at the waist, narrowing again toward the neck (trapezius slope).
+  const widths=TORSO_PROFILE.map(r=>r[1]);const shoulder=Math.max(...widths);
+  expect(shoulder).toBeGreaterThan(TORSO_PROFILE[0][1]+.05);expect(TORSO_PROFILE.at(-1)![1]).toBeLessThan(shoulder*.3);
+  for(const side of ['left','right'] as const){
+   const joint=rig.arms[side].shoulder.position,x=Math.abs(joint.x);expect(shoulder).toBeGreaterThan(x);
+   // Highest torso surface above the joint's x (linear between profile rows).
+   let surface=-Infinity;for(let i=0;i<TORSO_PROFILE.length-1;i++){const [y0,w0]=TORSO_PROFILE[i],[y1,w1]=TORSO_PROFILE[i+1];if((w0-x)*(w1-x)<=0&&w0!==w1)surface=Math.max(surface,y0+(y1-y0)*(w0-x)/(w0-w1));}
+   const capTop=joint.y+.047;expect(capTop-surface,`${role} ${side} cap protrusion`).toBeLessThan(.025);
+  }
+ }
+});
+

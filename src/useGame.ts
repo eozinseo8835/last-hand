@@ -1,6 +1,6 @@
 import {DialogueMemory,openingWords,readingHold,type TextSpeed} from './readability';
 import type {Reaction,ReactionKind} from './reactions';
-import { GUN_SLIDE_MS, GUN_SET_DOWN_MS, type GunTransfer } from './gunTransfer';
+import { GUN_SLIDE_MS, GUN_SET_DOWN_MS, SPIN_MS, SPIN_SWIPE_MS, type GunTransfer } from './gunTransfer';
 import { attentionAt, canOpponentPeek, planAttention, type Attention, type AttentionPlan } from './attention';
 import { approachStress, stressTarget } from './bodyLanguage';
 import { useEffect, useRef, useState } from 'react';
@@ -38,7 +38,7 @@ export type Session = {
   distantShot: DistantShot | null; ambientEvent: AmbientEvent | null; shotId: string | null;
   aiShotStartedAt: number | null; aiShotDurationMs: number | null;
   attention: Attention; peekStartedAt: number | null; caught: 'host' | 'captive' | 'ai' | null;
-  triggerDeadline: number | null; triggerRemainingMs: number | null; forceShotAt: number | null;
+  triggerDeadline: number | null; triggerRemainingMs: number | null; forceShotAt: number | null; forceTarget: Side | null;
   stress: number; lossStreak: number; gunTransfer: GunTransfer | null;
 };
 const initial = (): Session => ({
@@ -53,7 +53,7 @@ const initial = (): Session => ({
   cinematic: null, tiesCut: { player: true, ai: true }, distantShot: null, ambientEvent: null, shotId: null,
   aiShotStartedAt: null, aiShotDurationMs: null,
   attention: attentionAt(null, Date.now()), peekStartedAt: null, caught: null,
-  triggerDeadline: null, triggerRemainingMs: null, forceShotAt: null, stress: .22, lossStreak: 0, gunTransfer: null,
+  triggerDeadline: null, triggerRemainingMs: null, forceShotAt: null, forceTarget: null, stress: .22, lossStreak: 0, gunTransfer: null,
 });
 type Timer = ReturnType<typeof setTimeout>;
 type SpeechEntry = { line: SpeechLine; reactive: boolean };
@@ -78,6 +78,7 @@ export function useGame(textSpeed:TextSpeed='Normal') {
   const lastDistantAt = useRef(-Infinity), localShotUntil = useRef(0), ambientDueAt = useRef(Infinity);
   const attentionPlan = useRef<AttentionPlan | null>(null), opponentInView = useRef(true);
   const localPending = useRef<Timer|null>(null);
+  const aiDeadline = useRef<number | null>(null);
   const penaltyShot = useRef(false), timeoutTimers = useRef(new Set<Timer>()), gunTimers = useRef(new Set<Timer>());
   const stressClock = useRef(Date.now()), loudAt = useRef(-Infinity), reliefAt = useRef(-Infinity);
   const seenLoud = useRef(new Set<string>()), glanced = useRef(false);
@@ -183,7 +184,7 @@ export function useGame(textSpeed:TextSpeed='Normal') {
   function beginPlayerShot(message: string) {
     clearGroup(timeoutTimers.current);
     update({ phase: 'PLAYER_SHOOTING', awaitingTrigger: false, triggerHeld: false, triggerProgress: 0,
-      triggerDeadline: null, triggerRemainingMs: null, forceShotAt: null, message });
+      triggerDeadline: null, triggerRemainingMs: null, forceShotAt: null, forceTarget: null, message });
     slideGun('player', 'to-shooter', () => {
       if (current.current.phase === 'PLAYER_SHOOTING') startTriggerCountdown(message);
     });
@@ -207,13 +208,31 @@ export function useGame(textSpeed:TextSpeed='Normal') {
     const state = current.current;
     if (state.phase !== 'PLAYER_SHOOTING' || !state.awaitingTrigger || state.triggerDeadline === null || Date.now() < state.triggerDeadline) return;
     clearGroup(holdTimers.current); clearGroup(drainTimers.current); clearGroup(timeoutTimers.current);
-    update({ phase: 'HOST_FORCE_SHOT', forceShotAt: Date.now(), awaitingTrigger: false, suspense: true,
+    update({ phase: 'HOST_FORCE_SHOT', forceShotAt: Date.now(), forceTarget: 'player', awaitingTrigger: false, suspense: true,
       spinning: null, triggerHeld: false, triggerProgress: 0, triggerRemainingMs: 0,
       stats: { ...state.stats, forcedShots: state.stats.forcedShots + 1 }, message: 'The Host will complete the procedure.' });
     hostSay('forced_shot', 'Your time has elapsed.', true);
     later(() => { if (current.current.phase === 'HOST_FORCE_SHOT') tableAudio.playContact('metal',1); }, 2200, timeoutTimers.current);
     later(() => { if (current.current.phase === 'HOST_FORCE_SHOT') tableAudio.play('hammer'); }, 2800, timeoutTimers.current);
     later(() => { if (current.current.phase === 'HOST_FORCE_SHOT') resolveShot('player'); }, 4200, timeoutTimers.current);
+  }
+
+  /** The captive took too long: the Host interrupts, takes the revolver back and completes the captive's pull. */
+  function forceAiShot(deadline: number) {
+    const state = current.current;
+    if (state.phase !== 'AI_SHOOTING' || aiDeadline.current !== deadline || state.dead) return;
+    clearGroup(timeoutTimers.current); clearGroup(gunTimers.current); speechIdle.current = null;
+    update({ phase: 'HOST_FORCE_SHOT', forceShotAt: Date.now(), forceTarget: 'ai', suspense: true, spinning: null, gunTransfer: null,
+      aiShotStartedAt: null, aiShotDurationMs: null, message: 'The Host will complete the procedure.' });
+    if (current.current.speech?.speaker === 'captive') finishSpeech();
+    hostSay('forced_shot', 'Time.', true);
+    later(() => { if (current.current.phase === 'HOST_FORCE_SHOT') tableAudio.playContact('metal',1); }, 2200, timeoutTimers.current);
+    later(() => { if (current.current.phase === 'HOST_FORCE_SHOT') tableAudio.play('hammer'); }, 2800, timeoutTimers.current);
+    later(() => { if (current.current.phase === 'HOST_FORCE_SHOT') resolveShot('ai'); }, 4200, timeoutTimers.current);
+  }
+  function startAiDeadline() {
+    const deadline = Date.now() + CONFIG.AI_TRIGGER_TIMEOUT_MS; aiDeadline.current = deadline;
+    later(() => forceAiShot(deadline), CONFIG.AI_TRIGGER_TIMEOUT_MS, timeoutTimers.current);
   }
 
   function voiceFired(room: RoomNumber, fired: number) {
@@ -422,7 +441,7 @@ export function useGame(textSpeed:TextSpeed='Normal') {
     tableAudio.stopVoice(); publishSpeech(null);
     speechGap.current = later(() => {
       speechGap.current = null;
-      if (next >= openingLines().length) runOpeningStage('cut-opponent', mode); else showOpeningLine(next);
+      if (next >= openingLines().length) runOpeningStage('complete', mode); else showOpeningLine(next);
     }, 100);
   }
   function skipOpening() {
@@ -437,7 +456,7 @@ export function useGame(textSpeed:TextSpeed='Normal') {
     cancel(impatient.current); impatient.current = null;
     const state = current.current;
     attentionPlan.current = null; clearGroup(timeoutTimers.current); clearGroup(gunTimers.current);
-    update({ gunTransfer: null, roomNumber, stress: OPPONENTS[roomNumber].behavior.baseStress, lossStreak: 0, triggerDeadline: null, triggerRemainingMs: null, forceShotAt: null, peekStartedAt: null, caught: null, round: null, roundNumber: 0, folds: CONFIG.MAX_FOLDS,
+    update({ gunTransfer: null, roomNumber, stress: OPPONENTS[roomNumber].behavior.baseStress, lossStreak: 0, triggerDeadline: null, triggerRemainingMs: null, forceShotAt: null, forceTarget: null, peekStartedAt: null, caught: null, round: null, roundNumber: 0, folds: CONFIG.MAX_FOLDS,
       revolver: roomNumber === 1 && state.stats.roundsPlayed === 0 ? state.revolver : createRevolver(),
       abilities: freshAbilities(), tell: null, feedDeaths: [], revealed: false, result: null,
       suspense: false, awaitingTrigger: false, hasHit: false, dead: null, shotEffect: null, shotId: null,
@@ -530,7 +549,7 @@ export function useGame(textSpeed:TextSpeed='Normal') {
       phase: 'SHUFFLING', revealed: false, result: null, message: 'The Host shuffles.',
       suspense: false, awaitingTrigger: false, hasHit: false, shotEffect: null, shotId: null, aiShotStartedAt: null, aiShotDurationMs: null,
       triggerHeld: false, triggerProgress: 0, spinning: null, peekActor: null, peekedCard: null,
-      triggerDeadline: null, triggerRemainingMs: null, forceShotAt: null, peekStartedAt: null, caught: null,
+      triggerDeadline: null, triggerRemainingMs: null, forceShotAt: null, forceTarget: null, peekStartedAt: null, caught: null,
       gunTransfer: null, storyStage: 'table', tell: opponentTell(current.current.roomNumber, handTotal(opening.ai)),
       stats: { ...current.current.stats, roundsPlayed: current.current.stats.roundsPlayed + 1 } });
     hostSay('deal');
@@ -584,7 +603,8 @@ export function useGame(textSpeed:TextSpeed='Normal') {
   }
 
   function resolveShot(shooter: Side) {
-    if (shooter === 'ai' ? current.current.phase !== 'AI_SHOOTING' : !['PLAYER_SHOOTING','HOST_FORCE_SHOT'].includes(current.current.phase)) return;
+    const forcedTarget = current.current.phase === 'HOST_FORCE_SHOT' ? current.current.forceTarget ?? 'player' : null;
+    if (shooter === 'ai' ? current.current.phase !== 'AI_SHOOTING' && forcedTarget !== 'ai' : current.current.phase !== 'PLAYER_SHOOTING' && forcedTarget !== 'player') return;
     const wait=lastDistantAt.current+4000-Date.now();if(wait>0){if(localPending.current===null){clearGroup(holdTimers.current);clearGroup(timeoutTimers.current);update({awaitingTrigger:false,triggerHeld:false,triggerProgress:1});localPending.current=later(()=>{localPending.current=null;resolveShot(shooter);},wait);}return;}
     cancel(impatient.current); impatient.current = null;
     clearGroup(holdTimers.current); clearGroup(drainTimers.current);
@@ -605,8 +625,8 @@ export function useGame(textSpeed:TextSpeed='Normal') {
       shotEffect: fired.fired ? 'shot' : 'click', shotId, gunTransfer: null, phase: 'ROUND_RESULT', dead: fired.fired ? shooter : null,
       aiShotStartedAt: null, aiShotDurationMs: null, triggerDeadline: null, triggerRemainingMs: null,
       message: fired.fired ? '' : 'Click. An empty chamber.' });
-    // Only an empty click is set down and pushed back. A fatal shot drops the revolver where it falls.
-    if(!fired.fired)later(()=>{if(current.current.shotId===shotId)slideGun(shooter,'return');},GUN_SET_DOWN_MS,gunTimers.current);
+    // An empty click is set down and pushed back. A fatal shot drops the revolver where it falls, unless the Host fired it: then the Host sets it down.
+    if(!fired.fired||wasForced)later(()=>{if(current.current.shotId===shotId)slideGun(shooter,'return');},GUN_SET_DOWN_MS,gunTimers.current);
     if (fired.fired) tableAudio.playShot({ id: shotId, kind: 'local', roomId: state.roomNumber });
     else { tableAudio.play('click'); if(shooter==='ai') tableAudio.playStory('gasp'); }
     if (!penaltyShot.current) completeRound();
@@ -621,7 +641,7 @@ export function useGame(textSpeed:TextSpeed='Normal') {
     else {
       later(() => {react(shooter==='ai'?'survive':'player-click');wasForced?hostSay('forced_shot'):say(shooter==='ai'?'ai_survives_click':'player_survives_click',true);},GUN_SET_DOWN_MS+GUN_SLIDE_MS+50);
       later(() => {
-        update({ forceShotAt: null });
+        update({ forceShotAt: null, forceTarget: null });
         if (penaltyShot.current) { penaltyShot.current = false; update({ shotEffect: null, shotId: null }); enterDecision('The penalty is complete. Your hand continues.'); }
         else sweep();
       }, 3400);
@@ -670,11 +690,13 @@ export function useGame(textSpeed:TextSpeed='Normal') {
     update({ abilities: { ...state.abilities, [side]: { ...state.abilities[side], spin: false } },
       revolver: createRevolver(), spinning: side, spinSerial: serial, message: 'The cylinder turns. Six chambers again.',
       stats: recordAbility(state.stats, side, 'spin') });
-    tableAudio.play('spin'); say(side === 'player' ? 'player_spins' : 'opp_spins');
+    say(side === 'player' ? 'player_spins' : 'opp_spins');
+    // The ratchet sounds when the hand actually swipes the cylinder, not when the button is pressed.
+    later(() => { if (current.current.spinSerial === serial && current.current.spinning === side) tableAudio.play('spin'); }, SPIN_SWIPE_MS);
     later(() => {
       if (current.current.spinSerial !== serial || current.current.spinning !== side) return;
       update({ spinning: null }); after?.();
-    }, 800);
+    }, SPIN_MS);
   }
   function spinCylinder() {
     const state = current.current;
@@ -684,6 +706,8 @@ export function useGame(textSpeed:TextSpeed='Normal') {
   function opponentShot() {
     update({ phase: 'AI_SHOOTING', suspense: true, awaitingTrigger: false, triggerHeld: false, triggerProgress: 0, aiShotStartedAt: null, aiShotDurationMs: null });
     slideGun('ai', 'to-shooter');
+    // The 10 second limit starts once the revolver has reached the captive's hand.
+    later(() => { if (current.current.phase === 'AI_SHOOTING') startAiDeadline(); }, current.current.gunTransfer?.duration ?? GUN_SLIDE_MS, gunTimers.current);
     if(current.current.roomNumber!==3)say('ai_loses_hand', true);
     function hesitate() {
       tableAudio.play('tension');

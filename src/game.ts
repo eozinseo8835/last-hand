@@ -11,6 +11,8 @@ export const CONFIG = {
   GORE_LEVEL: 'medium' as 'low' | 'medium',
   LOOK_SENSITIVITY: 0.0035,
   PIXEL_HEIGHT: 360,
+  /** Cinematic graphics render budget (about 1600x900); larger screens are upscaled. */
+  CINEMATIC_MAX_PIXELS: 1600 * 900,
   LOOK_KEY_SPEED: 1.25,
   LEAN_DISTANCE: .45,
   DEAL_SPEED: 650,
@@ -23,6 +25,8 @@ export const CONFIG = {
   HEARTBEAT_BASE_BPM: 60,
   TRIGGER_HOLD_MS: 3000,
   TRIGGER_TIMEOUT_MS: 15000,
+  /** The captive gets 10 seconds once the revolver is in its hand; then the Host completes the pull. */
+  AI_TRIGGER_TIMEOUT_MS: 10000,
   PEEK_DURATION_MS: 1000,
   PEEK_CAUGHT_PENALTY: 'trigger' as 'trigger' | 'folds',
   RANDOM_EVENT_CHANCE: .6,

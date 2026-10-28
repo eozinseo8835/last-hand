@@ -15,6 +15,9 @@ import { cameraRecenter, createLeanState, createLookKeys, createLookState, dragL
 import { cinematicProgress, focusRecovery, hoodCoverage, type CinematicState } from './cinematics';
 import type { AmbientEvent, DistantShot } from './roomLife';
 import { playerPeekDeck, HOST_HEAD } from './tableLayout';
+import { applyCinematicLook, FilmPipeline, FILM_EFFECT_UNIFORMS } from './scene/cinematic';
+
+export type GraphicsMode = 'cinematic' | 'pixel';
 
 export type SceneProps = {
   phase: GamePhase;
@@ -52,8 +55,10 @@ export type SceneProps = {
   aiShotDurationMs?: number;
   gunTransfer?: GunTransfer | null;reaction?:Reaction|null;
   attention?: Attention; stress?: number; caught?: 'host' | 'captive' | 'ai' | null;
-  peekStartedAt?: number | null; forceShotAt?: number | null;
+  peekStartedAt?: number | null; forceShotAt?: number | null; forceTarget?: 'player' | 'ai' | null;
   onOpponentInView?: (visible: boolean) => void;
+  /** Read once when the scene mounts; App remounts the scene (key) when it changes. */
+  graphics?: GraphicsMode;
 };
 
 function splatterTexture() {
@@ -183,9 +188,11 @@ export default function Scene(props: SceneProps) {
     renderer.toneMappingExposure = 1.18;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.autoUpdate = false;
-    renderer.shadowMap.type = THREE.BasicShadowMap;
+    const cinematicMode = (latest.current.graphics ?? 'cinematic') === 'cinematic';
+    renderer.shadowMap.type = cinematicMode ? THREE.PCFSoftShadowMap : THREE.BasicShadowMap;
     const canvas = renderer.domElement;
-    canvas.className = 'pixel-canvas';
+    canvas.className = cinematicMode ? 'pixel-canvas is-cinematic' : 'pixel-canvas';
+    canvas.dataset.graphics = cinematicMode ? 'cinematic' : 'pixel';
     canvas.setAttribute('aria-label', '3D bunker. Hold the left mouse button and drag, or use W A S D, to look around.');
     canvas.dataset.testid = 'bunker-canvas';
     mount.appendChild(canvas);
@@ -222,6 +229,8 @@ export default function Scene(props: SceneProps) {
     tableStain.position.set(0,.752,-.28);
     blood.add(wallStain, tableStain); blood.visible = false; world.add(blood);
     const muzzle = new THREE.PointLight('#fff1bd', 0, 4, 2); world.add(muzzle);
+    const cinematicLook = cinematicMode ? applyCinematicLook(world, renderer) : null;
+    const film = cinematicMode ? new FilmPipeline(renderer) : null;
 
     const target = new THREE.WebGLRenderTarget(640, CONFIG.PIXEL_HEIGHT, {
       minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthBuffer: true,
@@ -235,12 +244,20 @@ export default function Scene(props: SceneProps) {
       depthTest: false, depthWrite: false, toneMapped: false,
     });
     const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), postMaterial); postScene.add(quad);
+    let cinematicHeight = 720;
     function resize() {
       const bounds = mount!.getBoundingClientRect();
       const aspect = bounds.width / Math.max(1, bounds.height);
-      const width = Math.round(CONFIG.PIXEL_HEIGHT * aspect);
-      renderer.setSize(width, CONFIG.PIXEL_HEIGHT, false);
-      target.setSize(width, CONFIG.PIXEL_HEIGHT);
+      if (film) {
+        // Full resolution, capped near 1600x900 pixels so laptops keep a steady frame rate.
+        const scale = Math.min(window.devicePixelRatio || 1, Math.sqrt(CONFIG.CINEMATIC_MAX_PIXELS / Math.max(1, bounds.width * bounds.height)));
+        const w = Math.max(1, Math.round(bounds.width * scale)), h = Math.max(1, Math.round(bounds.height * scale));
+        renderer.setSize(w, h, false); film.setSize(w, h); cinematicHeight = h;
+      } else {
+        const width = Math.round(CONFIG.PIXEL_HEIGHT * aspect);
+        renderer.setSize(width, CONFIG.PIXEL_HEIGHT, false);
+        target.setSize(width, CONFIG.PIXEL_HEIGHT);
+      }
       camera.aspect = aspect; camera.updateProjectionMatrix();
     }
     const observer = new ResizeObserver(resize); observer.observe(mount); resize();
@@ -345,6 +362,7 @@ export default function Scene(props: SceneProps) {
       if (state.shotEffect && state.shotEffect !== previousEffect) {
         impulse = state.shotEffect === 'shot' ? 1.5 : .28;
         flash = state.shotEffect === 'shot' ? 1 : 0;if(state.shotEffect==='shot')dustAt=time;
+        if (cinematicLook && state.shotEffect === 'shot') cinematicLook.fx.fireFromGun(actors.gun);
       }
       dust.position.y=-Math.min(1.3,Math.max(0,time-dustAt)*.35);(dust.material as THREE.PointsMaterial).opacity=Math.max(0,1-(time-dustAt)/4)*.5;
       previousEffect = state.shotEffect;
@@ -392,9 +410,9 @@ export default function Scene(props: SceneProps) {
         const facing = camera.quaternion.clone(); camera.lookAt(deckLook);
         camera.quaternion.slerpQuaternions(facing, camera.quaternion.clone(), Math.min(1,leanPeek*2));
       }
-      const contact=state.phase==='HOST_FORCE_SHOT'&&state.forceShotAt!=null?THREE.MathUtils.smoothstep((epoch-state.forceShotAt)/1000,2.4,2.8):0;
+      const contact=state.phase==='HOST_FORCE_SHOT'&&state.forceShotAt!=null&&state.forceTarget!=='ai'?THREE.MathUtils.smoothstep((epoch-state.forceShotAt)/1000,2.4,2.8):0;
       // No camera lunge during the player's grab: the revolver is delivered within reach and taken with a direct reach.
-      if(state.phase==='HOST_FORCE_SHOT'||state.forceShotAt!=null&&!!state.gunTransfer){const before=camera.quaternion.clone();camera.lookAt(HOST_HEAD[0],HOST_HEAD[1]-.02,HOST_HEAD[2]);camera.quaternion.slerpQuaternions(before,camera.quaternion.clone(),THREE.MathUtils.smoothstep((epoch-(state.forceShotAt??epoch))/1000,1.1,2.1));}
+      if(state.forceTarget!=='ai'&&(state.phase==='HOST_FORCE_SHOT'||state.forceShotAt!=null&&!!state.gunTransfer)){const before=camera.quaternion.clone();camera.lookAt(HOST_HEAD[0],HOST_HEAD[1]-.02,HOST_HEAD[2]);camera.quaternion.slerpQuaternions(before,camera.quaternion.clone(),THREE.MathUtils.smoothstep((epoch-(state.forceShotAt??epoch))/1000,1.1,2.1));}
 
       camera.updateMatrixWorld(true);
       room.update(time, dt, state.danger, state.suspense, impulse, event, epoch, {
@@ -475,7 +493,8 @@ export default function Scene(props: SceneProps) {
       canvas.dataset.hammerAngle = actors.hammer.rotation.z.toFixed(4);
       canvas.dataset.tell = state.phase === 'PLAYER_DECISION' ? state.tell?.kind ?? '' : '';
       actors.gun.getWorldPosition(gunPosition);
-      muzzle.position.copy(gunPosition); muzzle.intensity = flash * 22;
+      muzzle.position.copy(gunPosition); muzzle.intensity = flash * (cinematicLook ? 5 : 22);
+      if (cinematicLook) { cinematicLook.shaft.update(time, cinematicHeight); cinematicLook.fx.update(dt); }
       canvas.dataset.yaw = look.yaw.toFixed(5); canvas.dataset.pitch = look.pitch.toFixed(5);
       canvas.dataset.targetYaw = look.targetYaw.toFixed(5); canvas.dataset.targetPitch = look.targetPitch.toFixed(5);
       canvas.dataset.cameraLocked = String(locked); canvas.dataset.phase = state.phase;
@@ -491,8 +510,9 @@ export default function Scene(props: SceneProps) {
       const ceilingActive = !signalLost && state.phase !== 'GAME_OVER' && (roomNumber === 3 || state.phase === 'ENDING_DEATH');
       ceilingFeed.render(renderer, time, ceilingActive);
       canvas.dataset.ceilingFeed = String(ceilingActive); canvas.dataset.ceilingFrames = String(ceilingFeed.frames);
-      renderer.setRenderTarget(target); renderer.render(world, camera);
       const deathMonitor = state.phase === 'ENDING_DEATH' && state.storyStage !== 'fall';
+      if (film) film.renderScene(world, camera);
+      else { renderer.setRenderTarget(target); renderer.render(world, camera); }
       postMaterial.uniforms.sceneTexture.value = signalLost ? monitors.signalTexture : deathMonitor ? ceilingFeed.target.texture : target.texture;
       if (++fpsFrames > 0 && now - fpsStart > 1000) {
         canvas.dataset.fps = (fpsFrames * 1000 / (now - fpsStart)).toFixed(1);
@@ -500,7 +520,10 @@ export default function Scene(props: SceneProps) {
         canvas.dataset.triangles = String(renderer.info.render.triangles);
         fpsStart = now; fpsFrames = 0;
       }
-      renderer.setRenderTarget(null); renderer.render(postScene, postCamera);
+      if (film) {
+        for (const key of FILM_EFFECT_UNIFORMS) film.finalMat.uniforms[key].value = postMaterial.uniforms[key].value;
+        film.present(signalLost ? monitors.signalTexture : deathMonitor ? ceilingFeed.target.texture : null);
+      } else { renderer.setRenderTarget(null); renderer.render(postScene, postCamera); }
       frame = requestAnimationFrame(animate);
     }
     frame = requestAnimationFrame(animate);
@@ -530,7 +553,7 @@ export default function Scene(props: SceneProps) {
         }
       });
       textures.forEach(texture => texture.dispose()); materials.forEach(material => material.dispose()); geometries.forEach(geometry => geometry.dispose());
-      quad.geometry.dispose(); postMaterial.dispose(); target.dispose(); renderer.dispose(); canvas.remove();
+      quad.geometry.dispose(); postMaterial.dispose(); target.dispose(); film?.dispose(); cinematicLook?.fx.dispose(); renderer.dispose(); canvas.remove();
     };
   }, []);
 

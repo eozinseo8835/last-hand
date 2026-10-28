@@ -1,5 +1,6 @@
 export type CinematicMode = 'full' | 'short' | 'arrival' | 'transfer';
-export const OPENING_STAGES = ['hooded', 'door-open', 'guard-approach', 'player-unhood', 'player-focus', 'opponent-unhood', 'guard-exit', 'rules', 'cut-opponent', 'cut-player', 'rub-wrists', 'complete'] as const;
+/** The guard removes both hoods, cuts both restraints, and only then leaves; the Host's rules follow with everyone free. */
+export const OPENING_STAGES = ['hooded', 'door-open', 'guard-approach', 'player-unhood', 'player-focus', 'opponent-unhood', 'cut-opponent', 'cut-player', 'rub-wrists', 'guard-exit', 'rules', 'complete'] as const;
 export const TRANSFER_STAGES = ['guards-enter', 'transfer-hood', 'lift', 'dragging', 'door'] as const;
 export type CinematicStage = typeof OPENING_STAGES[number] | typeof TRANSFER_STAGES[number];
 export type CinematicState = { stage: CinematicStage; startedAt: number; mode: CinematicMode };
@@ -29,7 +30,7 @@ export function focusRecovery(state: CinematicState | null | undefined, now = Da
   return hoodCoverage(state, now) > 0 || state.stage === 'player-unhood' ? 0 : 1;
 }
 export function tiesForStage(state: CinematicState | null | undefined): { player: boolean; ai: boolean } {
-  if (!state || state.stage === 'complete' || state.stage === 'rub-wrists') return { player: true, ai: true };
+  if (!state || ['rub-wrists', 'guard-exit', 'rules', 'complete'].includes(state.stage)) return { player: true, ai: true };
   return { player: false, ai: state.stage === 'cut-player' };
 }
 export const hoodAllowsLook = (state: CinematicState | null | undefined) => !!state && ['hooded', 'door-open', 'guard-approach'].includes(state.stage);

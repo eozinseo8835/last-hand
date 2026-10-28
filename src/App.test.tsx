@@ -140,3 +140,15 @@ it('opens a last-twenty speaker log with L or LOG without blocking gameplay, and
  act(()=>button('HIT').click());expect(actions.hit).toHaveBeenCalledTimes(1);act(()=>window.dispatchEvent(new KeyboardEvent('keydown',{code:'KeyL',key:'l'})));expect(container.querySelector('#dialogue-log')).toBeNull();act(()=>button('LOG').click());expect(container.querySelector('#dialogue-log')).toBeTruthy();
  expect([...container.querySelectorAll('select[aria-label="Text speed"] option')].map(o=>o.textContent)).toEqual(['Slow','Normal','Fast']);
 });
+it('starts in cinematic graphics, switches to classic pixel from Settings, and remembers the choice',()=>{
+ try{localStorage.removeItem('last-hand-graphics');}catch{/* no storage */}
+ render();
+ const sceneProps=()=>vi.mocked(Scene).mock.calls.at(-1)![0] as unknown as {graphics:string};
+ expect(sceneProps().graphics).toBe('cinematic');
+ const select=container.querySelector('select[aria-label="Graphics"]') as HTMLSelectElement;
+ expect([...select.options].map(o=>o.textContent)).toEqual(['Cinematic','Classic pixel']);
+ act(()=>{select.value='pixel';select.dispatchEvent(new Event('change',{bubbles:true}));});
+ expect(sceneProps().graphics).toBe('pixel');
+ expect(localStorage.getItem('last-hand-graphics')).toBe('pixel');
+ try{localStorage.removeItem('last-hand-graphics');}catch{/* no storage */}
+});

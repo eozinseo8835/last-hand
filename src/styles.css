@@ -36,6 +36,7 @@ a { color: inherit; text-decoration: none; }
 .room-art { position: absolute; inset: 0; }
 .pixel-canvas { width: 100%; height: 100%; display: block; image-rendering: pixelated; image-rendering: crisp-edges; cursor: grab; touch-action: none; }
 .pixel-canvas.is-dragging { cursor: grabbing; }
+.pixel-canvas.is-cinematic { image-rendering: auto; }
 .scene-edge { position: absolute; inset: 0; box-shadow: inset 0 0 100px 25px #02090340; pointer-events: none; z-index: 1; }
 .hud-layer { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
 .hud-layer button, .hud-layer a { pointer-events: auto; }

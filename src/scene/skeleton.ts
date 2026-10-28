@@ -33,6 +33,28 @@ function orientChain(upper:THREE.Object3D,lower:THREE.Object3D,root:THREE.Object
   lower.rotation.set(-Math.min(maxFlex,Math.acos(THREE.MathUtils.clamp(u.dot(v),-1,1))),0,0);
 }
 
+/**
+ * One lofted torso (waist → chest → rounded shoulders → trapezius slope → neck base) in chest space.
+ * Replaces the box chest and flat clavicle slab, so the shoulder caps sit inside a sloped shoulder line
+ * instead of poking up from the corners of a box. Joint positions are unchanged.
+ */
+export const TORSO_PROFILE:readonly (readonly [number,number,number])[]=[
+  [-.20,.155,.094],[-.06,.172,.104],[.06,.192,.108],[.140,.218,.102],[.188,.228,.090],[.212,.168,.075],[.232,.075,.058],[.244,.050,.045],
+];
+function torsoGeometry(){
+  const sides=24,rows=TORSO_PROFILE.length,positions:number[]=[],indices:number[]=[];
+  for(const [y,w,d] of TORSO_PROFILE)for(let i=0;i<sides;i++){
+    // Superellipse cross-section: squarer than an ellipse, rounder than a box.
+    const a=i/sides*Math.PI*2,c=Math.cos(a),s=Math.sin(a),k=2/3.2;
+    positions.push(Math.sign(c)*Math.abs(c)**k*w,y,Math.sign(s)*Math.abs(s)**k*d);
+  }
+  for(let j=0;j<rows-1;j++)for(let i=0;i<sides;i++){const a=j*sides+i,b=j*sides+(i+1)%sides;indices.push(a,a+sides,b,b,a+sides,b+sides);}
+  const top=positions.length/3;positions.push(0,TORSO_PROFILE[rows-1][0]+.004,0);
+  for(let i=0;i<sides;i++)indices.push((rows-1)*sides+i,(rows-1)*sides+(i+1)%sides,top);
+  const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geometry.setIndex(indices);geometry.computeVertexNormals();
+  return geometry;
+}
+
 export function createCharacter(role:CharacterRole,room:1|2|3=1) {
   const group=new THREE.Group();group.name=`${role} human skeleton`;group.userData={actorRole:role,proceduralSkeleton:true};
   const pelvis=joint(group,`${role} pelvis`),spine=joint(pelvis,`${role} spine`,[0,.14,0]),chest=joint(spine,`${role} chest`,[0,.27,0]);
@@ -43,8 +65,8 @@ export function createCharacter(role:CharacterRole,room:1|2|3=1) {
   const flesh=material(role==='host'?0xb7a28b:role==='guard'?0x5d6253:0xb29c80,true),black=material(0x17211b),shoeMat=material(0x20271f);
   const handSkin=role==='host'?new THREE.MeshStandardMaterial({color:0x1b1f1c,roughness:.55,metalness:.05,flatShading:true}):flesh;
   const bodyMeshes:THREE.Mesh[]=[];
-  bodyMeshes.push(block(pelvis,[.29,.14,.19],[0,.02,0],cloth,'Hip clothing'),block(spine,[.29,.24,.18],[0,.06,0],cloth,'Abdomen'),block(chest,[.34,.36,.20],[0,-.02,0],cloth,'Chest clothing'),block(chest,[.40,.10,.19],[0,.11,0],cloth,'Relaxed clavicles'));
-  bodyMeshes.push(mesh(neck,new THREE.CylinderGeometry(.036,.040,.130,7),flesh,'Neck skin',[0,-.015,0]));
+  bodyMeshes.push(block(pelvis,[.29,.14,.19],[0,.02,0],cloth,'Hip clothing'),block(spine,[.28,.24,.17],[0,.06,0],cloth,'Abdomen'),mesh(chest,torsoGeometry(),cloth,'Chest clothing'));
+  bodyMeshes.push(mesh(neck,new THREE.CylinderGeometry(.039,.046,.130,8),flesh,'Neck skin',[0,-.015,0]));
   const headLooks:THREE.Group[]=[];
   for(let index=0;index<(role==='captive'?3:1);index++) {
     const look=joint(head,`${role} head look ${index+1}`);headLooks.push(look);
@@ -56,22 +78,65 @@ export function createCharacter(role:CharacterRole,room:1|2|3=1) {
       bodyMeshes.push(block(look,[.112,.020,.013],[0,.024,.077],flesh,'Balaclava eye opening'));
       for(const x of [-.030,.030])bodyMeshes.push(block(look,[.013,.009,.007],[x,.025,.086],black,'Guard eye'));
     } else {
-      const hair=material(index===2?0x707469:0x312e24);
-      const crownGeo=new THREE.SphereGeometry(1,8,5,0,Math.PI*2,0,Math.PI*.48);crownGeo.scale(.093,.118,.085);
-      bodyMeshes.push(mesh(look,crownGeo,hair,'Hair',[0,.003,-.005]));
+      const hair=material(index===2?0x8c8d86:index===1?0x241f19:0x3a3226);
+      // Distinct silhouettes: messy hair (nervous), slicked back (gambler), receding grey (survivor).
+      const crownGeo=new THREE.SphereGeometry(1,8,5,0,Math.PI*2,0,Math.PI*.48);
+      // Same proven cap as before (hair edge recessed behind the face), reshaped per character: fuller, slicked flat, or receding.
+      crownGeo.scale(index===2?.093:index===1?.095:.093,index===1?.120:.119,index===2?.085:index===1?.089:.086);
+      bodyMeshes.push(mesh(look,crownGeo,hair,'Hair',index===2?[0,.003,-.013]:index===1?[0,.004,-.006]:[0,.003,-.005]));
+      if(index===0){
+        // Messy tufts falling over the forehead and sticking out at the crown.
+        // Uneven fringe strands hanging onto the forehead plus a few sticking up at the crown.
+        // Uneven fringe lying flat on the forehead, plus a few strands sticking up at the crown.
+        for(const [x,y,z,rx,rz,w,l] of [[-.032,.066,.077,-.30,.20,.024,.034],[-.004,.069,.080,-.25,-.06,.026,.040],[.026,.066,.077,-.32,-.24,.022,.032],
+          [-.020,.116,.012,.55,.35,.020,.036],[.018,.118,-.018,.70,-.40,.018,.032]] as const){
+          const strand=block(look,[w,l,.008],[x,y,z],hair,'Messy hair strand');strand.rotation.set(rx,0,rz);bodyMeshes.push(strand);
+        }
+        const bag=material(0x6f5a48);for(const x of [-.034,.034])bodyMeshes.push(block(look,[.022,.005,.006],[x,.010,.080],bag,'Dark under-eye'));
+        const sweat=new THREE.MeshStandardMaterial({color:0xdfe8e4,emissive:0x8fa6a0,emissiveIntensity:.5,roughness:.2});
+        for(const [x,y] of [[.030,.066],[-.022,.074],[.052,.040]] as const)bodyMeshes.push(mesh(look,new THREE.SphereGeometry(.0045,5,4),sweat,'Sweat bead',[x,y,.079]));
+      }
+      if(index===1){
+        // Side parting line and stubble shadow over the jaw.
+        bodyMeshes.push(block(look,[.004,.006,.060],[.030,.108,.030],material(0x5a4a34),'Hair parting'));
+        const stubbleGeo=new THREE.SphereGeometry(1,12,6,Math.PI*.15,Math.PI*.70,Math.PI*.58,Math.PI*.30);stubbleGeo.scale(.093,.118,.086);
+        bodyMeshes.push(mesh(look,stubbleGeo,material(0x8c7864,true),'Stubble'));
+      }
+      if(index===2){
+        // Thick grey beard and a pale scar across the left cheek.
+        const beardGeo=new THREE.SphereGeometry(1,12,6,Math.PI*.10,Math.PI*.80,Math.PI*.64,Math.PI*.30);beardGeo.scale(.096,.122,.092);
+        const beard=material(0x9a9a8e,true);beard.emissiveIntensity=.22;
+        bodyMeshes.push(mesh(look,beardGeo,beard,'Beard'));
+        bodyMeshes.push(block(look,[.040,.024,.024],[0,-.090,.062],beard,'Beard chin'),block(look,[.054,.011,.010],[0,-.037,.081],beard,'Moustache'));
+        const scar=block(look,[.005,.036,.004],[-.050,-.006,.071],material(0xc79a86,true),'Cheek scar');scar.rotation.z=.55;bodyMeshes.push(scar);
+      }
       for(const x of [-.034,.034]) {
         bodyMeshes.push(block(look,[.018,index===0?.012:.009,.010],[x,.023,.078],black,'Human eye'));
-        const brow=block(look,[.025,.006,.008],[x,.045,.073],hair,'Eyebrow');brow.rotation.z=index===0?-Math.sign(x)*.14:0;bodyMeshes.push(brow);
+        const brow=block(look,[.025,.006,.008],[x,.045+(index===1&&x>0?.007:0),.073],hair,'Eyebrow');brow.rotation.z=index===0?-Math.sign(x)*.20:index===1&&x>0?-.18:index===2?Math.sign(x)*.08:0;bodyMeshes.push(brow);
       }
       const noseGeo=new THREE.ConeGeometry(.014,.045,5);noseGeo.rotateX(Math.PI/2);bodyMeshes.push(mesh(look,noseGeo,flesh,'Nose',[0,-.005,.087]));
-      bodyMeshes.push(block(look,[index===1?.049:.034,.005,.008],[0,-.048,.076],black,'Mouth'));
+      const mouth=block(look,[index===1?.044:index===0?.026:.034,index===0?.008:.005,.008],[index===1?.006:0,-.048,.076],black,'Mouth');mouth.rotation.z=index===1?.14:0;bodyMeshes.push(mouth);
       if(index===2)for(const y of [.058,.071])bodyMeshes.push(block(look,[.066,.003,.004],[0,y,.069],hair,'Forehead crease'));
     }
   }
   // Collars and the loosened tie retain each captive's silhouette.
-  const shirt=material(0x9b9882);bodyMeshes.push(block(chest,[.10,.13,.018],[0,.085,.111],shirt,'Shirt opening'));
-  const tie=block(chest,[.024,.22,.013],[.008,.005,.126],black,'Loosened tie');bodyMeshes.push(tie);
+  const shirt=material(0x9b9882);bodyMeshes.push(block(chest,[.10,.13,.018],[0,.085,.112],shirt,'Shirt opening'));
+  const tie=block(chest,[.024,.22,.013],[.008,.005,.124],black,'Loosened tie');bodyMeshes.push(tie);
   const hoodie=mesh(neck,new THREE.TorusGeometry(.074,.020,4,9),cloth,'Captive hood collar',[0,-.019,-.006]);hoodie.rotation.x=Math.PI/2;bodyMeshes.push(hoodie);
+  // Per-captive clothing details (shown by setRoom): hoodie strings and pocket, gambler's vest, survivor's work-jacket collar and zip.
+  const outfit=[1,2,3].map(n=>{const g=joint(chest,`${role} outfit ${n}`);g.visible=false;return g;});
+  const string=material(0xd8d3c2),pocket=material(0x3f463f),vest=material(0x2c2822),jacket=material(0x3f3424),zip=material(0x9c9a8a);
+  for(const x of [-.028,.028]){const m=mesh(outfit[0],new THREE.CylinderGeometry(.004,.004,.11,4),string,'Hoodie drawstring',[x,.150,.112]);m.rotation.x=-.12;bodyMeshes.push(m);}
+  bodyMeshes.push(block(outfit[0],[.17,.075,.016],[0,-.115,.100],pocket,'Hoodie pocket'));
+  for(const x of [-1,1]){const panel=block(outfit[1],[.085,.30,.014],[x*.058,-.035,.110],vest,'Waistcoat panel');panel.rotation.z=x*.10;bodyMeshes.push(panel);}
+  for(const y of [-.03,-.08,-.13])bodyMeshes.push(block(outfit[1],[.010,.010,.006],[.012,y,.119],material(0x8a7a4a),'Waistcoat button'));
+  for(const x of [-1,1]){const flap=block(outfit[2],[.070,.050,.014],[x*.055,.205,.090],jacket,'Jacket collar');flap.rotation.set(-.5,0,x*.45);bodyMeshes.push(flap);}
+  bodyMeshes.push(block(outfit[2],[.008,.34,.006],[0,-.030,.112],zip,'Jacket zip'));
+  for(const x of [-1,1])bodyMeshes.push(block(outfit[2],[.050,.030,.010],[x*.10,.040,.106],jacket,'Chest pocket flap'));
+  // Guards wear a tactical vest with pouches.
+  const tactical=joint(chest,`${role} tactical vest`);tactical.visible=role==='guard';
+  const vestMat=material(0x161b18);bodyMeshes.push(block(tactical,[.30,.30,.030],[0,-.02,.100],vestMat,'Tactical vest front'),block(tactical,[.30,.30,.030],[0,-.02,-.100],vestMat,'Tactical vest back'));
+  for(const x of [-.09,0,.09])bodyMeshes.push(block(tactical,[.065,.070,.035],[x,-.10,.125],material(0x222a24),'Vest pouch'));
 
   const arms={} as Record<RigSide,SkeletonArm>;
   for(const side of ['left','right'] as const) {
@@ -81,7 +146,7 @@ export function createCharacter(role:CharacterRole,room:1|2|3=1) {
     const hand=joint(forearm,`${role} ${side} wrist`,[0,-HUMAN.forearm,0]);hand.quaternion.copy(HAND_BIND);hand.userData.bindQuaternion=HAND_BIND.toArray();
     const upperMesh=segment(upper,HUMAN.upperArm,role==='host'?.056:.050,cloth,'Upper sleeve'),lowerMesh=segment(forearm,HUMAN.forearm,role==='host'?.050:.041,cloth,'Forearm sleeve');
     if(role==='host')(lowerMesh.geometry as THREE.CylinderGeometry).dispose(),lowerMesh.geometry=new THREE.CylinderGeometry(.050,.062,HUMAN.forearm,18,1,true);
-    cap(upper,.051,cloth,'Shoulder cap');cap(forearm,.042,cloth,'Elbow cap');cap(hand,.023,handSkin,'Wrist cap');
+    cap(upper,.047,cloth,'Shoulder cap');cap(forearm,.042,cloth,'Elbow cap');cap(hand,.023,handSkin,'Wrist cap');
     segment(forearm,.030,role==='host'?.064:.042,role==='host'?cloth:material(0x475245),'Sleeve cuff').position.y=-HUMAN.forearm+.015;
     const palm=block(hand,[.075,.028,.10],[0,0,.050],handSkin,'Skin palm');palm.receiveShadow=false;
     const fingers:THREE.Group[][]=[];
@@ -103,6 +168,9 @@ export function createCharacter(role:CharacterRole,room:1|2|3=1) {
     }
     arms[side]={shoulder,upper,forearm,hand,palm,fingers,thumb,upperMesh,lowerMesh,lengths:[HUMAN.upperArm,HUMAN.forearm],diagnostics:{requestedDistance:0,targetDistance:0,reachLimit:.513,relocateRequired:false,elbowAngle:90,shoulder:new THREE.Vector3(),elbow:new THREE.Vector3(),wrist:new THREE.Vector3(),wristLimited:false}};
   }
+  // Gambler's gold ring on the right ring finger; survivor's elbow patches.
+  const ring=mesh(arms.right.fingers[2][0],new THREE.TorusGeometry(.0095,.0028,5,10),new THREE.MeshStandardMaterial({color:0xc9a64a,metalness:.8,roughness:.3,emissive:0x3a2c08,emissiveIntensity:.4}),'Gold ring',[0,0,.012]);ring.visible=false;
+  const elbowPatches=(['left','right'] as const).map(side=>{const patch=block(arms[side].forearm,[.060,.060,.020],[0,-.045,-.040],material(0x2e261a),'Elbow patch');patch.visible=false;bodyMeshes.push(patch);return patch;});
   const legs={} as Record<RigSide,SkeletonLeg>;
   for(const side of ['left','right'] as const) {
     const sign=side==='left'?-1:1,thigh=joint(pelvis,`${role} ${side} thigh`,[sign*.105,0,0]),shin=joint(thigh,`${role} ${side} shin`,[0,-HUMAN.thigh,0]),foot=joint(shin,`${role} ${side} foot`,[0,-HUMAN.shin,0]);
@@ -115,7 +183,10 @@ export function createCharacter(role:CharacterRole,room:1|2|3=1) {
   let activeRoom=room;
   function setRoom(next:1|2|3) {
     activeRoom=next;headLooks.forEach((look,index)=>look.visible=role!=='captive'||index===next-1);
-    if(role==='captive') {cloth.color.setHex([0x465348,0x888775,0x49554b][next-1]);flesh.color.setHex([0xb6a084,0xb1997e,0xb0a88e][next-1]);flesh.emissive.copy(flesh.color);}
+    // Faded grey hoodie (nervous), shirt sleeves under a waistcoat (gambler), worn brown work jacket (survivor).
+    if(role==='captive') {cloth.color.setHex([0x58605a,0x8b8573,0x5c4a33][next-1]);flesh.color.setHex([0xbfae98,0xb1997e,0xa89880][next-1]);flesh.emissive.copy(flesh.color);}
+    outfit.forEach((g,index)=>g.visible=role==='captive'&&index===next-1);ring.visible=role==='captive'&&next===2;
+    elbowPatches.forEach(patch=>patch.visible=role==='captive'&&next===3);
     tie.visible=role==='captive'&&next===2;hoodie.visible=role==='captive'&&next===1;
     group.userData.roomNumber=next;
   }

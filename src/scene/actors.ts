@@ -14,7 +14,7 @@ import { type AmbientEvent, type DistantShot } from '../roomLife';
 import type { Attention } from '../attention';
 import { OPPONENTS } from '../campaign';
 import { CARD_WIDTH, CARD_HEIGHT, DECK_POSITION, GUN_REST, GUN_PICKUP, HOST_SEAT, tableCardPosition, playerPeekDeck, gunSlidePoint } from '../tableLayout';
-import { gunTransferProgress, type GunTransfer } from '../gunTransfer';
+import { gunTransferProgress, SPIN_MS, SPIN_SWIPE_MS, type GunTransfer } from '../gunTransfer';
 import { createCharacter } from './skeleton';
 import { type PoseName, type DebugPoseName } from './poses';
 import { createRevolverModel, MUZZLE_LOCAL, GRIP_SOCKET } from './revolver';
@@ -52,7 +52,7 @@ export type ActorState = {
   aiShotStartedAt?: number | null;
   aiShotDurationMs?: number | null;
   attention?: Attention; stress?: number; caught?: 'host' | 'captive' | 'ai' | null;
-  peekStartedAt?: number | null; forceShotAt?: number | null;
+  peekStartedAt?: number | null; forceShotAt?: number | null; forceTarget?: 'player' | 'ai' | null;
   gunTransfer?: GunTransfer | null;
 };
 
@@ -267,7 +267,7 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
   let shootingLayStartedAt=-1;
   let elapsedShoot = 0, phaseStartedAt = 0, showdownStartedAt = -1, sweepStartedAt = -1;
   let serial = 0, newest: CardSlot | null = null, slump = 0;
-  let dropAt=-Infinity,dropRound=-1;const dropFrom=new THREE.Vector3(),dropQuaternion=new THREE.Quaternion(),lastGunPosition=new THREE.Vector3(...GUN_REST),lastGunQuaternion=new THREE.Quaternion();
+  let dropAt=-Infinity,deathAt=-Infinity,dropRound=-1,forceSide:'player'|'ai'='player';const dropFrom=new THREE.Vector3(),dropQuaternion=new THREE.Quaternion(),lastGunPosition=new THREE.Vector3(...GUN_REST),lastGunQuaternion=new THREE.Quaternion();
 
   function makeSlot(owner: 'player' | 'ai', index: number): CardSlot {
     const group = new THREE.Group();
@@ -491,7 +491,7 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
   function hostAim():Aim{
     hostRig.group.updateWorldMatrix(true,true);
     // Classic sight line: the revolver sits in front of the mask, arm extended toward the player's head.
-    const face=hostHead.getWorldPosition(new THREE.Vector3()),eye=view.getWorldPosition(new THREE.Vector3());
+    const face=hostHead.getWorldPosition(new THREE.Vector3()),eye=forceSide==='ai'?head.getWorldPosition(new THREE.Vector3()):view.getWorldPosition(new THREE.Vector3());
     const direction=eye.clone().sub(face).normalize(),muzzle=face.clone().addScaledVector(direction,.56);muzzle.y-=.06;
     direction.copy(eye).sub(muzzle).normalize();
     return {muzzle,q:new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(1,0,0),direction)};
@@ -601,12 +601,45 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     captiveRig.solveHand('left',wrist,new THREE.Vector3(-.45,.20,.05),{lean:false,palmQuaternion:palm});captiveRig.setGrip('left',.55);
     captiveRig.arms.left.thumb[0].rotation.x=-.9;
   }
-  function hostTwist(amount:number){host.rotation.y=Math.PI/2-.38*amount;host.updateWorldMatrix(true,true);}
+  /** Seated torso twist toward whoever the Host is about to shoot (the player, or the captive across the table). */
+  /** Inspect pose: the revolver held in front, side on, so the other hand can swipe the cylinder. */
+  function inspectAim(rig:typeof captiveRig):Aim{
+    // Player: a quarter roll up from the felt grip (no flip through the table): muzzle to the right, cylinder side toward the eye.
+    if(rig===playerRig)return {muzzle:atCamera(.13,-.15,-.42),q:view.getWorldQuaternion(new THREE.Quaternion())};
+    return {muzzle:captive.localToWorld(new THREE.Vector3(-.10,.45,.36)),q:captive.getWorldQuaternion(new THREE.Quaternion()).multiply(new THREE.Quaternion().setFromAxisAngle(Y_AXIS,Math.PI))};
+  }
+  /**
+   * SPIN by hand (t: 0..1 over SPIN_MS): raise the revolver side-on (0–.30), bring the free hand to the cylinder (.30–.42),
+   * swipe down across it (.42–.55, the cylinder starts turning), withdraw (.55–.75), return the revolver (.80–1).
+   * The player returns it to the felt grip; the captive returns it to its temple.
+   */
+  function spinPose(rig:typeof captiveRig,t:number){
+    const player=rig===playerRig,raise=smooth(0,.30,t)*(1-smooth(.80,1,t)),inspect=inspectAim(rig);
+    if(player){playerPose();directGrab(playerRig,new THREE.Vector3(...GUN_PICKUP.player),0,PLAYER_GRIP_K+(1-PLAYER_GRIP_K)*raise,inspect,-.16);}
+    else {
+      const temple=captiveAim(),eased=raise*raise*(3-2*raise);
+      pointGun(captiveRig,'right',temple.muzzle.clone().lerp(inspect.muzzle,eased),temple.q.clone().slerp(inspect.q,eased),eased<.35);gunHolder='ai';
+    }
+    rig.setGrip('right',1);
+    const reach=smooth(.28,.42,t)*(1-smooth(.55,.75,t));
+    if(reach>0){
+      scene.updateMatrixWorld(true);
+      const top=revolverCylinder.getWorldPosition(new THREE.Vector3()),down=new THREE.Vector3(0,-1,0);
+      const stroke=smooth(.42,.55,t),target=top.clone().add(new THREE.Vector3(0,.075-.11*stroke,0)).addScaledVector(down,0);
+      if(player)target.add(view.localToWorld(new THREE.Vector3(0,0,.05)).sub(view.getWorldPosition(new THREE.Vector3())));
+      else target.add(new THREE.Vector3(0,0,.05));
+      const rest=rig.arms.left.hand.getWorldPosition(new THREE.Vector3());
+      const palmDown=player?view.getWorldQuaternion(new THREE.Quaternion()).multiply(new THREE.Quaternion().setFromAxisAngle(Y_AXIS,Math.PI)):captive.getWorldQuaternion(new THREE.Quaternion());
+      solveWorld(rig,'left',rest.lerp(target,reach),palmDown,false,false,false);relaxHand(rig,'left');
+    }
+    gun.userData.spinStage=t<.30?'raise':t<.42?'reach':t<.55?'swipe':t<.80?'withdraw':'return';
+  }
+  function hostTwist(amount:number){host.rotation.y=Math.PI/2+(forceSide==='ai'?.45:-.38)*amount;host.updateWorldMatrix(true,true);}
   /** Timeout: the player sets the revolver down and pushes it back; the seated Host takes it and aims from its seat. */
   function forcedShotPose(age:number){
     host.position.set(...HOST_SEAT);hostTwist(0);hostRig.pose('host-idle');
-    if(age<1.4){setDownAndReturn(playerRig,'player',age/1.4,PLAYER_GRIP_K);gun.userData.shotStage='return';return;}
-    playerPose();
+    if(age<1.4){if(forceSide==='ai')setDownAndReturn(captiveRig,'ai',age/1.4,1);else setDownAndReturn(playerRig,'player',age/1.4,PLAYER_GRIP_K);gun.userData.shotStage='return';return;}
+    if(forceSide==='player')playerPose();
     const k=THREE.MathUtils.clamp((age-1.4)/1.2,0,1);hostTwist(smooth(.5,1,k));hostRig.pose('host-idle');
     if(k<1)directGrab(hostRig,gunRest,REST_YAW,k,hostAim(),.20);
     else {const aim=hostAim();pointGun(hostRig,'left',aim.muzzle,aim.q);hostRig.setGrip('left',1,smooth(3.9,4.2,age),1);gunHolder='host';gun.userData.forcedMuzzleTarget=aim.muzzle.toArray();}
@@ -782,21 +815,34 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     if(cine&&cine.mode!=='transfer') {
       const covered=!['guard-exit','rules','cut-opponent','cut-player','rub-wrists','complete'].includes(stage);
       const removal=stage==='opponent-unhood'?THREE.MathUtils.smoothstep(p,.65,.94):0;hood.update(removal);captiveHood.visible=covered&&removal<.995;head.rotation.x-=Math.sin(removal*Math.PI)*.16;head.rotation.x+=THREE.MathUtils.smoothstep(removal,.85,1)*.08;
-      if(['door-open','guard-approach','player-unhood','player-focus','opponent-unhood','guard-exit'].includes(stage)) {
-        const guard=guards[0];guard.group.visible=true;
-        const door=new THREE.Vector3(2.7,.9,-3.7),side=new THREE.Vector3(1.10,.9,1.05),far=new THREE.Vector3(1.05,.9,-1.35),opponent=new THREE.Vector3(.62,.9,-1.20);
+      if(['door-open','guard-approach','player-unhood','player-focus','opponent-unhood','cut-opponent','cut-player','rub-wrists','guard-exit'].includes(stage)) {
+        // One continuous guard: unhood both, cut both restraints, then leave. It never vanishes or reappears between stages.
+        const guard=guards[0];guard.group.visible=true;guard.rig.pose('guard-walking',time);guard.rig.setStandingHeight(.9);
+        const door=new THREE.Vector3(2.7,.9,-3.7),side=new THREE.Vector3(1.14,.9,1.07),far=new THREE.Vector3(1.05,.9,-1.35),opponent=new THREE.Vector3(.62,.9,-1.20);
+        const cutOpponent=new THREE.Vector3(.55,.9,-.5),cutPlayer=new THREE.Vector3(.60,.9,.55),aisleFar=new THREE.Vector3(1.05,.9,-.15),aisleNear=new THREE.Vector3(1.05,.9,.35);
+        let route:THREE.Vector3[]|null=null,u=0,heading=-Math.PI/2,crouch=0,cutting:'ai'|'player'|null=null;
         if(stage==='door-open')guard.group.position.copy(door);
-        else if(stage==='guard-approach')guard.group.position.copy(routePoint([door,new THREE.Vector3(1.05,.9,-1.35),side],p));
+        else if(stage==='guard-approach'){route=[door,far,side];u=p;}
         else if(stage==='player-unhood'||stage==='player-focus')guard.group.position.copy(side);
-        else if(stage==='opponent-unhood')guard.group.position.copy(routePoint([side,far,opponent],Math.min(1,p/.65)));
-        else guard.group.position.copy(routePoint([opponent,far,door],p));
-        guard.group.rotation.y=-Math.PI/2;
+        else if(stage==='opponent-unhood'){route=[side,far,opponent];u=Math.min(1,p/.65);}
+        else if(stage==='cut-opponent'){route=[opponent,cutOpponent];u=smooth(0,.35,p);crouch=smooth(.32,.50,p);cutting=p>.45?'ai':null;}
+        else if(stage==='cut-player'){route=[cutOpponent,aisleFar,aisleNear,cutPlayer];u=smooth(.04,.45,p);crouch=smooth(.42,.55,p)*.5;cutting=p>.50?'player':null;}
+        else if(stage==='rub-wrists'){route=[cutPlayer,aisleNear];u=smooth(0,1,p);}
+        else {route=[aisleNear,far,door];u=p;}
+        if(route){guard.group.position.copy(routePoint(route,u));const ahead=routePoint(route,Math.min(1,u+.02)).sub(guard.group.position);if(ahead.lengthSq()>1e-8&&u<.999)heading=Math.atan2(ahead.x,ahead.z);}
+        guard.group.rotation.y=heading;
         if(stage==='player-unhood') {guard.group.rotation.y=-Math.PI*.75;solveWorld(guard.rig,'right',atCamera(.44,.11,-.10),view.getWorldQuaternion(new THREE.Quaternion()).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0,-Math.PI/2,0))));}
-        if(stage==='opponent-unhood'&&p>.65){const lift=THREE.MathUtils.smoothstep(p,.65,.94);guard.group.position.x-=.12*lift;solveWorld(guard.rig,'right',head.getWorldPosition(working).add(new THREE.Vector3(.03,.12+lift*.37,0)));guard.rig.setGrip('right',.65);}
-        guard.foldedHoods.visible=stage==='guard-exit';guard.group.userData.hoodsCarried=stage==='guard-exit'?2:0;
+        if(stage==='opponent-unhood'&&p>.65){const lift=THREE.MathUtils.smoothstep(p,.65,.94);guard.group.position.x-=.12*lift;guard.group.rotation.y=-Math.PI/2;solveWorld(guard.rig,'right',head.getWorldPosition(working).add(new THREE.Vector3(.03,.12+lift*.37,0)));guard.rig.setGrip('right',.65);}
+        if(crouch>0||cutting){
+          // Same crouched cutting pose as before: facing the table centre, leaning in, the cutter in the right hand.
+          const height=.9-(cutting==='player'||stage==='cut-player'?.15:.30)*Math.min(1,crouch*(stage==='cut-player'?2:1));
+          guard.group.rotation.y=-Math.PI/2;guard.rig.setStandingHeight(height);guard.rig.spine.rotation.x=.75*Math.min(1,crouch*(stage==='cut-player'?2:1));guard.rig.group.updateWorldMatrix(true,true);
+          if(cutting){const target=cutting==='player'?atCamera(0,-.35,-.38):new THREE.Vector3(0,.78,-.45);guard.rig.solveHand('right',guard.group.worldToLocal(target),undefined,{lean:false});guard.rig.setGrip('right',.6);}
+        }
+        guard.foldedHoods.visible=['cut-opponent','cut-player','rub-wrists','guard-exit'].includes(stage);guard.group.userData.hoodsCarried=guard.foldedHoods.visible?2:0;
       }
       cutter.visible=stage==='cut-opponent'||stage==='cut-player';
-      if(cutter.visible){const g=guards[0],playerCut=stage==='cut-player';g.group.visible=true;g.group.position.set(playerCut?.60:.55,playerCut?.75:.60,playerCut?.55:-.5);g.group.rotation.y=-Math.PI/2;g.rig.pose('guard-walking',0);g.rig.setStandingHeight(g.group.position.y);g.rig.spine.rotation.x=.75;g.rig.group.updateWorldMatrix(true,true);const target=playerCut?atCamera(0,-.35,-.38):new THREE.Vector3(0,.78,-.45);g.rig.solveHand('right',g.group.worldToLocal(target),undefined,{lean:false});g.rig.setGrip('right',.6);g.rig.arms.right.hand.add(cutter);}
+      if(cutter.visible)guards[0].rig.arms.right.hand.add(cutter);
 
     } else {captiveHood.visible=false;cutter.visible=false;}
     if(cine?.mode==='transfer'){hood.update(0);captiveHood.visible=true;}
@@ -810,10 +856,16 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     captiveTie.rotation.x=playerTie.rotation.x=Math.PI/2;
     const newShot=state.shotEffect&&state.shotEffect!==priorShotEffect;
     if(newShot){shotAt=time;latchedShooter=gunHolder??(state.dead==='ai'?'ai':'player');
-      if(state.shotEffect==='shot'&&state.dead==='ai'){dropFrom.copy(lastGunPosition);dropQuaternion.copy(lastGunQuaternion);dropAt=time;}}
-    if(state.roundNumber!==dropRound){dropRound=state.roundNumber;if(state.dead!=='ai')dropAt=-Infinity;}
+      if(state.shotEffect==='shot'&&state.dead==='ai'){deathAt=time;
+        // Only a revolver in the dead captive's own hand falls; when the Host fired it, the Host keeps it and sets it down.
+        if(latchedShooter==='ai'){dropFrom.copy(lastGunPosition);dropQuaternion.copy(lastGunQuaternion);dropAt=time;}}}
+    if(state.roundNumber!==dropRound){dropRound=state.roundNumber;if(state.dead!=='ai')dropAt=deathAt=-Infinity;}
     priorShotEffect=state.shotEffect;
-    const transfer=state.dead==='ai'?null:state.gunTransfer;
+    if(state.forceShotAt!=null)forceSide=state.forceTarget==='ai'?'ai':'player';
+    const transfer=state.dead==='ai'&&state.gunTransfer?.owner!=='host'?null:state.gunTransfer;
+    const spinning=state.spinning??null;
+    if(spinning){const serial=state.spinSerial??0;if(serial!==lastSpinSerial){lastSpinSerial=serial;spinStartedAt=time;spinFrom=revolverCylinder.rotation.x;}}
+    const spinT=spinning?THREE.MathUtils.clamp((time-spinStartedAt)/(SPIN_MS/1000),0,1):0;
     const forceAge=(epoch-(state.forceShotAt??epoch))/1000;
     if(state.dead==='ai'&&Number.isFinite(dropAt))droppedGun(time-dropAt);
     else if(transfer){const p=gunTransferProgress(transfer,epoch);
@@ -821,10 +873,13 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
       else setDownAndReturn(transfer.owner==='host'?hostRig:transfer.side==='ai'?captiveRig:playerRig,transfer.owner??transfer.side,p);}
     else if(state.phase==='HOST_FORCE_SHOT'||state.forceShotAt!=null&&state.phase==='ROUND_RESULT'&&forceAge<4400/1000)forcedShotPose(forceAge);
     else if(state.shotEffect&&time-shotAt<.2){if(latchedShooter==='ai')selfShot();else if(latchedShooter==='host')forcedShotPose(4.2);else playerPose(true,1);}
+    else if(state.phase==='AI_SHOOTING'&&spinning==='ai')spinPose(captiveRig,spinT);
     else if(state.phase==='AI_SHOOTING')selfShot();
+    else if(state.phase==='PLAYER_SHOOTING'&&spinning==='player')spinPose(playerRig,spinT);
     else if(state.phase==='PLAYER_SHOOTING'){playerPose(true,state.triggerProgress??0);}
     else flatGun(gunRest);
-    if(state.spinning){const serial=state.spinSerial??0;if(serial!==lastSpinSerial){lastSpinSerial=serial;spinStartedAt=time;spinFrom=revolverCylinder.rotation.x;}revolverCylinder.rotation.x=spinFrom+Math.PI*6*(1-(1-Math.min(1,(time-spinStartedAt)/.8))**3);}
+    // The cylinder only starts turning when the swipe lands.
+    if(spinning){const swipe=SPIN_SWIPE_MS/SPIN_MS;revolverCylinder.rotation.x=spinFrom+Math.PI*6*(1-(1-THREE.MathUtils.clamp((spinT-swipe)/(1-swipe-.08),0,1))**3);}
     else revolverCylinder.rotation.x=(state.triggerProgress??0)*Math.PI/3;
     hammer.rotation.z=-THREE.MathUtils.smoothstep(state.triggerProgress??0,.3,.7)*.55;
     model.trigger.rotation.z=-(state.triggerProgress??0)*.18;
@@ -854,15 +909,15 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     heldRig.position.set(0,0,0);
     if(peek==='player')solveWorld(playerRig,'left',atCamera(-.18,-.28,-.53),view.getWorldQuaternion(new THREE.Quaternion()).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI/2,Math.PI,0))));
     const busyLeft=!cardRevealed&&shootingLayStartedAt<0&&currentRound?.player.length&& !['START','OPENING','TRANSITION','SWEEPING'].includes(state.phase);
-    if(!busyLeft&&!boundPlayer&&peek!=='player')restPlayerHand('left');
-    const playerRightBusy=gunHolder==='player'||!!transfer&&transfer.side==='player'||state.phase==='PLAYER_PEEKING'||state.phase==='HOST_FORCE_SHOT'&&forceAge<1.4;
+    if(!busyLeft&&!boundPlayer&&peek!=='player'&&!(spinning==='player'&&spinT>.27&&spinT<.76))restPlayerHand('left');
+    const playerRightBusy=gunHolder==='player'||!!transfer&&transfer.side==='player'||state.phase==='PLAYER_PEEKING'||state.phase==='HOST_FORCE_SHOT'&&forceAge<1.4&&forceSide==='player';
     if(!boundPlayer&&!playerRightBusy)restPlayerHand('right');
     if(state.speaker==='host' && !['SHUFFLING','DEALING','HITTING','DEALER_TURN','HOST_FORCE_SHOT'].includes(state.phase)&&time-hostGestureAt<1.5){hostRig.solveHand('left',new THREE.Vector3(-.10,.20,.22));hostRig.setGrip('left',.18);}
     for(const rig of [captiveRig,hostRig,playerRig,...guardRigs])rig.constrainFingers();
     const hiddenCards=['START','OPENING','TRANSITION','ENDING_WIN'].includes(state.phase);
     animateCards(time,dt,state);
     if(hiddenCards){heldRig.visible=false;cardSlots.forEach(slot=>{slot.group.visible=false;slot.group.userData.held=false;slot.group.userData.tableFaceUp=false;});}
-    if(state.dead==='ai'&&Number.isFinite(dropAt))slumpCaptive(time-dropAt);else slump=0;
+    if(state.dead==='ai'&&Number.isFinite(deathAt))slumpCaptive(time-deathAt);else slump=0;
     const reaction=applyReaction(state,epoch);
     const eye=view.getWorldPosition(new THREE.Vector3()),ownCards=aiHeldRig.getWorldPosition(new THREE.Vector3()),gunPoint=gun.getWorldPosition(new THREE.Vector3()),hostPoint=hostHead.getWorldPosition(new THREE.Vector3());
     const sound=state.worldSound??debugSound,capSound=soundReaction(sound,epoch),hostSound=soundReaction(sound,epoch,true);
@@ -871,13 +926,13 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     let captiveTarget=shooting?gunPoint:state.speaker==='host'||dealing?hostPoint:state.speaker==='captive'?state.addressedTo==='host'?hostPoint:eye:state.phase==='REVEAL'?time-phaseStartedAt<.7?new THREE.Vector3(0,.76,.27):eye:recentPlayer?eye:ownCards;
     if(!shooting&&!state.speaker&&!dealing&&!recentPlayer){if(room===1){const glance=Math.floor(time/3)%3;captiveTarget=glance===0?ownCards:glance===1?eye:gunPoint;}else if(room===2)captiveTarget=time%13<1?ownCards:eye;}
     if(!shooting&&!state.speaker&&!dealing&&state.attention?.captive.away)captiveTarget=state.attention.captive.returning?eye:ownCards;
-    const hostTarget=state.phase==='HOST_FORCE_SHOT'?eye:shooting?gunPoint:state.speaker==='host'?state.addressedTo==='captive'?head.getWorldPosition(new THREE.Vector3()):eye:state.speaker==='captive'?head.getWorldPosition(new THREE.Vector3()):dealing||state.attention?.host.away&&!state.attention.host.returning?deck.getWorldPosition(new THREE.Vector3()):eye;
+    const hostTarget=state.phase==='HOST_FORCE_SHOT'?forceSide==='ai'?head.getWorldPosition(new THREE.Vector3()):eye:shooting?gunPoint:state.speaker==='host'?state.addressedTo==='captive'?head.getWorldPosition(new THREE.Vector3()):eye:state.speaker==='captive'?head.getWorldPosition(new THREE.Vector3()):dealing||state.attention?.host.away&&!state.attention.host.returning?deck.getWorldPosition(new THREE.Vector3()):eye;
     if(reaction.active&&reaction.gaze)captiveTarget=reaction.gaze==='player'?eye:new THREE.Vector3(0,.76,-.27);
     if(capSound>0&&sound){captiveTarget=new THREE.Vector3(...sound.position);captiveRig.chest.rotation.z+=Math.sin(Math.min(1,(epoch-sound.at)/180)*Math.PI)*sound.loudness*(room===1?.08:room===3?.02:.045);}
     lookAtTarget(hostRig,hostSound>0&&sound?new THREE.Vector3(...sound.position):hostTarget,hostSound>0?dt*.55:dt,hv*.01*motion);
     if(state.dead!=='ai'&&gunHolder!=='ai'&&!captiveHood.visible)lookAtTarget(captiveRig,captiveTarget,capSound>0?dt*1.8:dt,cv*.01*motion);
     captive.userData.gazePriority=capSound>0?'sound':reaction.active&&reaction.gaze?'reaction':shooting||recentPlayer||state.speaker||dealing?'context':'cards';
-    const forceActive=state.phase==='HOST_FORCE_SHOT'||state.forceShotAt!=null&&state.phase==='ROUND_RESULT';
+    const forceActive=forceSide==='player'&&(state.phase==='HOST_FORCE_SHOT'||state.forceShotAt!=null&&state.phase==='ROUND_RESULT');
     const allowed:THREE.Object3D[]=[];
     hostRig.updateCoat();hideHostBody(false);
     applyNearCameraHiding(scene,view,forceActive,allowed);
