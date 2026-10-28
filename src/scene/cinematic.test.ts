@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { createRevolverModel, MUZZLE_LOCAL } from './revolver';
 import { createRoom } from './room';
-import { applyCinematicLook, detailRevolver, FILM_EFFECT_UNIFORMS, FilmPipeline, filmFragment, GunshotFX, upgradeRevolver } from './cinematic';
+import { addLightShaft, applyCinematicLook, detailRevolver, FILM_EFFECT_UNIFORMS, FilmPipeline, filmFragment, GunshotFX, upgradeRevolver } from './cinematic';
 import { retroFragment } from '../Scene';
 
 function revolverInScene() {
@@ -93,6 +93,22 @@ describe('cinematic room', () => {
     expect(bulbAfter.map((v, i) => v / bulbBefore[i])).toEqual(bulbBefore.map(() => 1.6));
     expect(world.getObjectByName('hanging-bulb')).toBeDefined();
     expect(world.getObjectByName('card-table')).toBeDefined();
+  });
+});
+
+describe('no invalid pixels (black blocks on Mac GPUs)', () => {
+  it('never takes pow() of a value that can go negative in the light shaft, and clamps its output', () => {
+    const world = new THREE.Scene(); addLightShaft(world);
+    const shaders: string[] = []; world.getObjectByName('cinematic-light-shaft')!.traverse(o => { const m = (o as THREE.Mesh).material as THREE.ShaderMaterial | undefined; if (m?.fragmentShader) shaders.push(m.fragmentShader + m.vertexShader); });
+    expect(shaders.length).toBeGreaterThanOrEqual(3);
+    for (const code of shaders) expect(code).not.toMatch(/pow\(vT/);
+    expect(shaders.join('')).toContain('clamp(vT, 0., 1.)');
+    expect(shaders.join('')).toContain('clamp(a, 0., 4.)');
+    expect(shaders.join('')).toContain('max(-mv.z, .05)');
+  });
+  it('scrubs NaN and Inf before blur and bloom can spread them', () => {
+    expect(filmFragment).toContain('safeColor(texture2D(bloom, vUv).rgb)');
+    expect(filmFragment).toContain('acc += safeColor(texture2D(tex, vUv+o).rgb)');
   });
 });
 

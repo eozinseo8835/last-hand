@@ -122,12 +122,13 @@ export function addLightShaft(world: THREE.Scene, apexY = 2.62, baseY = .752, ba
       vertexShader: `varying vec3 vW; varying vec3 vN; varying float vT; uniform float height;
         void main(){ vT = (position.y + height*.5)/height; vec4 w = modelMatrix*vec4(position,1.); vW=w.xyz; vN=normalize(mat3(modelMatrix)*normal); gl_Position=projectionMatrix*viewMatrix*w; }`,
       fragmentShader: noiseGLSL + `varying vec3 vW; varying vec3 vN; varying float vT; uniform float time; uniform float strength;
-        void main(){ vec3 V = normalize(cameraPosition - vW); float facing = pow(abs(dot(normalize(vN), V)), 2.2);
+        void main(){ vec3 V = normalize(cameraPosition - vW); float facing = pow(clamp(abs(dot(normalize(vN + vec3(1e-5)), V)), 0., 1.), 2.2);
           float smoke = fbm(vW*vec3(3.2,1.6,3.2) + vec3(time*.03, -time*.05, time*.02));
           float wisps = smoothstep(.35,.85, fbm(vW*vec3(1.4,.7,1.4) + vec3(0., time*.02, 0.)));
-          float along = mix(.25, 1., pow(vT, .8)) * smoothstep(0., .12, vT) ;
+          float t = clamp(vT, 0., 1.);   // never pow() a negative: it is NaN on Apple GPUs
+          float along = mix(.25, 1., pow(t + 1e-4, .8)) * smoothstep(0., .12, t);
           float a = facing * along * (.35 + 1.2*smoke*wisps) * strength;
-          gl_FragColor = vec4(vec3(1., .86, .62)*a, 1.); }`,
+          gl_FragColor = vec4(vec3(1., .86, .62)*clamp(a, 0., 4.), 1.); }`,
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
     });
     const m = new THREE.Mesh(geo, mat); m.position.y = (apexY + baseY) / 2; m.renderOrder = 10; group.add(m); return mat;
@@ -141,7 +142,7 @@ export function addLightShaft(world: THREE.Scene, apexY = 2.62, baseY = .752, ba
     uniforms: { time: { value: 0 }, scale: { value: 900 } },
     vertexShader: `attribute float size; uniform float time; uniform float scale; varying float vA;
       void main(){ vec3 p = position + vec3(sin(time*.3+position.y*7.)*.02, sin(time*.2+position.x*9.)*.015, cos(time*.25+position.z*8.)*.02);
-        vec4 mv = modelViewMatrix*vec4(p,1.); gl_PointSize = max(1.5, size * scale * .0016 / -mv.z); vA = clamp(1.2 - length(p.xz)/1.1, 0., 1.); gl_Position = projectionMatrix*mv; }`,
+        vec4 mv = modelViewMatrix*vec4(p,1.); gl_PointSize = clamp(size * scale * .0016 / max(-mv.z, .05), 1.5, 24.); vA = clamp(1.2 - length(p.xz)/1.1, 0., 1.); gl_Position = projectionMatrix*mv; }`,
     fragmentShader: `varying float vA; void main(){ float d = length(gl_PointCoord-.5); float a = smoothstep(.5,.0,d); gl_FragColor = vec4(vec3(1.,.9,.7)*a*.30*vA,1.); }`,
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
   });
@@ -403,6 +404,8 @@ export const filmFragment = `
   uniform vec2 res; varying vec2 vUv;
   float lin(float d){ float z = d*2.-1.; return 2.*near*far/(far+near-z*(far-near)); }
   float h(vec2 p){ return fract(sin(dot(p, vec2(12.9898,78.233)) + time*7.1) * 43758.5453); }
+  // Invalid pixels (NaN/Inf) must never reach blur or bloom, where they spread into black blocks.
+  vec3 safeColor(vec3 v){ return vec3(v.r < 1e4 && v.r >= 0. ? v.r : (v.r >= 1e4 ? 1e4 : 0.), v.g < 1e4 && v.g >= 0. ? v.g : (v.g >= 1e4 ? 1e4 : 0.), v.b < 1e4 && v.b >= 0. ? v.b : (v.b >= 1e4 ? 1e4 : 0.)); }
   vec3 aces(vec3 x){ return clamp((x*(2.51*x+.03))/(x*(2.43*x+.59)+.14),0.,1.); }
   void main(){
     vec2 px = 1./res;
@@ -415,13 +418,13 @@ export const filmFragment = `
     coc *= smoothstep(.85, 1.15, d);  // your hands and the cards on your side of the table are always sharp
     coc += focusBlur * 9. + hoodCovered * 10. + forcedContact * (1. - smoothstep(0., .12, vUv.x)) * 3.;
     vec2 off = vUv - .5; float ca = dot(off,off) * .006;
-    vec3 c = vec3(texture2D(tex, vUv + off*ca).r, texture2D(tex, vUv).g, texture2D(tex, vUv - off*ca).b);
+    vec3 c = safeColor(vec3(texture2D(tex, vUv + off*ca).r, texture2D(tex, vUv).g, texture2D(tex, vUv - off*ca).b));
     if (coc > .6) { vec3 acc = c; float wsum = 1.;
       for (int i = 0; i < 16; i++) { float a = float(i)*2.39996; float r = sqrt(float(i)+.5)/4.; vec2 o = vec2(cos(a),sin(a))*r*coc*px*2.;
         float w = 1.; if (useDepth > .5) { float dd = lin(texture2D(depth, vUv+o).r); w = dd > d - .2 ? 1. : .3; }
-        acc += texture2D(tex, vUv+o).rgb*w; wsum += w; }
+        acc += safeColor(texture2D(tex, vUv+o).rgb)*w; wsum += w; }
       c = acc/wsum; }
-    c += texture2D(bloom, vUv).rgb * bloomStrength;
+    c += safeColor(texture2D(bloom, vUv).rgb) * bloomStrength;
     c *= exposure;
     c = aces(c);
     float l = dot(c, vec3(.299,.587,.114));
@@ -465,7 +468,7 @@ export class FilmPipeline {
     this.blurA = new THREE.WebGLRenderTarget(bw, bh, { type: THREE.HalfFloatType });
     this.blurB = new THREE.WebGLRenderTarget(bw, bh, { type: THREE.HalfFloatType });
     this.brightMat = new THREE.ShaderMaterial({ uniforms: { tex: { value: null } }, vertexShader: quadVS, depthTest: false, depthWrite: false,
-      fragmentShader: 'uniform sampler2D tex; varying vec2 vUv; void main(){ vec3 c = texture2D(tex,vUv).rgb; float l = dot(c, vec3(.2126,.7152,.0722)); gl_FragColor = vec4(c*smoothstep(1.4,3.5,l),1.); }' });
+      fragmentShader: 'uniform sampler2D tex; varying vec2 vUv; vec3 safeColor(vec3 v){ return vec3(v.r < 64. && v.r >= 0. ? v.r : (v.r >= 64. ? 64. : 0.), v.g < 64. && v.g >= 0. ? v.g : (v.g >= 64. ? 64. : 0.), v.b < 64. && v.b >= 0. ? v.b : (v.b >= 64. ? 64. : 0.)); } void main(){ vec3 c = safeColor(texture2D(tex,vUv).rgb); float l = dot(c, vec3(.2126,.7152,.0722)); gl_FragColor = vec4(c*smoothstep(1.4,3.5,l),1.); }' });
     this.blurMat = new THREE.ShaderMaterial({ uniforms: { tex: { value: null }, dir: { value: new THREE.Vector2() } }, vertexShader: quadVS, depthTest: false, depthWrite: false,
       fragmentShader: 'uniform sampler2D tex; uniform vec2 dir; varying vec2 vUv; void main(){ vec3 s = texture2D(tex,vUv).rgb*.227; s += (texture2D(tex,vUv+dir*1.38).rgb + texture2D(tex,vUv-dir*1.38).rgb)*.316; s += (texture2D(tex,vUv+dir*3.23).rgb + texture2D(tex,vUv-dir*3.23).rgb)*.070; gl_FragColor=vec4(s,1.); }' });
     this.finalMat = new THREE.ShaderMaterial({ vertexShader: quadVS, fragmentShader: filmFragment, depthTest: false, depthWrite: false, toneMapped: false,
