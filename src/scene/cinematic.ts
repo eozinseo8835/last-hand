@@ -514,7 +514,7 @@ export class FilmPipeline {
 
 /** One call that turns a built bunker into the cinematic version. */
 export function applyCinematicLook(world: THREE.Scene, renderer: THREE.WebGLRenderer | null) {
-  upgradeMaterials(world);
+  upgradeMaterials(world); upgradeCharacters(world);
   upgradeRevolver(world, renderer); detailRevolver(world);
   const shaft = addLightShaft(world);
   world.fog = new THREE.FogExp2('#07090a', .12); world.background = new THREE.Color('#030404');
@@ -528,4 +528,148 @@ export function applyCinematicLook(world: THREE.Scene, renderer: THREE.WebGLRend
   });
   const fx = new GunshotFX(world);
   return { shaft, fx };
+}
+
+/* ------------------------------------------------------------------ */
+/* Characters: same sizes and pivots, smoother shapes, skin and cloth  */
+/* ------------------------------------------------------------------ */
+const skinMap = () => canvasTex(512, (c, s, r) => {
+  c.fillStyle = '#d8d0c4'; c.fillRect(0, 0, s, s);
+  blotches(c, s, r, 70, 'rgba(190,140,120,1)', .18, 60);   // warm mottling
+  blotches(c, s, r, 40, 'rgba(140,150,140,1)', .10, 50);   // cool undertone
+  speckle(c, s, r, 30000, .18, '#f0e8de', '#a89a8c', 1);   // pores
+}, 71);
+const skinBump = () => canvasTex(256, (c, s, r) => { c.fillStyle = '#808080'; c.fillRect(0, 0, s, s); speckle(c, s, r, 16000, .5, '#9a9a9a', '#6a6a6a', 1); }, 72, false);
+const clothMap = () => canvasTex(512, (c, s, r) => {
+  c.fillStyle = '#dcdcdc'; c.fillRect(0, 0, s, s);
+  for (let y = 0; y < s; y += 3) { c.fillStyle = `rgba(0,0,0,${.05 + r() * .05})`; c.fillRect(0, y, s, 1); }
+  for (let x = 0; x < s; x += 3) { c.fillStyle = `rgba(255,255,255,${.03 + r() * .04})`; c.fillRect(x, 0, 1, s); }
+  blotches(c, s, r, 40, 'rgba(60,55,45,1)', .18, 70);      // grime and wear
+  speckle(c, s, r, 12000, .2, '#ffffff', '#555555', 1);
+}, 73);
+const clothBump = () => canvasTex(256, (c, s, r) => {
+  c.fillStyle = '#808080'; c.fillRect(0, 0, s, s);
+  for (let y = 0; y < s; y += 4) { c.fillStyle = '#a0a0a0'; c.fillRect(0, y, s, 2); }
+  for (let x = 0; x < s; x += 4) { c.fillStyle = 'rgba(80,80,80,.6)'; c.fillRect(x, 0, 2, s); }
+  speckle(c, s, r, 6000, .4, '#b0b0b0', '#505050', 1);
+}, 74, false);
+
+/** Affine map M with old = M * fresh, fitted over matching vertices (bakes the original scale/rotation). */
+function fitAffine(fresh: THREE.BufferGeometry, old: THREE.BufferGeometry) {
+  const a = fresh.getAttribute('position'), b = old.getAttribute('position');
+  if (!a || !b || a.count !== b.count || a.count < 4) return null;
+  const ata = new Array(16).fill(0), atb = [new Array(4).fill(0), new Array(4).fill(0), new Array(4).fill(0)];
+  for (let i = 0; i < a.count; i++) {
+    const row = [a.getX(i), a.getY(i), a.getZ(i), 1], out = [b.getX(i), b.getY(i), b.getZ(i)];
+    for (let j = 0; j < 4; j++) { for (let k = 0; k < 4; k++) ata[j * 4 + k] += row[j] * row[k]; for (let k = 0; k < 3; k++) atb[k][j] += row[j] * out[k]; }
+  }
+  const inv = new THREE.Matrix4().fromArray(ata).invert();          // symmetric: row/column order does not matter
+  if (!Number.isFinite(inv.elements[0])) return null;
+  const e = inv.elements, rows = atb.map(v => [0, 1, 2, 3].map(j => e[j] * v[0] + e[4 + j] * v[1] + e[8 + j] * v[2] + e[12 + j] * v[3]));
+  const m = new THREE.Matrix4().set(...rows[0] as [number, number, number, number], ...rows[1] as [number, number, number, number], ...rows[2] as [number, number, number, number], 0, 0, 0, 1);
+  // reject fits that do not reproduce the original (e.g. a geometry edited by hand)
+  const p = new THREE.Vector3(); let err = 0;
+  for (let i = 0; i < a.count; i += Math.max(1, Math.floor(a.count / 40))) { p.fromBufferAttribute(a, i).applyMatrix4(m); err = Math.max(err, p.distanceTo(new THREE.Vector3().fromBufferAttribute(b, i))); }
+  return err < 1e-4 ? m : null;
+}
+
+/** A box with rounded edges; normals follow the rounding so there are no seams. */
+export function roundedBox(w: number, h: number, d: number, r: number, segments = 5) {
+  const g = new THREE.BoxGeometry(w, h, d, segments, segments, segments);
+  const pos = g.getAttribute('position'), nor = g.getAttribute('normal');
+  const half = new THREE.Vector3(w / 2 - r, h / 2 - r, d / 2 - r), p = new THREE.Vector3(), inner = new THREE.Vector3(), n = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    p.fromBufferAttribute(pos, i);
+    inner.set(THREE.MathUtils.clamp(p.x, -half.x, half.x), THREE.MathUtils.clamp(p.y, -half.y, half.y), THREE.MathUtils.clamp(p.z, -half.z, half.z));
+    n.subVectors(p, inner);
+    if (n.lengthSq() > 1e-12) { n.normalize(); p.copy(inner).addScaledVector(n, r); pos.setXYZ(i, p.x, p.y, p.z); nor.setXYZ(i, n.x, n.y, n.z); }
+  }
+  pos.needsUpdate = nor.needsUpdate = true; return g;
+}
+
+const CLOTH_NAMES = /sleeve|clothing|abdomen|hip|shoulder cap|elbow cap|cuff|collar|vest|jacket|pocket|waistcoat|leg upper|leg lower|leg joint|articulated/i;
+const SKIN_NAMES = /skin|palm|knuckle|wrist cap|neck|cranium|nose/i;
+
+type FaceMaterials = { sclera: THREE.MeshStandardMaterial; iris: THREE.MeshStandardMaterial; lip: THREE.MeshStandardMaterial; sweat: THREE.MeshStandardMaterial };
+/** Eyes become eyeballs (the gaze code rotates this same mesh, so the iris follows the look), the nose a rounded bridge, the mouth a lip. */
+function refineFace(mesh: THREE.Mesh, mats: FaceMaterials) {
+  const prm = (mesh.geometry as THREE.BufferGeometry & { parameters?: Record<string, number> }).parameters;
+  if (mesh.name === 'Human eye' && prm && (mesh.geometry as THREE.BufferGeometry).type === 'BoxGeometry') {
+    const rx = prm.width * .5, ry = prm.height * .55, rz = .0058;
+    const sclera = new THREE.SphereGeometry(1, 24, 16); sclera.scale(rx, ry, rz);
+    mesh.geometry.dispose(); mesh.geometry = sclera; mesh.material = mats.sclera;
+    const iris = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), mats.iris); iris.name = 'Eye iris';
+    iris.scale.set(Math.min(rx, ry) * .78, Math.min(rx, ry) * .78, .0022); iris.position.z = rz * .9; iris.castShadow = false;
+    iris.layers.mask = mesh.layers.mask;   // the surveillance-only body keeps its eyes on the surveillance layer
+    mesh.add(iris);
+    mesh.userData.cinematicRefined = true; return true;
+  }
+  if (mesh.name === 'Sweat bead') {
+    mesh.material = mats.sweat; mesh.scale.setScalar(.65); mesh.userData.cinematicRefined = true; return true;
+  }
+  if (mesh.name === 'Nose' && prm && (mesh.geometry as THREE.BufferGeometry).type === 'ConeGeometry') {
+    const nose = new THREE.SphereGeometry(1, 20, 14); nose.scale(.0085, .018, .012); nose.translate(0, -.002, -.006);
+    mesh.geometry.dispose(); mesh.geometry = nose; mesh.userData.cinematicRefined = true; return true;
+  }
+  if (mesh.name === 'Mouth' && prm && (mesh.geometry as THREE.BufferGeometry).type === 'BoxGeometry') {
+    const lips = roundedBox(prm.width, Math.max(prm.height, .006), prm.depth, Math.min(prm.width, Math.max(prm.height, .006), prm.depth) * .45, 3);
+    mesh.geometry.dispose(); mesh.geometry = lips; mesh.material = mats.lip; mesh.userData.cinematicRefined = true; return true;
+  }
+  return false;
+}
+
+/** Smooths every character part in place. Returns how many meshes were refined. */
+export function upgradeCharacters(world: THREE.Object3D) {
+  const skin = { map: skinMap(), bump: skinBump() }, cloth = { map: clothMap(), bump: clothBump() };
+  cloth.map.repeat.set(3, 3); cloth.bump.repeat.set(6, 6);
+  const seenMaterials = new Set<THREE.Material>(); let refined = 0;
+  const faceMaterials = { sclera: new THREE.MeshStandardMaterial({ color: 0xcdc6b6, roughness: .32 }), iris: new THREE.MeshStandardMaterial({ color: 0x2a1c12, roughness: .18 }), lip: new THREE.MeshStandardMaterial({ color: 0x4a2a22, roughness: .55 }), sweat: new THREE.MeshStandardMaterial({ color: 0xe8f0ee, roughness: .04, metalness: 0, transparent: true, opacity: .45 }) };
+  // Characters are found by role: the captive and Host replace their userData, so the skeleton flag alone misses them.
+  const roots: THREE.Object3D[] = []; world.traverse(o => { if ((o.userData?.proceduralSkeleton || o.userData?.actorRole || / human skeleton$/.test(o.name)) && !o.userData.cinematicCharacter) roots.push(o); });
+  const insideRevolver = (o: THREE.Object3D) => { for (let p: THREE.Object3D | null = o; p; p = p.parent) if (p.name === 'Shared six-chamber revolver') return true; return false; };
+  for (const root of roots) {
+    root.userData.cinematicCharacter = true;
+    root.traverse(o => {
+      const mesh = o as THREE.Mesh; if (!mesh.isMesh || mesh.userData.cinematicRefined || mesh.userData.cinematicSkip || insideRevolver(mesh)) return;
+      const geo = mesh.geometry as THREE.BufferGeometry & { parameters?: Record<string, number>; type: string };
+      if (geo.morphAttributes && Object.keys(geo.morphAttributes).length) return;
+      if (refineFace(mesh, faceMaterials)) { refined++; return; }
+      const prm = geo.parameters; let next: THREE.BufferGeometry | null = null, fresh: THREE.BufferGeometry | null = null;
+      if (prm && geo.type === 'SphereGeometry') {
+        fresh = new THREE.SphereGeometry(prm.radius, prm.widthSegments, prm.heightSegments, prm.phiStart, prm.phiLength, prm.thetaStart, prm.thetaLength);
+        next = new THREE.SphereGeometry(prm.radius, Math.min(40, prm.widthSegments * 3), Math.min(28, prm.heightSegments * 3), prm.phiStart, prm.phiLength, prm.thetaStart, prm.thetaLength);
+      } else if (prm && geo.type === 'CylinderGeometry') {
+        fresh = new THREE.CylinderGeometry(prm.radiusTop, prm.radiusBottom, prm.height, prm.radialSegments, prm.heightSegments, !!prm.openEnded, prm.thetaStart, prm.thetaLength);
+        next = new THREE.CylinderGeometry(prm.radiusTop, prm.radiusBottom, prm.height, Math.max(prm.radialSegments, 24), prm.heightSegments, !!prm.openEnded, prm.thetaStart, prm.thetaLength);
+      } else if (prm && geo.type === 'ConeGeometry') {
+        fresh = new THREE.ConeGeometry(prm.radius, prm.height, prm.radialSegments, prm.heightSegments, !!prm.openEnded, prm.thetaStart, prm.thetaLength);
+        next = new THREE.ConeGeometry(prm.radius, prm.height, Math.max(prm.radialSegments, 16), prm.heightSegments, !!prm.openEnded, prm.thetaStart, prm.thetaLength);
+      } else if (prm && geo.type === 'TorusGeometry') {
+        fresh = new THREE.TorusGeometry(prm.radius, prm.tube, prm.radialSegments, prm.tubularSegments, prm.arc);
+        next = new THREE.TorusGeometry(prm.radius, prm.tube, Math.max(prm.radialSegments, 10), Math.max(prm.tubularSegments, 32), prm.arc);
+      } else if (prm && geo.type === 'BoxGeometry') {
+        const small = Math.min(prm.width, prm.height, prm.depth);
+        if (small >= .006) {
+          const digit = /finger|thumb/i.test(mesh.name);
+          const r = Math.min(small * (digit ? .48 : .3), .02);
+          fresh = new THREE.BoxGeometry(prm.width, prm.height, prm.depth, prm.widthSegments, prm.heightSegments, prm.depthSegments);
+          next = roundedBox(prm.width, prm.height, prm.depth, r, digit ? 4 : 3);
+        }
+      }
+      if (next && fresh) {
+        const m = fitAffine(fresh, geo);
+        if (m) { next.applyMatrix4(m); geo.dispose(); mesh.geometry = next; mesh.userData.cinematicRefined = true; refined++; }
+        fresh.dispose(); if (!mesh.userData.cinematicRefined) next.dispose();
+      }
+      const mat = mesh.material as THREE.MeshStandardMaterial;
+      if (!(mat instanceof THREE.MeshStandardMaterial) || seenMaterials.has(mat)) return;
+      seenMaterials.add(mat); mat.flatShading = false;
+      const isSkin = mat.emissiveIntensity > .08 && mat.emissiveIntensity < .3 && mat.emissive.getHex() === mat.color.getHex() && SKIN_NAMES.test(mesh.name);
+      if (isSkin) { mat.map = skin.map; mat.bumpMap = skin.bump; mat.bumpScale = .25; mat.roughness = .58; mat.emissiveIntensity = .07; }
+      else if (CLOTH_NAMES.test(mesh.name) && !mat.map) { mat.map = cloth.map; mat.bumpMap = cloth.bump; mat.bumpScale = .7; mat.roughness = .96; }
+      else if (/hand|glove/i.test(mesh.name) || mat.color.getHex() === 0x1b1f1c) { mat.roughness = .42; }   // leather gloves
+      mat.needsUpdate = true;
+    });
+  }
+  return refined;
 }

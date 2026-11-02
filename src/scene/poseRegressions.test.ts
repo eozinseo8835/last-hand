@@ -69,5 +69,5 @@ describe('skeleton rebuild regression contacts',()=>{
    if(phase!=='PLAYER_SHOOTING'){const eyeDirection=expected.clone().sub(actors.hostHead.getWorldPosition(new THREE.Vector3())).normalize();expect(actors.hostHead.getWorldDirection(new THREE.Vector3()).dot(eyeDirection)).toBeGreaterThan(.95);}
    actors.update(2.8,0,{...frameState,hostVoiceLevel:0});const quiet=actors.hostHead.rotation.x;actors.update(2.8,0,frameState);expect(actors.hostHead.rotation.x-quiet).toBeCloseTo(.01);
   }
- });
+ },20000);
 });

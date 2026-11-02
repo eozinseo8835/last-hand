@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { createRevolverModel, MUZZLE_LOCAL } from './revolver';
 import { createRoom } from './room';
-import { addLightShaft, applyCinematicLook, detailRevolver, FILM_EFFECT_UNIFORMS, FilmPipeline, filmFragment, GunshotFX, upgradeRevolver } from './cinematic';
+import { createActors } from './actors';
+import { createCharacter } from './skeleton';
+import { addLightShaft, applyCinematicLook, detailRevolver, upgradeCharacters, FILM_EFFECT_UNIFORMS, FilmPipeline, filmFragment, GunshotFX, upgradeRevolver } from './cinematic';
 import { retroFragment } from '../Scene';
 
 function revolverInScene() {
@@ -129,5 +131,59 @@ describe('film pipeline', () => {
     expect(filmFragment).toContain('texture2D(depth,vec2(.5,.5))');
     expect(filmFragment).toContain('clamp(focus, .3, 1.9)');
     expect(filmFragment).toContain('coc *= smoothstep(.85, 1.15, d)');
+  });
+});
+
+describe('cinematic characters', () => {
+  const canvas = () => vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => ({
+    createImageData: (w: number, h: number) => ({ data: new Uint8ClampedArray(w * h * 4), width: w, height: h }), getImageData: (x: number, y: number, w: number, h: number) => ({ data: new Uint8ClampedArray(w * h * 4) }),
+    createRadialGradient: () => ({ addColorStop() {} }), createLinearGradient: () => ({ addColorStop() {} }), measureText: () => ({ width: 10 }),
+    putImageData() {}, drawImage() {}, fillRect() {}, strokeRect() {}, clearRect() {}, beginPath() {}, closePath() {}, moveTo() {}, lineTo() {}, arc() {}, arcTo() {}, rect() {}, clip() {},
+    bezierCurveTo() {}, quadraticCurveTo() {}, stroke() {}, ellipse() {}, fill() {}, fillText() {}, save() {}, restore() {}, translate() {}, rotate() {}, scale() {}, setTransform() {},
+  } as unknown as CanvasRenderingContext2D));
+  beforeEach(() => { canvas(); });
+  afterEach(() => vi.restoreAllMocks());
+  const snapshot = (root: THREE.Object3D) => { const out: Record<string, number[]> = {}; root.updateMatrixWorld(true); root.traverse(o => { if (!(o as THREE.Mesh).isMesh && o.name) out[o.name + ':' + o.id] = o.getWorldPosition(new THREE.Vector3()).toArray(); }); return out; };
+
+  it('smooths every captive, Host, guard and player part without moving a single joint, and leaves the revolver alone', () => {
+    const world = new THREE.Scene(); const cam = new THREE.PerspectiveCamera(); world.add(cam); createActors(world, cam);
+    const joints = snapshot(world);
+    const refined = upgradeCharacters(world);
+    expect(refined).toBeGreaterThan(400);
+    expect(snapshot(world)).toEqual(joints);
+    for (const role of ['captive', 'host', 'player', 'guard']) {
+      let total = 0, done = 0; world.traverse(o => { if (o.userData?.actorRole === role) o.traverse(m => { if ((m as THREE.Mesh).isMesh) { total++; if (m.userData.cinematicRefined) done++; } }); });
+      expect(done / total).toBeGreaterThan(.85);
+    }
+    let gun = 0; world.getObjectByName('Shared six-chamber revolver')!.traverse(m => { if (m.userData.cinematicRefined) gun++; });
+    expect(gun).toBe(0);
+    expect(upgradeCharacters(world)).toBe(0);   // safe to apply twice
+  });
+  it('keeps each part the same size (fingers stay finger-sized)', () => {
+    const rig = createCharacter('captive', 1); const world = new THREE.Scene(); world.add(rig.group);
+    const finger = rig.arms.right.fingers[1][0].children.find(c => c.name === 'Finger skin') as THREE.Mesh;
+    const before = new THREE.Box3().setFromObject(finger).getSize(new THREE.Vector3());
+    upgradeCharacters(world);
+    const after = new THREE.Box3().setFromObject(finger).getSize(new THREE.Vector3());
+    expect(after.x).toBeCloseTo(before.x, 4); expect(after.y).toBeCloseTo(before.y, 4); expect(after.z).toBeCloseTo(before.z, 4);
+    expect(finger.geometry.getAttribute('position').count).toBeGreaterThan(24);
+  });
+  it('turns the eyes into eyeballs whose iris follows the gaze rotation', () => {
+    const rig = createCharacter('captive', 1); const world = new THREE.Scene(); world.add(rig.group);
+    upgradeCharacters(world);
+    const eye = rig.group.getObjectByName('Human eye') as THREE.Mesh;
+    const iris = eye.getObjectByName('Eye iris')!;
+    expect(eye.parent).toBeTruthy(); expect(iris.parent).toBe(eye);
+    world.updateMatrixWorld(true); const a = iris.getWorldPosition(new THREE.Vector3());
+    eye.rotation.y = .25; world.updateMatrixWorld(true); const b = iris.getWorldPosition(new THREE.Vector3());
+    expect(a.distanceTo(b)).toBeGreaterThan(.0005);
+  });
+  it('keeps new eye parts on the same camera layer as their face (no floating pupils from the surveillance-only body)', () => {
+    const rig = createCharacter('captive', 1); const world = new THREE.Scene(); world.add(rig.group);
+    rig.group.traverse(o => o.layers.set(1));
+    upgradeCharacters(world);
+    const eye = rig.group.getObjectByName('Human eye')!, iris = eye.getObjectByName('Eye iris')!;
+    expect(iris.layers.mask).toBe(eye.layers.mask);
+    expect(iris.layers.isEnabled(0)).toBe(false);
   });
 });

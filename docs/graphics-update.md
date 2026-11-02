@@ -37,3 +37,21 @@ Changing the setting remounts the 3D scene; the game state is not affected.
 - The focus rules hold: never past the table, and your own side always sharp.
 
 `src/App.test.tsx` checks that the Settings select switches the mode and remembers it.
+
+## Character polish (cinematic only)
+
+Characters now match the cinematic room. All joints, sizes and poses are unchanged, and Classic pixel mode is untouched.
+
+- **Rounded shapes:** every box, cylinder and sphere on the captive, Host, guards and your own arms is rebuilt with rounded edges and more detail. The fitting reuses each part's exact transform, so nothing moves.
+- **Texture:** skin gets subtle mottling and pores; clothing gets a woven fabric texture with wear; gloves look like leather.
+- **Faces:**
+  - Eyes are eyeballs with an iris. The gaze code rotates the same mesh, so the iris visibly follows where the opponent looks.
+  - The nose is a rounded bridge, the mouth a lip, and sweat is translucent.
+- **Surveillance body:** new eye parts stay on their face's camera layer, so the surveillance-only body never shows up in your view.
+- **Tests:** `src/scene/cinematic.test.ts` checks that:
+  - no joint moves
+  - finger sizes stay the same
+  - the revolver is untouched
+  - applying the polish twice is safe
+  - the iris follows gaze
+  - the layer rule holds
