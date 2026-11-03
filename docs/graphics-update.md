@@ -70,7 +70,7 @@ Characters now match the cinematic room. All joints, sizes and poses are unchang
 - Looking up at the monitors lets the cinematic camera refocus on them; looking back down returns focus to the table.
 - Room 3 still uses the real ceiling camera of the player's own room.
 
-## The Gambler and smarter opponents
+## The Gambler and riskier opponents
 
 - The Gambler (room 2) is now a Black man with deep brown skin and a close-cropped haircut, wearing a cobalt suit jacket over a dark waistcoat with a red tie and his gold ring. The same face appears at table 3 on the monitor wall.
-- Opponents now play against your revealed hand. When they are behind they always draw, even past 17 (standing would be a certain loss). On a tie they sometimes gamble on one more card instead of taking the push: the Gambler most often, the Nervous Man sometimes, the Survivor rarely. When they are already ahead they stand, apart from their quirks (the Nervous Man's panic draw at 17 to 18, the Gambler hitting soft 17).
+- Opponents still follow their own house rules and never look at your cards. They now sometimes crack and chase 21 past the safe line: the Gambler draws at hard 17 about 30% of the time and at 18 about 10%; the Survivor draws at 17 about 8% of the time. The Nervous Man already does this through his panic mistakes at 17 and 18.

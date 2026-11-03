@@ -9,8 +9,8 @@ export type VoiceProfile = { pitch: number; speed: number; wobble: number; calm?
 export type OpponentConfig = {
   id: 'nervous' | 'gambler' | 'survivor'; name: string;
   standOn: number; hitSoft17: boolean; mistakeChance: number; bluffChance: number;
-  /** Chance to draw anyway on a revealed tie instead of taking the push: a one-off gamble. */
-  tieRisk: number;
+  /** Chance to gamble on one more card at 17 / 18 anyway, chasing 21 (never sees the player's cards). */
+  gamble17: number; gamble18: number;
   peekMin: number; peekMax: number; spinRemaining: number;
   behavior: Behavior;
   tellAccuracy: number; breakdownStart: number; brokenAt: number; voice: VoiceProfile;
@@ -24,50 +24,38 @@ export const OPPONENTS: Record<RoomNumber, OpponentConfig> = {
   1: {
     behavior: { baseStress: .22, baseTremor: .003, bounceThreshold: .2, fidgetSeconds: 4.5, hunch: .12, crackChamber: 2, fidgets: ['rub','knuckles','drum','grip','sweat','collar','felt','square','wrists'] },
     id: 'nervous', name: 'THE NERVOUS MAN', standOn: 16, hitSoft17: false,
-    mistakeChance: .25, bluffChance: .4, tellAccuracy: .85, tieRisk: .3,
+    mistakeChance: .25, bluffChance: .4, tellAccuracy: .85, gamble17: 0, gamble18: 0,
     peekMin: 12, peekMax: 16, spinRemaining: 3,
     breakdownStart: 2, brokenAt: 4, voice: { pitch: 122, speed: 1.15, wobble: 3.4 },
   },
   2: {
     behavior: { baseStress: .07, baseTremor: .0004, bounceThreshold: .6, fidgetSeconds: 9, hunch: -.04, crackChamber: 4, fidgets: ['square','tie','neck','drum','sweat'] },
     id: 'gambler', name: 'THE GAMBLER', standOn: 17, hitSoft17: true,
-    mistakeChance: 0, bluffChance: .5, tellAccuracy: .6, tieRisk: .45,
+    mistakeChance: 0, bluffChance: .5, tellAccuracy: .6, gamble17: .3, gamble18: .1,
     peekMin: 12, peekMax: 16, spinRemaining: 3,
     breakdownStart: 4, brokenAt: 6, voice: { pitch: 100, speed: .98, wobble: 1 },
   },
   3: {
     behavior: { baseStress: .025, baseTremor: .00008, bounceThreshold: .85, fidgetSeconds: 15, hunch: 0, crackChamber: 5, fidgets: ['host','wrists'] },
     id: 'survivor', name: 'THE SURVIVOR', standOn: 17, hitSoft17: false,
-    mistakeChance: 0, bluffChance: .4, tellAccuracy: .5, tieRisk: .15,
+    mistakeChance: 0, bluffChance: .4, tellAccuracy: .5, gamble17: .08, gamble18: 0,
     peekMin: 12, peekMax: 16, spinRemaining: 3,
     breakdownStart: 5, brokenAt: 6, voice: { pitch: 84, speed: .92, wobble: .9 },
   },
 };
 
-/**
- * The opponent draws after both hands are revealed, so it plays against the player's real total:
- * behind means standing is a certain loss (always draw), a tie is sometimes gambled, and ahead it stands
- * unless its personality says otherwise.
- * Without a revealed player hand it falls back to its personality's house rules.
- * Mistakes are rolled only where the Nervous Man's specified wrong actions exist.
- */
-export function opponentAction(room: RoomNumber, cards: readonly Card[], random: RandomSource = Math.random, playerCards?: readonly Card[]): 'hit' | 'stand' {
+/** House rules per personality, without seeing the player's cards. Mistakes are rolled only where the Nervous Man's specified wrong actions exist. */
+export function opponentAction(room: RoomNumber, cards: readonly Card[], random: RandomSource = Math.random): 'hit' | 'stand' {
   const config = OPPONENTS[room], score = handScore(cards);
   if (score.bust || score.total >= 21) return 'stand';
-  if (playerCards?.length) {
-    const player = handScore(playerCards);
-    if (player.bust) return 'stand';
-    if (score.total < player.total) return 'hit';
-    if (score.total === player.total) return random() < config.tieRisk ? 'hit' : 'stand';
-    // Already ahead: only personality quirks draw (the Nervous Man's panic at 17-18, the Gambler's soft 17).
-    if (config.mistakeChance > 0 && [17, 18].includes(score.total) && random() < config.mistakeChance) return 'hit';
-    if (config.hitSoft17 && score.total === 17 && score.soft) return 'hit';
-    return 'stand';
-  }
   if (config.mistakeChance > 0 && [12, 13, 17, 18].includes(score.total) && random() < config.mistakeChance) {
     return score.total >= 17 ? 'hit' : 'stand';
   }
   if (config.hitSoft17 && score.total === 17 && score.soft) return 'hit';
+  // Now and then a captive cracks and chases 21 past the safe line: the Gambler often, the Survivor rarely.
+  // (The Nervous Man already does this through his panic mistakes at 17 and 18.)
+  if (score.total === 17 && config.gamble17 > 0 && random() < config.gamble17) return 'hit';
+  if (score.total === 18 && config.gamble18 > 0 && random() < config.gamble18) return 'hit';
   return score.total >= config.standOn ? 'stand' : 'hit';
 }
 

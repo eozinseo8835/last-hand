@@ -59,7 +59,8 @@ describe('ten-thousand fresh-deck stand rounds per captive', () => {
   it.each([1,2,3] as const)('allows room %s to bust at a normal policy rate under observation', room => {
     const result = simulateStandRounds(room);
     console.info('Stand simulation',result);
-    expect(result.rounds).toBe(10000); expect(result.bustRate).toBeGreaterThan(.19); expect(result.bustRate).toBeLessThan(.31);
+    // The Gambler sometimes chases 21 past seventeen, so he is allowed to bust a little more often.
+    expect(result.rounds).toBe(10000); expect(result.bustRate).toBeGreaterThan(.19); expect(result.bustRate).toBeLessThan(room === 2 ? .37 : .31);
   });
 });
 

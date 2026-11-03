@@ -769,7 +769,7 @@ export function useGame(textSpeed:TextSpeed='Normal') {
   function dealerTurn() {
     const state = current.current, round = state.round!, score = handScore(round.ai);
     if (score.bust) { say('ai_busts', true); settleResult('player'); return; }
-    if (round.deck.length === 0 || opponentAction(state.roomNumber, round.ai, Math.random, round.player) === 'stand') { settleResult(); return; }
+    if (round.deck.length === 0 || opponentAction(state.roomNumber, round.ai) === 'stand') { settleResult(); return; }
     if (score.total >= OPPONENTS[state.roomNumber].peekMin && score.total <= OPPONENTS[state.roomNumber].peekMax && state.abilities.ai.peek && canOpponentPeek(currentAttention(), opponentInView.current)) {
       const serial = state.peekSerial + 1;
       update({ phase: 'DEALER_PEEKING', abilities: { ...state.abilities, ai: { ...state.abilities.ai, peek: false } }, peekActor: 'ai', peekStartedAt: Date.now(), peekSerial: serial, message: 'The opponent checks the next card.', stats: recordAbility(state.stats, 'ai', 'peek') });
