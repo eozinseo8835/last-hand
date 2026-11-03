@@ -61,3 +61,16 @@ Characters now match the cinematic room. All joints, sizes and poses are unchang
 - Each captive now wears a clearly different colour that never matches their skin: a heather-grey hoodie (room 1), a burgundy shirt under the waistcoat (room 2) and an olive work jacket (room 3). This applies to both graphics modes.
 - In cinematic mode the hair is no longer a smooth cap. It has a strand texture, uneven volume at the sides and back, and the messy fringe of the room 1 captive is made of tapered locks.
 - Captives (and the player's body) wear a bomb vest: four taped charges, red and blue wires, and a receiver with a red light. The light blinks slowly and speeds up as chambers are spent and while a trigger is in play. The escape rule that the vest enforces is not in the game yet.
+
+## Live feeds from the other tables
+
+- The monitor wall now shows the other tables as real 3D rooms filmed by a ceiling security camera: the masked Host dealing, two captives in bomb vests reacting, and from time to time one of them holding the revolver to their temple, the same ritual as at the player's table. Each table has its own camera corner and different people.
+- The feeds update at a choppy CCTV rate (about 12 renders a second shared between the screens) with scanlines, a blinking REC light and the table label.
+- When a shot is heard from another table, that screen cuts instantly to static and then shows NO SIGNAL for the rest of the room. Nobody is shown dying.
+- Looking up at the monitors lets the cinematic camera refocus on them; looking back down returns focus to the table.
+- Room 3 still uses the real ceiling camera of the player's own room.
+
+## The Gambler and smarter opponents
+
+- The Gambler (room 2) is now a Black man with deep brown skin and a close-cropped haircut, wearing a cobalt suit jacket over a dark waistcoat with a red tie and his gold ring. The same face appears at table 3 on the monitor wall.
+- Opponents now play against your revealed hand. When they are behind they always draw, even past 17 (standing would be a certain loss). On a tie they sometimes gamble on one more card instead of taking the push: the Gambler most often, the Nervous Man sometimes, the Survivor rarely. When they are already ahead they stand, apart from their quirks (the Nervous Man's panic draw at 17 to 18, the Gambler hitting soft 17).

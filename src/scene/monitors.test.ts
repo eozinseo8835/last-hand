@@ -122,18 +122,47 @@ describe('campaign surveillance feeds', () => {
     expect(monitors.screens[0].material.map!.version).toBe(version + 1);
   });
 
-  it('flashes, slumps, then darkens only the dead seat and never restarts an already shown death', () => {
+  it('cuts a feed to static the instant its shot is heard, then NO SIGNAL for good, without touching other feeds', () => {
     monitors.update({ roomNumber: 1, feedDeaths: [] }, 0);
     monitors.update({ roomNumber: 1, feedDeaths: [2], feedDeathSerial: 1 }, .2);
-    expect(monitors.screens[0].userData.status).toBe('flash');
+    expect(monitors.screens[0].userData.status).toBe('static');
     expect(monitors.screens[1].userData.status).toBe('live');
-    monitors.update({ roomNumber: 1, feedDeaths: [2], feedDeathSerial: 1 }, .5);
-    expect(monitors.screens[0].userData.status).toBe('slumping');
-    monitors.update({ roomNumber: 1, feedDeaths: [2], feedDeathSerial: 1 }, .9);
-    expect(monitors.screens[0].userData.status).toBe('seat-dark');
+    monitors.update({ roomNumber: 1, feedDeaths: [2], feedDeathSerial: 1 }, .7);
+    expect(monitors.screens[0].userData.status).toBe('signal-lost');
+    expect(monitors.screens[0].userData.captiveCount).toBe(0);
     monitors.update({ roomNumber: 1, feedDeaths: [2, 4], feedDeathSerial: 2 }, 1.1);
-    expect(monitors.screens[0].userData.status).toBe('seat-dark');
-    expect(monitors.screens[2].userData.status).toBe('flash');
+    expect(monitors.screens[0].userData.status).toBe('signal-lost');
+    expect(monitors.screens[2].userData.status).toBe('static');
+    monitors.update({ roomNumber: 1, feedDeaths: [2, 4], feedDeathSerial: 2 }, 30);
+    expect(monitors.screens[0].userData.status).toBe('signal-lost');
+  });
+
+  it('renders the other tables as real 3D rooms at a choppy CCTV rate, skipping dead feeds and room three', () => {
+    vi.restoreAllMocks();
+    const noop = () => {}, gradient = { addColorStop: noop };
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => new Proxy({}, { get: (_t, key) => key === 'createRadialGradient' || key === 'createLinearGradient' ? () => gradient : key === 'measureText' ? () => ({ width: 10 }) : key === 'getImageData' ? () => ({ data: new Uint8ClampedArray(4) }) : noop }) as unknown as CanvasRenderingContext2D);
+    const monitors = createMonitorWall(new THREE.Scene());
+    const targets: (THREE.WebGLRenderTarget | null)[] = [];
+    let current: THREE.WebGLRenderTarget | null = null;
+    const gl = { shadowMap: { needsUpdate: true }, getRenderTarget: () => current, setRenderTarget: (t: THREE.WebGLRenderTarget | null) => { current = t; }, clear: noop,
+      render: vi.fn((scene: THREE.Scene) => { targets.push(current); expect(scene.name).toBe('other-table-studio'); }) } as unknown as THREE.WebGLRenderer;
+    for (let frame = 0; frame <= 60; frame++) { const time = frame / 60; monitors.update({ roomNumber: 1 }, time); monitors.renderTables(gl, time); }
+    expect((gl.render as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBeGreaterThanOrEqual(11);
+    expect((gl.render as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBeLessThanOrEqual(13);
+    expect(new Set(targets).size).toBe(3);
+    expect(current).toBeNull(); expect(gl.shadowMap.needsUpdate).toBe(true);
+    expect(monitors.screens.every(screen => screen.material.transparent)).toBe(true);
+    expect(monitors.screens[0].parent!.getObjectByName('monitor-video-1')!.visible).toBe(true);
+    targets.length = 0;
+    monitors.update({ roomNumber: 1, feedDeaths: [3] }, 2);
+    for (let frame = 0; frame < 60; frame++) { const time = 2.1 + frame / 60; monitors.update({ roomNumber: 1, feedDeaths: [3] }, time); monitors.renderTables(gl, time); }
+    expect(targets.length).toBeGreaterThan(5);
+    expect(targets).not.toContain(null);
+    const dead = (monitors.screens[1].parent!.getObjectByName('monitor-video-2') as THREE.Mesh).material as THREE.MeshBasicMaterial;
+    expect(targets.every(target => target!.texture !== dead.map)).toBe(true);
+    targets.length = 0;
+    monitors.update({ roomNumber: 3 }, 5); expect(monitors.renderTables(gl, 5)).toBe(false); expect(targets).toHaveLength(0);
+    monitors.dispose();
   });
 
   it('shows hooded captives being uncovered during the opening', () => {

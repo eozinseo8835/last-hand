@@ -401,6 +401,7 @@ export const filmFragment = `
   uniform sampler2D tex; uniform sampler2D depth; uniform sampler2D bloom;
   uniform float useDepth, bloomStrength, time, near, far, aperture, exposure;
   uniform float triggerDarkening, heartbeatPulse, forcedContact, hoodCovered, hoodLift, hoodDrop, focusBlur, glare, squint;
+  uniform float farFocus;
   uniform vec2 res; varying vec2 vUv;
   float lin(float d){ float z = d*2.-1.; return 2.*near*far/(far+near-z*(far-near)); }
   float h(vec2 p){ return fract(sin(dot(p, vec2(12.9898,78.233)) + time*7.1) * 43758.5453); }
@@ -412,7 +413,8 @@ export const filmFragment = `
     // Autofocus on what the player is looking at (screen centre), so faces and tells stay sharp.
     float focus = (lin(texture2D(depth,vec2(.5,.5)).r) + lin(texture2D(depth,vec2(.46,.5)).r) + lin(texture2D(depth,vec2(.54,.5)).r)
                  + lin(texture2D(depth,vec2(.5,.45)).r) + lin(texture2D(depth,vec2(.5,.56)).r)) / 5.;
-    focus = clamp(focus, .3, 1.9);   // never focus past the table: faces stay readable
+    // never focus past the table (faces stay readable), unless the player looks up at the monitor wall
+    focus = mix(clamp(focus, .3, 1.9), clamp(focus, .3, 6.), farFocus);
     float d = lin(texture2D(depth, vUv).r);
     float coc = useDepth * clamp(abs(d - focus)/max(d,.05) * aperture * .6, 0., 1.) * 4.;
     coc *= smoothstep(.85, 1.15, d);  // your hands and the cards on your side of the table are always sharp
@@ -473,7 +475,7 @@ export class FilmPipeline {
       fragmentShader: 'uniform sampler2D tex; uniform vec2 dir; varying vec2 vUv; void main(){ vec3 s = texture2D(tex,vUv).rgb*.227; s += (texture2D(tex,vUv+dir*1.38).rgb + texture2D(tex,vUv-dir*1.38).rgb)*.316; s += (texture2D(tex,vUv+dir*3.23).rgb + texture2D(tex,vUv-dir*3.23).rgb)*.070; gl_FragColor=vec4(s,1.); }' });
     this.finalMat = new THREE.ShaderMaterial({ vertexShader: quadVS, fragmentShader: filmFragment, depthTest: false, depthWrite: false, toneMapped: false,
       uniforms: { tex: { value: null }, depth: { value: depth }, bloom: { value: null }, useDepth: { value: 1 }, bloomStrength: { value: .9 }, time: { value: 0 },
-        near: { value: .055 }, far: { value: 28 }, aperture: { value: .7 }, exposure: { value: 1.25 }, res: { value: new THREE.Vector2(width, height) },
+        near: { value: .055 }, far: { value: 28 }, farFocus: { value: 0 }, aperture: { value: .7 }, exposure: { value: 1.25 }, res: { value: new THREE.Vector2(width, height) },
         triggerDarkening: { value: 0 }, heartbeatPulse: { value: 0 }, forcedContact: { value: 0 }, hoodCovered: { value: 0 }, hoodLift: { value: 0 }, hoodDrop: { value: 1 },
         focusBlur: { value: 0 }, glare: { value: 0 }, squint: { value: 0 } } });
     this.quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.brightMat); this.qs.add(this.quad);
@@ -497,6 +499,9 @@ export class FilmPipeline {
       src = this.blurB;
     }
     const u = this.finalMat.uniforms; u.near.value = camera.near; u.far.value = camera.far;
+    // Looking up at the surveillance monitors lets the eye refocus on them (eased, like a real eye).
+    const look = camera.getWorldDirection(new THREE.Vector3()), wantFar = look.y > .16 && look.z < 0 ? 1 : 0;
+    u.farFocus.value += (wantFar - u.farFocus.value) * .12;
   }
   /** Presents to the screen. `override` shows another texture (a monitor feed) through the same film look. */
   present(override: THREE.Texture | null = null) {
@@ -667,7 +672,7 @@ export function upgradeCharacters(world: THREE.Object3D) {
       if (prm && geo.type === 'SphereGeometry') {
         fresh = new THREE.SphereGeometry(prm.radius, prm.widthSegments, prm.heightSegments, prm.phiStart, prm.phiLength, prm.thetaStart, prm.thetaLength);
         next = new THREE.SphereGeometry(prm.radius, Math.min(40, prm.widthSegments * 3), Math.min(28, prm.heightSegments * 3), prm.phiStart, prm.phiLength, prm.thetaStart, prm.thetaLength);
-        if (mesh.name === 'Hair') { next.dispose(); next = new THREE.SphereGeometry(prm.radius, 64, 28, prm.phiStart, prm.phiLength, prm.thetaStart, prm.thetaLength); tuftHair(next, prm.thetaLength, refined * .37 + 1); }
+        if (mesh.name === 'Hair') { next.dispose(); next = new THREE.SphereGeometry(prm.radius, 64, 28, prm.phiStart, prm.phiLength, prm.thetaStart, prm.thetaLength); if (!mesh.userData.shortCrop) tuftHair(next, prm.thetaLength, refined * .37 + 1); }
       } else if (prm && geo.type === 'CylinderGeometry') {
         fresh = new THREE.CylinderGeometry(prm.radiusTop, prm.radiusBottom, prm.height, prm.radialSegments, prm.heightSegments, !!prm.openEnded, prm.thetaStart, prm.thetaLength);
         next = new THREE.CylinderGeometry(prm.radiusTop, prm.radiusBottom, prm.height, Math.max(prm.radialSegments, 24), prm.heightSegments, !!prm.openEnded, prm.thetaStart, prm.thetaLength);

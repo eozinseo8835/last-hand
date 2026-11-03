@@ -55,6 +55,17 @@ function torsoGeometry(){
   return geometry;
 }
 
+/** A close-cropped hair shell 5% outside the skull ellipsoid; its edge is a clean hairline high on the forehead, above the ears and low at the nape. */
+function closeCrop() {
+  const g=new THREE.SphereGeometry(1,32,12,0,Math.PI*2,0,1),pos=g.getAttribute('position');
+  for(let i=0;i<pos.count;i++){
+    const x=pos.getX(i),y=pos.getY(i),z=pos.getZ(i),theta=Math.acos(THREE.MathUtils.clamp(y,-1,1)),phi=Math.atan2(z,-x);
+    const t=theta*(1.42-.42*Math.sin(phi));   // front (phi = pi/2) 1.0 rad from the crown, back 1.84
+    pos.setXYZ(i,-Math.cos(phi)*Math.sin(t),Math.cos(t),Math.sin(phi)*Math.sin(t));
+  }
+  g.scale(.0945,.1208,.0872);g.computeVertexNormals();return g;
+}
+
 export function createCharacter(role:CharacterRole,room:1|2|3=1) {
   const group=new THREE.Group();group.name=`${role} human skeleton`;group.userData={actorRole:role,proceduralSkeleton:true};
   const pelvis=joint(group,`${role} pelvis`),spine=joint(pelvis,`${role} spine`,[0,.14,0]),chest=joint(spine,`${role} chest`,[0,.27,0]);
@@ -78,12 +89,14 @@ export function createCharacter(role:CharacterRole,room:1|2|3=1) {
       bodyMeshes.push(block(look,[.112,.020,.013],[0,.024,.077],flesh,'Balaclava eye opening'));
       for(const x of [-.030,.030])bodyMeshes.push(block(look,[.013,.009,.007],[x,.025,.086],black,'Guard eye'));
     } else {
-      const hair=material(index===2?0x8c8d86:index===1?0x241f19:0x3a3226);
-      // Distinct silhouettes: messy hair (nervous), slicked back (gambler), receding grey (survivor).
-      const crownGeo=new THREE.SphereGeometry(1,8,5,0,Math.PI*2,0,Math.PI*.48);
-      // Same proven cap as before (hair edge recessed behind the face), reshaped per character: fuller, slicked flat, or receding.
-      crownGeo.scale(index===2?.093:index===1?.095:.093,index===1?.120:.119,index===2?.085:index===1?.089:.086);
-      bodyMeshes.push(mesh(look,crownGeo,hair,'Hair',index===2?[0,.003,-.013]:index===1?[0,.004,-.006]:[0,.003,-.005]));
+      const hair=material(index===2?0x8c8d86:index===1?0x15110e:0x3a3226);
+      // Distinct silhouettes: messy hair (nervous), close crop with a shaved side part (gambler), receding grey (survivor).
+      // Same proven cap as before (hair edge recessed behind the face), reshaped per character: fuller or receding.
+      // The gambler's close crop: a thin shell just outside the skull (see closeCrop).
+      const crownGeo=index===1?closeCrop():new THREE.SphereGeometry(1,8,5,0,Math.PI*2,0,Math.PI*.48);
+      if(index!==1)crownGeo.scale(.093,.119,index===2?.085:.086);
+      const crown=mesh(look,crownGeo,hair,'Hair',index===2?[0,.003,-.013]:index===1?[0,0,0]:[0,.003,-.005]);bodyMeshes.push(crown);
+      if(index===1)crown.userData.shortCrop=true;
       if(index===0){
         // Messy tufts falling over the forehead and sticking out at the crown.
         // Uneven fringe strands hanging onto the forehead plus a few sticking up at the crown.
@@ -97,10 +110,9 @@ export function createCharacter(role:CharacterRole,room:1|2|3=1) {
         for(const [x,y] of [[.030,.066],[-.022,.074],[.052,.040]] as const)bodyMeshes.push(mesh(look,new THREE.SphereGeometry(.0045,5,4),sweat,'Sweat bead',[x,y,.079]));
       }
       if(index===1){
-        // Side parting line and stubble shadow over the jaw.
-        bodyMeshes.push(block(look,[.004,.006,.060],[.030,.108,.030],material(0x5a4a34),'Hair parting'));
+        // A light stubble shadow over the jaw.
         const stubbleGeo=new THREE.SphereGeometry(1,12,6,Math.PI*.15,Math.PI*.70,Math.PI*.58,Math.PI*.30);stubbleGeo.scale(.093,.118,.086);
-        bodyMeshes.push(mesh(look,stubbleGeo,material(0x8c7864,true),'Stubble'));
+        bodyMeshes.push(mesh(look,stubbleGeo,material(0x553728,true),'Stubble'));
       }
       if(index===2){
         // Thick grey beard and a pale scar across the left cheek.
@@ -121,7 +133,7 @@ export function createCharacter(role:CharacterRole,room:1|2|3=1) {
   }
   // Collars and the loosened tie retain each captive's silhouette.
   const shirt=material(0x9b9882);bodyMeshes.push(block(chest,[.10,.13,.018],[0,.085,.112],shirt,'Shirt opening'));
-  const tie=block(chest,[.024,.22,.013],[.008,.005,.124],black,'Loosened tie');bodyMeshes.push(tie);
+  const tie=block(chest,[.024,.22,.013],[.008,.005,.124],material(0x5e1a1d),'Loosened tie');bodyMeshes.push(tie);
   const hoodie=mesh(neck,new THREE.TorusGeometry(.074,.020,4,9),cloth,'Captive hood collar',[0,-.019,-.006]);hoodie.rotation.x=Math.PI/2;bodyMeshes.push(hoodie);
   // Per-captive clothing details (shown by setRoom): hoodie strings and pocket, gambler's vest, survivor's work-jacket collar and zip.
   const outfit=[1,2,3].map(n=>{const g=joint(chest,`${role} outfit ${n}`);g.visible=false;return g;});
@@ -198,8 +210,8 @@ export function createCharacter(role:CharacterRole,room:1|2|3=1) {
   let activeRoom=room;
   function setRoom(next:1|2|3) {
     activeRoom=next;headLooks.forEach((look,index)=>look.visible=role!=='captive'||index===next-1);
-    // Clearly different from skin and from each other: heather-grey hoodie (nervous), burgundy shirt under a waistcoat (gambler), olive work jacket (survivor).
-    if(role==='captive') {cloth.color.setHex([0x666a6e,0x5a2025,0x47462a][next-1]);flesh.color.setHex([0xbfae98,0xb1997e,0xa89880][next-1]);flesh.emissive.copy(flesh.color);}
+    // Clearly different from skin and from each other: heather-grey hoodie (nervous), cobalt suit jacket over a dark waistcoat and red tie (gambler, a Black man with deep brown skin), olive work jacket (survivor).
+    if(role==='captive') {cloth.color.setHex([0x666a6e,0x34477a,0x47462a][next-1]);flesh.color.setHex([0xbfae98,0x6b4631,0xa89880][next-1]);flesh.emissive.copy(flesh.color);}
     outfit.forEach((g,index)=>g.visible=role==='captive'&&index===next-1);ring.visible=role==='captive'&&next===2;
     elbowPatches.forEach(patch=>patch.visible=role==='captive'&&next===3);
     tie.visible=role==='captive'&&next===2;hoodie.visible=role==='captive'&&next===1;

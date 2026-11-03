@@ -509,6 +509,8 @@ export default function Scene(props: SceneProps) {
       renderer.shadowMap.needsUpdate = renderedFrames++ % 4 === 0;
       const ceilingActive = !signalLost && state.phase !== 'GAME_OVER' && (roomNumber === 3 || state.phase === 'ENDING_DEATH');
       ceilingFeed.render(renderer, time, ceilingActive);
+      monitors.renderTables(renderer, time);
+      canvas.dataset.tableVideoFrames = String(monitors.group.userData.videoFrames ?? 0);
       canvas.dataset.ceilingFeed = String(ceilingActive); canvas.dataset.ceilingFrames = String(ceilingFeed.frames);
       const deathMonitor = state.phase === 'ENDING_DEATH' && state.storyStage !== 'fall';
       if (film) film.renderScene(world, camera);

@@ -25,6 +25,31 @@ describe('three captive policies', () => {
     expect(opponentAction(1, cards('10', '7'), () => .25)).toBe('stand');
   });
 
+  it('plays against the revealed player hand: always draws when behind, even past seventeen, and stands when ahead', () => {
+    for (const room of rooms) {
+      expect(opponentAction(room, cards('10', '8'), () => .99, cards('10', 'A'))).toBe('hit');     // 18 against your 21: standing is a sure loss
+      expect(opponentAction(room, cards('10', '9'), () => .99, cards('10', 'Q'))).toBe('hit');     // 19 against 20
+      expect(opponentAction(room, cards('10', '4'), () => 0, cards('10', '3'))).toBe('stand');     // 14 already beats 13
+      expect(opponentAction(room, cards('10', '9'), () => .99, cards('10', '7'))).toBe('stand');   // 19 beats 17
+      expect(opponentAction(room, cards('10', '6'), () => 0, cards('10', '5', 'K'))).toBe('stand'); // you busted
+      expect(opponentAction(room, cards('10', 'A'), () => 0, cards('10', 'A'))).toBe('stand');     // 21 cannot improve
+    }
+  });
+
+  it('keeps personality quirks only when already ahead: Nervous Man panics at 17-18, Gambler hits soft 17', () => {
+    expect(opponentAction(1, cards('10', '7'), () => .1, cards('10', '6'))).toBe('hit');
+    expect(opponentAction(1, cards('10', '7'), () => .9, cards('10', '6'))).toBe('stand');
+    expect(opponentAction(1, cards('10', '2'), () => .1, cards('10', '5'))).toBe('hit');   // never freezes when behind
+    expect(opponentAction(2, cards('A', '6'), () => .9, cards('10', '6'))).toBe('hit');
+    expect(opponentAction(3, cards('A', '6'), () => .9, cards('10', '6'))).toBe('stand');
+  });
+
+  it('sometimes gambles on a revealed tie instead of taking the push, the Gambler most of all', () => {
+    const rate = (room: RoomNumber) => { const random = createTensionRandom(4401 + room); let hits = 0; for (let i = 0; i < 10000; i++) if (opponentAction(room, cards('10', '8'), random, cards('9', '9')) === 'hit') hits++; return hits / 10000; };
+    expect(Math.abs(rate(1) - OPPONENTS[1].tieRisk)).toBeLessThan(.02);
+    expect(rate(2)).toBeGreaterThan(rate(1)); expect(rate(1)).toBeGreaterThan(rate(3)); expect(rate(3)).toBeGreaterThan(.1);
+  });
+
   it('makes the Gambler hit soft 17 while standing on hard 17 and higher', () => {
     expect(opponentAction(2, cards('A', '6'))).toBe('hit');
     expect(opponentAction(2, cards('10', '7'))).toBe('stand');

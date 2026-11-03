@@ -107,8 +107,9 @@ it('builds sloped shoulders: one tapered torso, with each shoulder cap sitting i
 describe('captive outfits and bomb vest',()=>{
  it('dresses each captive differently from the others and from their skin',()=>{
   const rig=createCharacter('captive',1),colors:number[]=[];
-  for(const room of [1,2,3] as const){rig.setRoom(room);const cloth=rig.clothingMaterial.color,skin=rig.skinMaterial.color;colors.push(cloth.getHex());
-   expect(Math.abs(cloth.r-skin.r)+Math.abs(cloth.g-skin.g)+Math.abs(cloth.b-skin.b),`room ${room} cloth vs skin`).toBeGreaterThan(.35);}
+  const rgb=(hex:number)=>[hex>>16&255,hex>>8&255,hex&255].map(v=>v/255);   // as authored (sRGB), how the eye sees it
+  for(const room of [1,2,3] as const){rig.setRoom(room);const cloth=rgb(rig.clothingMaterial.color.getHex()),skin=rgb(rig.skinMaterial.color.getHex());colors.push(rig.clothingMaterial.color.getHex());
+   expect(cloth.reduce((sum,v,i)=>sum+Math.abs(v-skin[i]),0),`room ${room} cloth vs skin`).toBeGreaterThan(.35);}
   expect(new Set(colors).size).toBe(3);
  });
  it('straps a bomb vest with a red receiver light onto captives and the player only',()=>{
