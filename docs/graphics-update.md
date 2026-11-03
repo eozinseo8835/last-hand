@@ -55,3 +55,9 @@ Characters now match the cinematic room. All joints, sizes and poses are unchang
   - applying the polish twice is safe
   - the iris follows gaze
   - the layer rule holds
+
+## Outfits, hair and the bomb vest
+
+- Each captive now wears a clearly different colour that never matches their skin: a heather-grey hoodie (room 1), a burgundy shirt under the waistcoat (room 2) and an olive work jacket (room 3). This applies to both graphics modes.
+- In cinematic mode the hair is no longer a smooth cap. It has a strand texture, uneven volume at the sides and back, and the messy fringe of the room 1 captive is made of tapered locks.
+- Captives (and the player's body) wear a bomb vest: four taped charges, red and blue wires, and a receiver with a red light. The light blinks slowly and speeds up as chambers are spent and while a trigger is in play. The escape rule that the vest enforces is not in the game yet.

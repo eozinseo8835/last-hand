@@ -786,6 +786,9 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     const cine=state.cinematic,stage=cine?.stage??state.storyStage??'',p=cinematicProgress(cine,epoch);
     const body=bodyLanguage(room,state.stress??.2,time,(state.chambersFired??0)+1,state.phase,state.tell?.disposition==='calm');
     const motion=state.reducedMotion?.25:1;
+    // Bomb vest receiver: a slow red blink that quickens as chambers are spent and while a trigger is in play.
+    const danger=Math.min(1,(state.chambersFired??0)/5+(state.suspense?.35:0)+(state.triggerHeld?.25:0)),blinkRate=.7+danger*3.3;
+    const ledOn=((time*blinkRate)%1)<.16;for(const rig of [captiveRig,playerRig])rig.bombLed.emissiveIntensity=ledOn?1.6+danger*2:0;
     captiveRig.chest.rotation.x+=body.breath*motion;captiveRig.head.rotation.y+=body.head*motion;
     captiveRig.spine.rotation.x+=body.hunch*.15;
     captiveRig.legs.right.thigh.rotation.x+=body.bounce*.8;

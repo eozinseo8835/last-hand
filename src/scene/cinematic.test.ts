@@ -186,4 +186,16 @@ describe('cinematic characters', () => {
     expect(iris.layers.mask).toBe(eye.layers.mask);
     expect(iris.layers.isEnabled(0)).toBe(false);
   });
+  it('gives hair strands and volume instead of a smooth swim cap, without spilling over the face', () => {
+    const rig = createCharacter('captive', 1); const world = new THREE.Scene(); world.add(rig.group);
+    const hair = rig.group.getObjectByName('Hair') as THREE.Mesh;
+    const before = new THREE.Box3().setFromObject(hair).getSize(new THREE.Vector3());
+    upgradeCharacters(world);
+    const after = new THREE.Box3().setFromObject(hair).getSize(new THREE.Vector3());
+    expect((hair.material as THREE.MeshStandardMaterial).map).toBeTruthy();
+    expect(hair.geometry.getAttribute('position').count).toBeGreaterThan(1000);
+    for (const k of ['x', 'y', 'z'] as const) { expect(after[k]).toBeGreaterThan(before[k] * .97); expect(after[k]).toBeLessThan(before[k] * 1.16); }
+    const strand = rig.group.getObjectByName('Messy hair strand') as THREE.Mesh;
+    expect(strand.geometry.type).toBe('ConeGeometry');
+  });
 });

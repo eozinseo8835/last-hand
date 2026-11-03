@@ -133,6 +133,21 @@ export function createCharacter(role:CharacterRole,room:1|2|3=1) {
   for(const x of [-1,1]){const flap=block(outfit[2],[.070,.050,.014],[x*.055,.205,.090],jacket,'Jacket collar');flap.rotation.set(-.5,0,x*.45);bodyMeshes.push(flap);}
   bodyMeshes.push(block(outfit[2],[.008,.34,.006],[0,-.030,.112],zip,'Jacket zip'));
   for(const x of [-1,1])bodyMeshes.push(block(outfit[2],[.050,.030,.010],[x*.10,.040,.106],jacket,'Chest pocket flap'));
+  // Bomb vest (captives and the player): the Host's leash. Taped charges, wiring and a receiver whose red light blinks faster as danger rises.
+  const bombVest=joint(chest,`${role} bomb vest`);bombVest.visible=role==='captive'||role==='player';
+  const webbing=material(0x15181a),tape=material(0x6d6a5c),wireRed=material(0x8e1d18),wireBlue=material(0x1f3a66),receiver=material(0x111312);
+  const bombLed=new THREE.MeshStandardMaterial({color:0x3a0806,emissive:0xff2a18,emissiveIntensity:0,roughness:.3});
+  for(const x of [-1,1]){bodyMeshes.push(block(bombVest,[.034,.27,.012],[x*.098,.065,.124],webbing,'Bomb vest strap'));}
+  bodyMeshes.push(block(bombVest,[.33,.034,.014],[0,-.125,.122],webbing,'Bomb vest waist strap'));
+  for(const [x,y] of [[-.056,.035],[.056,.035],[-.056,-.058],[.056,-.058]] as const){
+    bodyMeshes.push(block(bombVest,[.072,.078,.034],[x,y,.142],tape,'Explosive charge'));
+    bodyMeshes.push(block(bombVest,[.074,.010,.036],[x,y+.022,.143],webbing,'Charge tape band'));
+  }
+  bodyMeshes.push(block(bombVest,[.058,.040,.026],[0,.118,.148],receiver,'Bomb receiver'));
+  bodyMeshes.push(mesh(bombVest,new THREE.SphereGeometry(.0055,8,6),bombLed,'Bomb LED',[.017,.124,.162]));
+  for(const [x,mat] of [[-.012,wireRed],[.006,wireBlue]] as const){
+    const wire=mesh(bombVest,new THREE.CylinderGeometry(.0028,.0028,.17,5),mat,'Bomb wire',[x,.03,.164]);wire.rotation.z=x<0?.10:-.06;bodyMeshes.push(wire);
+  }
   // Guards wear a tactical vest with pouches.
   const tactical=joint(chest,`${role} tactical vest`);tactical.visible=role==='guard';
   const vestMat=material(0x161b18);bodyMeshes.push(block(tactical,[.30,.30,.030],[0,-.02,.100],vestMat,'Tactical vest front'),block(tactical,[.30,.30,.030],[0,-.02,-.100],vestMat,'Tactical vest back'));
@@ -183,8 +198,8 @@ export function createCharacter(role:CharacterRole,room:1|2|3=1) {
   let activeRoom=room;
   function setRoom(next:1|2|3) {
     activeRoom=next;headLooks.forEach((look,index)=>look.visible=role!=='captive'||index===next-1);
-    // Faded grey hoodie (nervous), shirt sleeves under a waistcoat (gambler), worn brown work jacket (survivor).
-    if(role==='captive') {cloth.color.setHex([0x58605a,0x8b8573,0x5c4a33][next-1]);flesh.color.setHex([0xbfae98,0xb1997e,0xa89880][next-1]);flesh.emissive.copy(flesh.color);}
+    // Clearly different from skin and from each other: heather-grey hoodie (nervous), burgundy shirt under a waistcoat (gambler), olive work jacket (survivor).
+    if(role==='captive') {cloth.color.setHex([0x666a6e,0x5a2025,0x47462a][next-1]);flesh.color.setHex([0xbfae98,0xb1997e,0xa89880][next-1]);flesh.emissive.copy(flesh.color);}
     outfit.forEach((g,index)=>g.visible=role==='captive'&&index===next-1);ring.visible=role==='captive'&&next===2;
     elbowPatches.forEach(patch=>patch.visible=role==='captive'&&next===3);
     tie.visible=role==='captive'&&next===2;hoodie.visible=role==='captive'&&next===1;
@@ -279,6 +294,6 @@ export function createCharacter(role:CharacterRole,room:1|2|3=1) {
   function constrainFingers(){for(const arm of Object.values(arms)){for(const chain of [...arm.fingers,arm.thumb])for(const digit of chain){digit.rotation.x=THREE.MathUtils.clamp(digit.rotation.x,-Math.PI/2,-.015);digit.rotation.z=0;}}}
   function setFirstPerson(enabled:boolean) {bodyMeshes.forEach(item=>item.visible=!enabled);head.visible=!enabled;for(const leg of Object.values(legs))leg.thigh.visible=!enabled;}
   setRoom(activeRoom);pose(role==='host'?'host-idle':role==='guard'?'guard-walking':'seated-resting');
-  return {updateCoat:()=>coat?.update(),group,pelvis,spine,chest,neck,head,arms,legs,bodyMeshes,skinMaterial:flesh,clothingMaterial:cloth,pose,solveHand,setGrip,leanToward,setRoom,setFirstPerson,constrainFingers,setStandingHeight,crouch:(drop:number)=>setStandingHeight(.9-THREE.MathUtils.clamp(drop,0,.25))};
+  return {updateCoat:()=>coat?.update(),bombVest,bombLed,group,pelvis,spine,chest,neck,head,arms,legs,bodyMeshes,skinMaterial:flesh,clothingMaterial:cloth,pose,solveHand,setGrip,leanToward,setRoom,setFirstPerson,constrainFingers,setStandingHeight,crouch:(drop:number)=>setStandingHeight(.9-THREE.MathUtils.clamp(drop,0,.25))};
 }
 export type HumanRig=ReturnType<typeof createCharacter>;

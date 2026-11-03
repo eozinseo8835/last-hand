@@ -554,6 +554,35 @@ const clothBump = () => canvasTex(256, (c, s, r) => {
   speckle(c, s, r, 6000, .4, '#b0b0b0', '#505050', 1);
 }, 74, false);
 
+const hairMap = () => canvasTex(512, (c, s, r) => {
+  c.fillStyle = '#9a9a9a'; c.fillRect(0, 0, s, s);
+  // strands run crown to hairline (sphere v), in clumps of lighter and darker hair
+  for (let i = 0; i < 2600; i++) {
+    const x = r() * s, w = .6 + r() * 1.6, l = s * (.25 + r() * .75), y = r() * s * .3, v = r();
+    c.fillStyle = v > .55 ? `rgba(255,255,255,${.10 + r() * .22})` : `rgba(0,0,0,${.12 + r() * .30})`;
+    c.save(); c.translate(x, y); c.rotate((r() - .5) * .12); c.fillRect(0, 0, w, l); c.restore();
+  }
+}, 75);
+
+/** Turns the smooth hair cap into tufted hair: clumps in the silhouette and an uneven hairline instead of a swim-cap edge. */
+function tuftHair(g: THREE.BufferGeometry, thetaLength: number, seed: number) {
+  const pos = g.getAttribute('position'), p = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    p.fromBufferAttribute(pos, i); const r0 = p.length(); if (r0 < 1e-6) continue;
+    let theta = Math.acos(THREE.MathUtils.clamp(p.y / r0, -1, 1)); const phi = Math.atan2(p.z, p.x);
+    // the face side stays behind the skull (that intersection is the hairline); only the sides and back get volume and a ragged edge
+    const front = THREE.MathUtils.smoothstep(Math.sin(theta) * Math.sin(phi), .15, .6), free = 1 - front;
+    const edge = THREE.MathUtils.smoothstep(theta / thetaLength, .55, 1);
+    const jag = Math.sin(phi * 9 + seed) * .05 + Math.sin(phi * 17 + seed * 2.3) * .03;
+    theta = Math.max(0, theta + edge * free * Math.max(0, jag + .02) * thetaLength);
+    const clump = Math.pow(Math.max(0, Math.sin(phi * 7 + Math.sin(theta * 6 + seed) * 1.4)), 3) * .045 + Math.sin(phi * 13 + theta * 9 + seed) * .010;
+    const fringe = Math.sin(phi * 23 + seed) * .006 + Math.sin(phi * 41 + seed * 1.7) * .004;
+    const r = r0 * (1 + free * (clump * THREE.MathUtils.smoothstep(theta, .05, .4) + edge * .025) + front * fringe);
+    pos.setXYZ(i, r * Math.sin(theta) * Math.cos(phi), r * Math.cos(theta), r * Math.sin(theta) * Math.sin(phi));
+  }
+  pos.needsUpdate = true; g.computeVertexNormals();
+}
+
 /** Affine map M with old = M * fresh, fitted over matching vertices (bakes the original scale/rotation). */
 function fitAffine(fresh: THREE.BufferGeometry, old: THREE.BufferGeometry) {
   const a = fresh.getAttribute('position'), b = old.getAttribute('position');
@@ -620,7 +649,7 @@ function refineFace(mesh: THREE.Mesh, mats: FaceMaterials) {
 
 /** Smooths every character part in place. Returns how many meshes were refined. */
 export function upgradeCharacters(world: THREE.Object3D) {
-  const skin = { map: skinMap(), bump: skinBump() }, cloth = { map: clothMap(), bump: clothBump() };
+  const skin = { map: skinMap(), bump: skinBump() }, cloth = { map: clothMap(), bump: clothBump() }; const hair = hairMap();
   cloth.map.repeat.set(3, 3); cloth.bump.repeat.set(6, 6);
   const seenMaterials = new Set<THREE.Material>(); let refined = 0;
   const faceMaterials = { sclera: new THREE.MeshStandardMaterial({ color: 0xcdc6b6, roughness: .32 }), iris: new THREE.MeshStandardMaterial({ color: 0x2a1c12, roughness: .18 }), lip: new THREE.MeshStandardMaterial({ color: 0x4a2a22, roughness: .55 }), sweat: new THREE.MeshStandardMaterial({ color: 0xe8f0ee, roughness: .04, metalness: 0, transparent: true, opacity: .45 }) };
@@ -638,6 +667,7 @@ export function upgradeCharacters(world: THREE.Object3D) {
       if (prm && geo.type === 'SphereGeometry') {
         fresh = new THREE.SphereGeometry(prm.radius, prm.widthSegments, prm.heightSegments, prm.phiStart, prm.phiLength, prm.thetaStart, prm.thetaLength);
         next = new THREE.SphereGeometry(prm.radius, Math.min(40, prm.widthSegments * 3), Math.min(28, prm.heightSegments * 3), prm.phiStart, prm.phiLength, prm.thetaStart, prm.thetaLength);
+        if (mesh.name === 'Hair') { next.dispose(); next = new THREE.SphereGeometry(prm.radius, 64, 28, prm.phiStart, prm.phiLength, prm.thetaStart, prm.thetaLength); tuftHair(next, prm.thetaLength, refined * .37 + 1); }
       } else if (prm && geo.type === 'CylinderGeometry') {
         fresh = new THREE.CylinderGeometry(prm.radiusTop, prm.radiusBottom, prm.height, prm.radialSegments, prm.heightSegments, !!prm.openEnded, prm.thetaStart, prm.thetaLength);
         next = new THREE.CylinderGeometry(prm.radiusTop, prm.radiusBottom, prm.height, Math.max(prm.radialSegments, 24), prm.heightSegments, !!prm.openEnded, prm.thetaStart, prm.thetaLength);
@@ -647,6 +677,10 @@ export function upgradeCharacters(world: THREE.Object3D) {
       } else if (prm && geo.type === 'TorusGeometry') {
         fresh = new THREE.TorusGeometry(prm.radius, prm.tube, prm.radialSegments, prm.tubularSegments, prm.arc);
         next = new THREE.TorusGeometry(prm.radius, prm.tube, Math.max(prm.radialSegments, 10), Math.max(prm.tubularSegments, 32), prm.arc);
+      } else if (prm && geo.type === 'BoxGeometry' && mesh.name === 'Messy hair strand') {
+        // a tapered lock instead of a flat tile (box frame: width x length, tip hanging down)
+        const lock = new THREE.ConeGeometry(.5, 1, 10, 1); lock.rotateZ(Math.PI); lock.scale(prm.width, prm.height, prm.depth * 1.3);
+        geo.dispose(); mesh.geometry = lock; mesh.userData.cinematicRefined = true; refined++;
       } else if (prm && geo.type === 'BoxGeometry') {
         const small = Math.min(prm.width, prm.height, prm.depth);
         if (small >= .006) {
@@ -665,6 +699,7 @@ export function upgradeCharacters(world: THREE.Object3D) {
       if (!(mat instanceof THREE.MeshStandardMaterial) || seenMaterials.has(mat)) return;
       seenMaterials.add(mat); mat.flatShading = false;
       const isSkin = mat.emissiveIntensity > .08 && mat.emissiveIntensity < .3 && mat.emissive.getHex() === mat.color.getHex() && SKIN_NAMES.test(mesh.name);
+      if (/^(Hair|Messy hair strand|Eyebrow)$/.test(mesh.name)) { mat.map = hair; mat.roughness = .62; mat.needsUpdate = true; return; }
       if (isSkin) { mat.map = skin.map; mat.bumpMap = skin.bump; mat.bumpScale = .25; mat.roughness = .58; mat.emissiveIntensity = .07; }
       else if (CLOTH_NAMES.test(mesh.name) && !mat.map) { mat.map = cloth.map; mat.bumpMap = cloth.bump; mat.bumpScale = .7; mat.roughness = .96; }
       else if (/hand|glove/i.test(mesh.name) || mat.color.getHex() === 0x1b1f1c) { mat.roughness = .42; }   // leather gloves
