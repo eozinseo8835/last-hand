@@ -147,8 +147,8 @@ describe('campaign surveillance feeds', () => {
     const gl = { shadowMap: { needsUpdate: true }, getRenderTarget: () => current, setRenderTarget: (t: THREE.WebGLRenderTarget | null) => { current = t; }, clear: noop,
       render: vi.fn((scene: THREE.Scene) => { targets.push(current); expect(scene.name).toBe('other-table-studio'); }) } as unknown as THREE.WebGLRenderer;
     for (let frame = 0; frame <= 60; frame++) { const time = frame / 60; monitors.update({ roomNumber: 1 }, time); monitors.renderTables(gl, time); }
-    expect((gl.render as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBeGreaterThanOrEqual(11);
-    expect((gl.render as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBeLessThanOrEqual(13);
+    expect((gl.render as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBeGreaterThanOrEqual(7);
+    expect((gl.render as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBeLessThanOrEqual(9);
     expect(new Set(targets).size).toBe(3);
     expect(current).toBeNull(); expect(gl.shadowMap.needsUpdate).toBe(true);
     expect(monitors.screens.every(screen => screen.material.transparent)).toBe(true);
@@ -162,6 +162,15 @@ describe('campaign surveillance feeds', () => {
     expect(targets.every(target => target!.texture !== dead.map)).toBe(true);
     targets.length = 0;
     monitors.update({ roomNumber: 3 }, 5); expect(monitors.renderTables(gl, 5)).toBe(false); expect(targets).toHaveLength(0);
+    // Slowed right down during a trigger pull, and skipped entirely while the wall is behind the camera.
+    monitors.update({ roomNumber: 1 }, 10);
+    const facing = new THREE.PerspectiveCamera(60, 16 / 9, .05, 30); facing.position.set(0, 1.2, 1); facing.lookAt(0, 2.4, -4); facing.updateMatrixWorld();
+    const away = new THREE.PerspectiveCamera(60, 16 / 9, .05, 30); away.position.set(0, 1.2, 1); away.lookAt(0, 1.2, 6); away.updateMatrixWorld();
+    for (let frame = 0; frame <= 60; frame++) { const time = 10 + frame / 60; monitors.update({ roomNumber: 1 }, time); monitors.renderTables(gl, time, { camera: facing, busy: true }); }
+    expect(targets.length).toBeGreaterThanOrEqual(3); expect(targets.length).toBeLessThanOrEqual(4);
+    targets.length = 0;
+    for (let frame = 0; frame <= 60; frame++) { const time = 12 + frame / 60; monitors.update({ roomNumber: 1 }, time); monitors.renderTables(gl, time, { camera: away }); }
+    expect(targets).toHaveLength(0);
     monitors.dispose();
   });
 

@@ -518,7 +518,7 @@ export default function Scene(props: SceneProps) {
       renderer.shadowMap.needsUpdate = renderedFrames++ % 4 === 0;
       const ceilingActive = !signalLost && state.phase !== 'GAME_OVER' && (roomNumber === 3 || state.phase === 'ENDING_DEATH');
       ceilingFeed.render(renderer, time, ceilingActive);
-      monitors.renderTables(renderer, time);
+      monitors.renderTables(renderer, time, { camera, busy: !!state.suspense || ['PLAYER_SHOOTING', 'AI_SHOOTING', 'HOST_FORCE_SHOT'].includes(state.phase) });
       canvas.dataset.tableVideoFrames = String(monitors.group.userData.videoFrames ?? 0);
       canvas.dataset.ceilingFeed = String(ceilingActive); canvas.dataset.ceilingFrames = String(ceilingFeed.frames);
       const deathMonitor = state.phase === 'ENDING_DEATH' && state.storyStage !== 'fall';

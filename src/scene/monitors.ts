@@ -275,6 +275,12 @@ export function createMonitorWall(scene: THREE.Scene) {
       guardVisible, playerTied: captiveTies[0], opponentTied: captiveTies[1], trigger: triggerSeat });
   }
 
+  const wallBox = new THREE.Box3(), frustum = new THREE.Frustum(), viewProjection = new THREE.Matrix4();
+  function wallInView(camera: THREE.Camera) {
+    group.updateWorldMatrix(true, true); wallBox.setFromObject(group);
+    camera.updateMatrixWorld(); viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse); frustum.setFromProjectionMatrix(viewProjection);
+    return frustum.intersectsBox(wallBox);
+  }
   configure();
   return {
     group,
@@ -318,15 +324,19 @@ export function createMonitorWall(scene: THREE.Scene) {
     },
     /**
      * Renders the other tables as real 3D rooms (a security-camera view of the same game the player is in).
-     * One feed per call, about 12 renders a second shared between the live screens: a choppy CCTV frame rate on purpose.
+     * One feed per call, about 8 renders a second shared between the live screens (3 during a trigger pull, none while
+     * the wall is off screen): a choppy CCTV frame rate on purpose.
      */
-    renderTables(renderer: THREE.WebGLRenderer, time: number) {
+    renderTables(renderer: THREE.WebGLRenderer, time: number, view?: { camera?: THREE.Camera; busy?: boolean }) {
       if (disposed) return false;
       if (!videoMode) { videoMode = true; configure(); nextFrame = -Infinity; }
       if (room === 3 || time + .000001 < nextVideoFrame) return false;
+      // Each feed render costs a few hundred draw calls: skip it while the wall is off screen, and slow the feeds right
+      // down during a trigger pull so the player's own moment never stutters.
+      if (view?.camera && !wallInView(view.camera)) return false;
       const live = feeds.filter(feed => feed.group.visible && feed.alive && feed.pose);
       if (!live.length) return false;
-      nextVideoFrame = time + 1 / 12;
+      nextVideoFrame = time + (view?.busy ? 1 / 3 : 1 / 8);
       const feed = live[videoCursor++ % live.length];
       studio ??= createTableStudio();
       studio.render(renderer, feed.target, feed.pose!);

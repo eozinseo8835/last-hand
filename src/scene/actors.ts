@@ -481,9 +481,13 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     const socket=gripSocket(rig,side,flip),palm=orientation.clone().multiply(socket.quaternion.clone().invert());
     const offset=socket.position.clone().add(muzzlePoint.clone().applyQuaternion(socket.quaternion));
     const target=muzzle.clone().sub(offset.applyQuaternion(palm));
+    // Only this rig (and the revolver in its hand) moves here: refresh just its matrices, not the whole room,
+    // and stop as soon as the muzzle is on target.
     for(let pass=0;pass<4;pass++) {
-      solveWorld(rig,side,target,palm,raised,true);grip(rig,side,flip);scene.updateMatrixWorld(true);
-      target.add(muzzle.clone().sub(model.muzzlePoint.getWorldPosition(new THREE.Vector3())));
+      solveWorld(rig,side,target,palm,raised,true);grip(rig,side,flip);rig.group.updateMatrixWorld(true);
+      const miss=muzzle.clone().sub(model.muzzlePoint.getWorldPosition(new THREE.Vector3()));
+      if(miss.lengthSq()<1e-6)break;
+      target.add(miss);
     }
     rig.setGrip(side,1,1,.8);
     gun.userData.muzzleError=model.muzzlePoint.getWorldPosition(new THREE.Vector3()).distanceTo(muzzle);
@@ -521,7 +525,7 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     pointGun(playerRig,'right',muzzle,restQ.slerp(aim.q,e),false,flip);
     const join=smooth(.55,1,e);
     if(join>0){
-      scene.updateMatrixWorld(true);const target=handOnGun(playerRig,'left',1),rest=playerRig.arms.left.hand.getWorldPosition(new THREE.Vector3());
+      playerRig.group.updateMatrixWorld(true);const target=handOnGun(playerRig,'left',1),rest=playerRig.arms.left.hand.getWorldPosition(new THREE.Vector3());
       solveWorld(playerRig,'left',rest.lerp(target.position,join),restingPalm(playerRig).slerp(target.quaternion,join),false,true,false);playerRig.setGrip('left',.3+.7*join,0,0);leftOnGun=true;
     }
     gunHolder='player';gun.userData.playerHold={k:+k.toFixed(3),flip:+flip.toFixed(3),twoHands:join>.99};
@@ -665,7 +669,7 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
       const eye=view.getWorldPosition(new THREE.Vector3()),forward=atCamera(0,0,-1).sub(eye),up=atCamera(0,1,0).sub(eye),right=atCamera(1,0,0).sub(eye);
       // Muzzle up and away, the revolver's left side (where the cylinder swings out) turned toward your eyes.
       const barrel=forward.clone().multiplyScalar(.45).addScaledVector(up,.85).addScaledVector(right,-.2);
-      return {muzzle:atCamera(-.02,-.03,-.40),q:barrelQuaternion(barrel,right)};
+      return {muzzle:atCamera(-.05,-.08,-.50),q:barrelQuaternion(barrel,right)};
     }
     const toPlayer=captive.localToWorld(new THREE.Vector3(0,0,1)).sub(captive.getWorldPosition(new THREE.Vector3())),up=new THREE.Vector3(0,1,0);
     const right=captive.localToWorld(new THREE.Vector3(1,0,0)).sub(captive.getWorldPosition(new THREE.Vector3()));
@@ -688,18 +692,19 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     // The crane swings the cylinder out to the free hand's side, then the flick closes it.
     const open=smooth(.24,.34,t)*(1-smooth(.62,.68,t));crane.rotation.x=-1.25*open;
     const reach=smooth(.22,.36,t)*(1-smooth(.58,.72,t));
-    scene.updateMatrixWorld(true);
+    rig.group.updateMatrixWorld(true);
     if(player&&raise<.3){
       // Still (or again) in the two-hand hold.
       const target=handOnGun(playerRig,'left',1);solveWorld(playerRig,'left',target.position,target.quaternion,false,true,false);playerRig.setGrip('left',1,0,0);leftOnGun=true;
     } else if(reach>0){
       const centre=revolverCylinder.getWorldPosition(new THREE.Vector3()),gunQ=gun.getWorldQuaternion(new THREE.Quaternion());
       const side=new THREE.Vector3(0,0,1).applyQuaternion(gunQ),gunUp=new THREE.Vector3(0,1,0).applyQuaternion(gunQ);
-      // Thumb pushes the cylinder out, then the palm sweeps down across its far side.
-      const stroke=smooth(.42,.55,t),target=centre.clone().addScaledVector(side,-.045).addScaledVector(gunUp,.05-.10*stroke);
+      // The free hand works from underneath (never between your eyes and the revolver): the thumb pushes the
+      // cylinder out, then the palm sweeps across under it to spin it.
+      const stroke=smooth(.42,.55,t),target=centre.clone().addScaledVector(gunUp,-.05).addScaledVector(side,-.045+.09*stroke);
       const rest=rig.arms.left.hand.getWorldPosition(new THREE.Vector3());
       // Fingers along the barrel, palm turned onto the cylinder.
-      const barrelDir=new THREE.Vector3(1,0,0).applyQuaternion(gunQ),palmY=side.clone(),palmX=new THREE.Vector3().crossVectors(palmY,barrelDir).normalize();
+      const barrelDir=new THREE.Vector3(1,0,0).applyQuaternion(gunQ),palmY=gunUp.clone(),palmX=new THREE.Vector3().crossVectors(palmY,barrelDir).normalize();
       const palm=new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(palmX,palmY,barrelDir));
       solveWorld(rig,'left',rest.lerp(target,reach),palm,false,false,false);relaxHand(rig,'left');if(player)leftOnGun=true;
     }
