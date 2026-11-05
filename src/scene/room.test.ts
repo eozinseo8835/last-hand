@@ -44,6 +44,8 @@ describe('horror tension in the room', () => {
     const chairs = () => (scene.getObjectByName('empty-chairs')!.children).filter(chair => chair.visible).length;
     room.update(.5, .016, false, false, 0, null, 1500, { roomNumber: 1, phase: 'PLAYER_DECISION', guestsGone: 0 });
     expect(chairs()).toBe(0);
+    // Each chair keeps its own meshes (never baked into the static room batch, or hiding it would do nothing).
+    for (const chair of scene.getObjectByName('empty-chairs')!.children) expect(chair.children.some(child => (child as THREE.Mesh).isMesh)).toBe(true);
     room.update(.6, .016, false, false, 0, null, 1600, { roomNumber: 1, phase: 'PLAYER_DECISION', guestsGone: 3 });
     expect(chairs()).toBe(0);   // three tables just died on the monitors: nothing pops in behind the opponent
     room.update(.7, .016, false, false, 0, null, 1700, { roomNumber: 2, phase: 'OPENING', guestsGone: 4 });

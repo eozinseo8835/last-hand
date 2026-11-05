@@ -39,6 +39,8 @@ export type Session = {
   aiShotStartedAt: number | null; aiShotDurationMs: number | null;
   attention: Attention; peekStartedAt: number | null; caught: 'host' | 'captive' | 'ai' | null;
   triggerDeadline: number | null; triggerRemainingMs: number | null; forceShotAt: number | null; forceTarget: Side | null;
+  /** When the current HIT / STAND decision runs out (null outside a decision or while paused). */
+  decisionDeadline: number | null; decisionPausedMs: number | null;
   stress: number; lossStreak: number; gunTransfer: GunTransfer | null;
 };
 const initial = (): Session => ({
@@ -54,6 +56,7 @@ const initial = (): Session => ({
   aiShotStartedAt: null, aiShotDurationMs: null,
   attention: attentionAt(null, Date.now()), peekStartedAt: null, caught: null,
   triggerDeadline: null, triggerRemainingMs: null, forceShotAt: null, forceTarget: null, stress: .22, lossStreak: 0, gunTransfer: null,
+  decisionDeadline: null, decisionPausedMs: null,
 });
 type Timer = ReturnType<typeof setTimeout>;
 type SpeechEntry = { line: SpeechLine; reactive: boolean };
@@ -79,7 +82,7 @@ export function useGame(textSpeed:TextSpeed='Normal') {
   const attentionPlan = useRef<AttentionPlan | null>(null), opponentInView = useRef(true);
   const localPending = useRef<Timer|null>(null);
   const aiDeadline = useRef<number | null>(null);
-  const penaltyShot = useRef(false), timeoutTimers = useRef(new Set<Timer>()), gunTimers = useRef(new Set<Timer>());
+  const penaltyShot = useRef(false), timeoutTimers = useRef(new Set<Timer>()), gunTimers = useRef(new Set<Timer>()), decisionTimers = useRef(new Set<Timer>()), decisionPaused = useRef(false);
   const stressClock = useRef(Date.now()), loudAt = useRef(-Infinity), reliefAt = useRef(-Infinity);
   const seenLoud = useRef(new Set<string>()), glanced = useRef(false);
   const openingSeen = useRef(false), completedRounds = useRef(new Set<string>()), recordedHands = useRef(new Set<string>());
@@ -95,6 +98,7 @@ export function useGame(textSpeed:TextSpeed='Normal') {
       ambientDueAt.current = Infinity; cancel(ambientTimer.current); ambientTimer.current = null;
     }
     if (phase !== 'PLAYER_DECISION' && phase !== 'PLAYER_PEEKING') {
+      if (current.current.decisionDeadline !== null || current.current.decisionPausedMs !== null) { clearGroup(decisionTimers.current); patch.decisionDeadline = null; patch.decisionPausedMs = null; }
       cancel(eventStart.current); cancel(eventEnd.current);
       eventStart.current = eventEnd.current = null;
       patch.event = null;
@@ -520,9 +524,31 @@ export function useGame(textSpeed:TextSpeed='Normal') {
     later(() => update({ storyStage: 'no-signal' }), 4600, storyTimers.current);
     later(finishRun, 6100, storyTimers.current);
   }
+  /** Arms the decision clock: a warning with ten seconds left, then the Host makes you face the chamber. */
+  function armDecisionClock(remaining: number) {
+    clearGroup(decisionTimers.current);
+    const deadline = Date.now() + remaining;
+    update({ decisionDeadline: deadline, decisionPausedMs: null });
+    if (remaining > CONFIG.DECISION_WARNING_MS) later(() => {
+      if (current.current.decisionDeadline === deadline && current.current.phase === 'PLAYER_DECISION') hostSay('trigger_warning', 'Ten seconds.', true);
+    }, remaining - CONFIG.DECISION_WARNING_MS, decisionTimers.current);
+    const expire = () => {
+      const state = current.current;
+      if (state.decisionDeadline !== deadline) return;
+      // A PEEK in progress finishes first; the clock is enforced the moment the player is back at the decision.
+      if (state.phase === 'PLAYER_PEEKING') { later(expire, 100, decisionTimers.current); return; }
+      if (state.phase !== 'PLAYER_DECISION') return;
+      update({ decisionDeadline: null, stats: { ...state.stats, forcedShots: state.stats.forcedShots + 1 } });
+      hostSay('forced_shot', 'You took too long.', true);
+      penaltyShot.current = true; beginPlayerShot('TIME — face the chamber.');
+    };
+    later(expire, remaining, decisionTimers.current);
+  }
   function enterDecision(message: string) {
     if (!attentionPlan.current) attentionPlan.current = planAttention(Date.now());
     update({ phase: 'PLAYER_DECISION', message });
+    if (decisionPaused.current) update({ decisionDeadline: null, decisionPausedMs: CONFIG.DECISION_TIMEOUT_MS });
+    else armDecisionClock(CONFIG.DECISION_TIMEOUT_MS);
     if (!pendingEvent.current || eventUsed.current || eventStart.current !== null) return;
     const roundNumber = current.current.roundNumber;
     eventStart.current = later(() => {
@@ -818,5 +844,13 @@ export function useGame(textSpeed:TextSpeed='Normal') {
     }, CONFIG.PEEK_DURATION_MS);
   }
 
-  return { game, finishTyping, start, fold, hit, stand, pullTrigger, beginTriggerHold, endTriggerHold, spinCylinder, peek, finishSpeech, advanceOpening, skipOpening, setOpponentInView, forceShot };
+  /** Opening the rules (or any overlay) stops the decision clock; closing it resumes with the time that was left. */
+  function pauseDecisionClock(paused: boolean) {
+    if (decisionPaused.current === paused) return;
+    decisionPaused.current = paused;
+    const state = current.current;
+    if (paused && state.decisionDeadline !== null) { clearGroup(decisionTimers.current); update({ decisionPausedMs: Math.max(0, state.decisionDeadline - Date.now()), decisionDeadline: null }); }
+    else if (!paused && state.decisionPausedMs !== null && (state.phase === 'PLAYER_DECISION' || state.phase === 'PLAYER_PEEKING')) armDecisionClock(Math.max(1000, state.decisionPausedMs));
+  }
+  return { game, finishTyping, start, fold, hit, stand, pullTrigger, pauseDecisionClock, beginTriggerHold, endTriggerHold, spinCylinder, peek, finishSpeech, advanceOpening, skipOpening, setOpponentInView, forceShot };
 }

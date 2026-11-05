@@ -384,7 +384,7 @@ export function createRoom(scene: THREE.Scene): BunkerRoom {
   // local transforms for swinging, and the transparent haze keeps its own pass.
   mergeStaticMeshes(root, mesh => {
     if (mesh === haze || mesh === watchedScreen || mesh === brokenSlat || mesh === fallenLeg) return false;
-    for (let parent = mesh.parent; parent; parent = parent.parent) if (parent === lamp || parent === door) return false;
+    for (let parent = mesh.parent; parent; parent = parent.parent) if (parent === lamp || parent === door || parent === memorial) return false;
     return true;
   });
 

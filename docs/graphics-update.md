@@ -81,3 +81,9 @@ Characters now match the cinematic room. All joints, sizes and poses are unchang
 - **The light reacts to danger.** The bulb flickers more often and drifts more as chambers are spent. While anyone holds a trigger the filament strains in an uneven brownout that deepens with every spent chamber. While you are choosing cards the light stays steady, so faces and tells remain readable.
 - **Losses stay in the room.** Between rooms, one empty chair per dead guest is set out behind the opponent, each with its owner's burlap hood hung over the backrest like a head. There are 4 chairs in room 2 and 6 in room 3. They never pop in during a hand.
 - **Room 3 is harsher.** The power supply sags hard every few seconds (never during your decision), the bulb's wire keeps moving, and the red emergency light pulses more strongly.
+- Fix: the empty chairs were baked into the room's static geometry, so all of them showed from room 1. They now stay hidden until a guest has actually died.
+
+## Decision time limit and the trigger close-up
+
+- **Every decision has 30 seconds.** A ring above the HIT / STAND buttons empties. With 10 seconds left it turns red and pulses and the Host says "Ten seconds." When it runs out the Host says "You took too long." and slides the revolver to you: you must face the chamber (or the Host does it for you as before). If the chamber is empty, your hand continues with a fresh 30 seconds. Each HIT starts a fresh clock. Opening How to play pauses the clock.
+- **Pulling the trigger narrows the world onto the revolver.** The field of view tightens with the pull (on top of the existing hammer, cylinder turn and darkening) and eases back afterwards; it is gentler with reduced motion. A captive's pull narrows it about half as much.

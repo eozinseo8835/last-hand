@@ -48,7 +48,11 @@ export default function App() {
   const [textSpeed,setTextSpeed]=useState<TextSpeed>('Normal'),[logOpen,setLogOpen]=useState(false);
   const [graphics,setGraphics]=useState<GraphicsMode>(()=>{try{return localStorage.getItem('last-hand-graphics')==='pixel'?'pixel':'cinematic';}catch{return 'cinematic';}});
   const chooseGraphics=(mode:GraphicsMode)=>{setGraphics(mode);try{localStorage.setItem('last-hand-graphics',mode);}catch{/* private mode */}};
-  const { game, finishTyping, start, fold, hit, stand, beginTriggerHold, endTriggerHold, spinCylinder, peek, finishSpeech, advanceOpening, skipOpening, setOpponentInView } = useGame(textSpeed);
+  const { game, finishTyping, start, fold, hit, stand, beginTriggerHold, endTriggerHold, spinCylinder, peek, finishSpeech, advanceOpening, skipOpening, setOpponentInView, pauseDecisionClock } = useGame(textSpeed);
+  // The decision clock: a ring that empties over 30 seconds, red for the last ten.
+  const [clockNow, setClockNow] = useState(() => Date.now());
+  useEffect(() => { if (game.decisionDeadline == null) return; setClockNow(Date.now()); const id = setInterval(() => setClockNow(Date.now()), 250); return () => clearInterval(id); }, [game.decisionDeadline]);
+  const decisionLeftMs = game.decisionDeadline != null ? Math.max(0, game.decisionDeadline - clockNow) : game.decisionPausedMs ?? null;
   const [muted, setMuted] = useState(false), [rulesOpen, setRulesOpen] = useState(false);
   const [scale, setScale] = useState(1), [recenterToken, setRecenterToken] = useState(0);
   const rulesButton = useRef<HTMLButtonElement>(null), closeButton = useRef<HTMLButtonElement>(null);
@@ -76,6 +80,7 @@ export default function App() {
     resize(); window.addEventListener('resize', resize); return () => window.removeEventListener('resize', resize);
   }, []);
   useEffect(() => { if (rulesOpen) closeButton.current?.focus(); }, [rulesOpen]);
+  useEffect(() => { pauseDecisionClock?.(rulesOpen); }, [rulesOpen]);
   useEffect(() => {
     tableAudio.setHeartbeat({ active: heartbeatActive && !game.dead, chambersFired, pulling: game.triggerHeld || forceContact, urgency: game.triggerRemainingMs == null ? 0 : Math.max(0, 1 - game.triggerRemainingMs / 10000) });
     return () => tableAudio.setHeartbeat({ active: false, chambersFired: 0, pulling: false });
@@ -129,6 +134,10 @@ export default function App() {
                 {game.triggerRemainingMs != null && <span className={`trigger-countdown ${game.triggerRemainingMs < 5000 ? 'urgent' : ''}`} role="timer" aria-label="Time remaining before Host assistance">{Math.ceil(game.triggerRemainingMs / 1000)}s</span>}
                 <HoldTrigger progress={game.triggerProgress} holding={game.triggerHeld} disabled={!game.awaitingTrigger || !!game.spinning || rulesOpen} onHold={beginTriggerHold} onRelease={endTriggerHold}/>
               </> : <>
+                {decisionLeftMs != null && (() => { const fraction = Math.min(1, decisionLeftMs / CONFIG.DECISION_TIMEOUT_MS), urgent = decisionLeftMs <= CONFIG.DECISION_WARNING_MS;
+                  return <span className={`decision-clock ${urgent ? 'urgent' : ''} ${game.decisionPausedMs != null ? 'paused' : ''}`} role="timer" aria-label={`${Math.ceil(decisionLeftMs / 1000)} seconds to decide before the Host makes you face the chamber`}>
+                    <svg viewBox="0 0 36 36" aria-hidden="true"><circle className="clock-track" cx="18" cy="18" r="15"/><circle className="clock-fill" cx="18" cy="18" r="15" strokeDasharray={`${(fraction * 94.25).toFixed(2)} 94.25`}/></svg>
+                    <b>{Math.ceil(decisionLeftMs / 1000)}</b></span>; })()}
                 <button className="secondary-button fold-button" disabled={!ready || game.hasHit || game.folds === 0} onClick={fold} title={game.hasHit ? 'Folding is only available before your first hit.' : `${game.folds} folds remaining`}><span>FOLD</span><small>{game.folds} LEFT</small></button>
                 <button className={`secondary-button peek-button ${game.attention?.window ? 'peek-window' : ''}`} disabled={!ready || !game.abilities.player.peek || !game.attention?.window} onClick={peek} title="Wait until both the Host and captive look away. Once per room."><Eye size={14}/>PEEK<small>{Number(game.abilities.player.peek)} LEFT</small></button>
                 <button className="secondary-button hit-button" disabled={!ready} onClick={hit}>HIT<span>+</span></button>

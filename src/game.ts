@@ -25,6 +25,9 @@ export const CONFIG = {
   HEARTBEAT_BASE_BPM: 60,
   TRIGGER_HOLD_MS: 3000,
   TRIGGER_TIMEOUT_MS: 15000,
+  /** Every HIT / STAND / FOLD decision has 30 seconds; when it runs out the Host makes you face the chamber (the hand continues). */
+  DECISION_TIMEOUT_MS: 30000,
+  DECISION_WARNING_MS: 10000,
   /** The captive gets 10 seconds once the revolver is in its hand; then the Host completes the pull. */
   AI_TRIGGER_TIMEOUT_MS: 10000,
   PEEK_DURATION_MS: 1000,

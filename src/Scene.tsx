@@ -201,6 +201,7 @@ export default function Scene(props: SceneProps) {
     world.background = new THREE.Color('#090d0b');
     world.fog = new THREE.FogExp2('#0c110f', .135);
     const camera = new THREE.PerspectiveCamera(68, 16 / 9, .055, 28);
+    let fovPush = 0;
     camera.rotation.order = 'YXZ';
     const room = createRoom(world);
     world.add(camera);
@@ -425,6 +426,12 @@ export default function Scene(props: SceneProps) {
       const voiceLevel = captiveVoiceLevel;
       const heartbeat = tableAudio.getHeartbeatLevel();camera.rotation.z+=heartbeat*.0015*(motionPreference.matches?.2:1);
       const shotProgress=state.phase==='PLAYER_SHOOTING'?state.triggerProgress??0:state.phase==='HOST_FORCE_SHOT'?Math.min(1,(epoch-(state.forceShotAt??epoch))/3200*.85):state.phase==='AI_SHOOTING'&&state.aiShotStartedAt?Math.min(1,(epoch-state.aiShotStartedAt)/Math.max(1,(state.aiShotDurationMs??2000)-1000)*.85):0;
+      // Pulling the trigger narrows the world onto the revolver (eased back afterwards; gentler with reduced motion).
+      const pushTarget=(state.phase==='PLAYER_SHOOTING'&&state.triggerHeld)||state.phase==='HOST_FORCE_SHOT'?shotProgress:state.phase==='AI_SHOOTING'?shotProgress*.5:0;
+      fovPush+=(pushTarget-fovPush)*Math.min(1,dt*6);
+      const pushedFov=68*(1-.17*THREE.MathUtils.smoothstep(fovPush,0,1)*(motionPreference.matches?.35:1));
+      if(Math.abs(camera.fov-pushedFov)>.01){camera.fov=pushedFov;camera.updateProjectionMatrix();}
+      canvas.dataset.fovPush=fovPush.toFixed(3);
       tableAudio.setSoundState({active:state.phase!=='START'&&!state.dead,fired:state.chambersFired??0,room:roomNumber,progress:shotProgress,holding:!!state.triggerHeld,hesitating:state.phase==='AI_SHOOTING',stress:state.stress??.2,nervous:roomNumber===1,speaking:!!state.speaker});
       actors.update(time, dt, { ...state,worldSound:tableAudio.getWorldSound(), roomNumber, event, voiceLevel, hostVoiceLevel, captiveVoiceLevel, reducedMotion: motionPreference.matches });
       const reactionImpact=actors.captive.userData.reactionImpact;

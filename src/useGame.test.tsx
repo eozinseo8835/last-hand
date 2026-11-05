@@ -513,6 +513,43 @@ describe('trigger commitment and hesitation', () => {
   });
 });
 
+describe('decision time limit', () => {
+  it('gives every decision thirty seconds, warns at ten, then makes you face the chamber and lets the hand continue', () => {
+    vi.mocked(createRevolver).mockReturnValue({ bulletChamber: 6, currentChamber: 1 }); startDecision();
+    expect(latest.game.decisionDeadline).toBe(Date.now() + CONFIG.DECISION_TIMEOUT_MS);
+    const hand = latest.game.round!.player.length;
+    advance(CONFIG.DECISION_TIMEOUT_MS - CONFIG.DECISION_WARNING_MS);
+    expect(allSpeech().some(line => line.speaker === 'host' && line.text === 'Ten seconds.')).toBe(true);
+    expect(latest.game.phase).toBe('PLAYER_DECISION');
+    advance(CONFIG.DECISION_WARNING_MS - 1); expect(latest.game.phase).toBe('PLAYER_DECISION');
+    advance(1);
+    expect(latest.game.phase).toBe('PLAYER_SHOOTING'); expect(latest.game.decisionDeadline).toBeNull();
+    expect(latest.game.stats.forcedShots).toBe(1);
+    advance(GUN_SLIDE_MS); holdTrigger();
+    expect(latest.game.shotEffect).toBe('click'); expect(latest.game.dead).toBeNull();
+    for (let i = 0; i < 80 && latest.game.phase !== 'PLAYER_DECISION'; i++) advance(100);
+    expect(latest.game.phase).toBe('PLAYER_DECISION'); expect(latest.game.round!.player).toHaveLength(hand);
+    expect(latest.game.decisionDeadline).toBe(Date.now() + CONFIG.DECISION_TIMEOUT_MS);
+  });
+
+  it('starts a fresh thirty seconds after each HIT and stops the clock once you stand', () => {
+    vi.mocked(dealRound).mockImplementation(() => copy(fixture([card('2', 'spades'), card('3', 'hearts')], [card('9', 'clubs'), card('8', 'diamonds')]))); startDecision();
+    advance(20000); act(() => latest.hit()); advance(CONFIG.DEAL_SPEED);
+    expect(latest.game.phase).toBe('PLAYER_DECISION');
+    expect(latest.game.decisionDeadline! - Date.now()).toBeGreaterThan(CONFIG.DECISION_TIMEOUT_MS - 1000);
+    act(() => latest.stand()); expect(latest.game.decisionDeadline).toBeNull();
+  });
+
+  it('pauses while the rules are open and resumes with the time that was left', () => {
+    startDecision(); advance(12000);
+    act(() => latest.pauseDecisionClock(true));
+    expect(latest.game.decisionDeadline).toBeNull(); expect(latest.game.decisionPausedMs).toBe(CONFIG.DECISION_TIMEOUT_MS - 12000);
+    advance(60000); expect(latest.game.phase).toBe('PLAYER_DECISION');
+    act(() => latest.pauseDecisionClock(false));
+    expect(latest.game.decisionDeadline).toBe(Date.now() + CONFIG.DECISION_TIMEOUT_MS - 12000);
+  });
+});
+
 describe('captive trigger time limit', () => {
   afterEach(() => { vi.mocked(readingHold).mockImplementation((readingHold as unknown as { actual: typeof readingHold }).actual); });
   // In this harness captive speech never finishes by itself, so a captive left talking never reaches its own pull.
