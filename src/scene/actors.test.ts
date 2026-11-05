@@ -192,16 +192,23 @@ describe('one physical revolver and reachable pickup',()=>{
    if(i===0)expect(world(actors.gun).distanceTo(new THREE.Vector3(...GUN_REST))).toBeLessThan(.001);expect(arm.diagnostics.relocateRequired).toBe(false);expect(actors.gun.scale.toArray()).toEqual([1,1,1]);}
   expect(actors.gun.parent).toBe(arm.hand);expect(actors.host.position.toArray()).toEqual([...HOST_SEAT]);
  });
- it('keeps the wrapped grip bound to the wrist, with the same socket and three curling knuckles',()=>{
-  settle();prepareShot('player');advance(1,{phase:'PLAYER_SHOOTING',triggerHeld:true,triggerProgress:1});expect(actors.gun.parent).toBe(actors.skeletons.player.arms.right.hand);
+ it('keeps the wrapped grip bound to the wrist, both hands on the grip with thumbs at the trigger, and three curling knuckles',()=>{
+  settle();prepareShot('player');
+  // Picked up with the normal shooter's grip...
   expect(actors.gun.position.toArray()).toEqual([...GRIP_SOCKET.position]);expect(actors.gun.quaternion.angleTo(new THREE.Quaternion(...GRIP_SOCKET.quaternion))).toBeLessThan(1e-7);
+  advance(1,{phase:'PLAYER_SHOOTING',triggerHeld:true,triggerProgress:1});expect(actors.gun.parent).toBe(actors.skeletons.player.arms.right.hand);
+  // ...then turned round in the hand to face you, with the left hand joining on the grip.
+  expect(actors.gun.userData.playerHold).toMatchObject({k:1,flip:1,twoHands:true});
+  const grip=actors.gun.localToWorld(new THREE.Vector3(-.080,-.057,0));
+  for(const side of ['left','right'] as const)expect(world(actors.skeletons.player.arms[side].hand).distanceTo(grip),side).toBeLessThan(.11);
+  expect(actors.skeletons.player.arms.left.diagnostics.relocateRequired).toBe(false);expect(actors.skeletons.player.arms.right.diagnostics.relocateRequired).toBe(false);
   for(const chain of actors.skeletons.player.arms.right.fingers.slice(1))expect(chain.every(joint=>joint.rotation.x<-.1)).toBe(true);
  });
  it.each([[1280,720],[1440,900],[1920,1080]])('raises the gripped revolver from the felt until the muzzle faces the player in the centre of view in %s×%s',(width,height)=>{
   settle();prepareShot('player');camera.aspect=width/height;camera.updateProjectionMatrix();
   advance(.2,{phase:'PLAYER_SHOOTING',triggerHeld:false,triggerProgress:0});expect(world(actors.gun).y).toBeLessThan(.84);expect(actors.gun.parent).toBe(actors.skeletons.player.arms.right.hand);
   advance(1,{phase:'PLAYER_SHOOTING',triggerHeld:true,triggerProgress:1});
-  const center=new THREE.Box3().setFromObject(actors.gun).getCenter(new THREE.Vector3()).project(camera);expect(Math.abs(center.x)).toBeLessThan(.25);expect(Math.abs(center.y)).toBeLessThan(.35);
+  const center=actors.gun.localToWorld(new THREE.Vector3(...MUZZLE_LOCAL)).project(camera);expect(Math.abs(center.x)).toBeLessThan(.25);expect(Math.abs(center.y)).toBeLessThan(.35);
   const direction=new THREE.Vector3(1,0,0).transformDirection(actors.gun.matrixWorld).transformDirection(camera.matrixWorldInverse);expect(direction.z).toBeGreaterThan(.9);
   expect(actors.gun.userData.muzzleError).toBeLessThan(.015);expect(actors.gun.scale.toArray()).toEqual([1,1,1]);expect(actors.gun.parent).toBe(actors.skeletons.player.arms.right.hand);
  });
@@ -330,16 +337,16 @@ it('keeps the captive upright during its direct grab: small lean, head always ab
 });
 it.each(['player','ai'] as const)('spins the cylinder by hand for the %s: raise side-on, free hand swipes the cylinder, then the revolver returns',side=>{
  settle();
- if(side==='player')prepareShot('player');else beginAiWindup();
+ if(side==='player'){prepareShot('player');advance(1.2,{phase:'PLAYER_SHOOTING',triggerProgress:0});expect(actors.gun.userData.playerHold.k).toBe(1);}else beginAiWindup();
  const phase=side==='player'?'PLAYER_SHOOTING':'AI_SHOOTING',rig=side==='player'?actors.skeletons.player:actors.skeletons.captive;
  const before=actors.cylinder.rotation.x,startGun=world(actors.gun);
  tick(0,{phase,spinning:side,spinSerial:7,triggerProgress:0,aiShotStartedAt:null});
  const spinClock=now;const step=(t:number)=>advance(spinClock+t*SPIN_MS/1000-now);
- step(.36);expect(actors.gun.userData.spinStage).toBe('reach');expect(actors.cylinder.rotation.x).toBeCloseTo(before,5);
+ step(.36);expect(actors.gun.userData.spinStage).toBe('reach');expect(actors.gun.userData.craneOpen,'cylinder swung out on its crane').toBeGreaterThan(.9);expect(actors.cylinder.rotation.x).toBeCloseTo(before,5);
  step(.48);expect(actors.gun.userData.spinStage).toBe('swipe');
  const hand=world(rig.arms.left.hand),cylinder=world(actors.cylinder);expect(hand.distanceTo(cylinder),'free hand on the cylinder').toBeLessThan(.16);
  expect(rig.arms.left.diagnostics.relocateRequired).toBe(false);
- step(.70);expect(Math.abs(actors.cylinder.rotation.x-before)).toBeGreaterThan(Math.PI);expect(actors.gun.parent).toBe(rig.arms.right.hand);
+ step(.70);expect(Math.abs(actors.cylinder.rotation.x-before)).toBeGreaterThan(Math.PI);expect(actors.gun.userData.craneOpen,'flicked shut').toBe(0);expect(actors.gun.parent).toBe(rig.arms.right.hand);
  step(1);expect(actors.gun.userData.spinStage).toBe('return');expect(world(actors.gun).distanceTo(startGun)).toBeLessThan(.02);
 });
 it('assigns walking and restraint cutting to reachable guards while the Host remains seated',()=>{

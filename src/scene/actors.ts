@@ -17,7 +17,7 @@ import { CARD_WIDTH, CARD_HEIGHT, DECK_POSITION, GUN_REST, GUN_PICKUP, HOST_SEAT
 import { gunTransferProgress, SPIN_MS, SPIN_SWIPE_MS, type GunTransfer } from '../gunTransfer';
 import { createCharacter } from './skeleton';
 import { type PoseName, type DebugPoseName } from './poses';
-import { createRevolverModel, MUZZLE_LOCAL, GRIP_SOCKET } from './revolver';
+import { createRevolverModel, MUZZLE_LOCAL, GRIP_SOCKET, GRIP_LOCAL } from './revolver';
 import { routePoint } from './choreography';
 export type ActorState = {
   phase: GamePhase;
@@ -211,11 +211,11 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     for(let i=0;i<2;i++){const mesh=new THREE.Mesh(new THREE.DodecahedronGeometry(.055,0),hoodMaterial);mesh.position.x=i*.055;foldedHoods.add(mesh);}foldedHoods.visible=false;
     return {group:rig.group,head:rig.head,foldedHoods,rig};
   });
-  const model=createRevolverModel();const {gun,hammer}=model;const revolverCylinder=model.cylinder;
+  const model=createRevolverModel();const {gun,hammer,crane}=model;const revolverCylinder=model.cylinder;
   scene.add(gun);gun.position.set(...GUN_REST);gun.rotation.x=-Math.PI/2;
   const gunRest=new THREE.Vector3(...GUN_REST),gunRestQuaternion=gun.quaternion.clone();
   const socketPosition=new THREE.Vector3(...GRIP_SOCKET.position),socketQuaternion=new THREE.Quaternion(...GRIP_SOCKET.quaternion);
-  const muzzlePoint=new THREE.Vector3(...MUZZLE_LOCAL);
+  const muzzlePoint=new THREE.Vector3(...MUZZLE_LOCAL);let readySince=-1,leftOnGun=false;
   let gunHolder:'player'|'ai'|'host'|null=null,latchedShooter:Side|'host'|null=null;
   let shotAt=-Infinity,priorShotEffect:ActorState['shotEffect']=null;
   let debugSound:WorldSound|null=null;let debugPose:DebugPoseName|null=null,debugRoom:1|2|3=1,currentRoom=1;
@@ -447,24 +447,42 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
   // The opposite seat approaches the exposed side of the grip; its wrist
   // uses the other palm roll, with the wood still inside the same palm.
   const MIRROR_HAND=new THREE.Matrix4().makeScale(-1,1,1),MIRROR_GUN=new THREE.Matrix4().makeScale(1,1,-1);
-  function gripSocket(rig:typeof captiveRig,side:'left'|'right'='right'){
+  const GRIP_PIVOT=new THREE.Vector3(...GRIP_LOCAL),UNIT_SCALE=new THREE.Vector3(1,1,1);
+  /**
+   * Revolver transform in the hand's space. flip (0..1) turns the hand half way round the grip, from the normal
+   * shooter's grip to the self-facing grip (web of the hand at the front strap, thumb on the trigger), so the forearm
+   * comes from the holder's side when the muzzle faces their own head. A flipped left hand sits just below the right.
+   */
+  function gripSocket(rig:typeof captiveRig,side:'left'|'right'='right',flip=0){
     const base=rig===captiveRig?{position:new THREE.Vector3(-.057,.025,.150),quaternion:new THREE.Quaternion(.5,-.5,.5,.5)}:{position:socketPosition.clone(),quaternion:socketQuaternion.clone()};
-    if(side==='right')return base;
-    // A left hand holds the same (left/right symmetric) revolver as the mirror image of the right-hand grip.
-    const m=MIRROR_HAND.clone().multiply(new THREE.Matrix4().makeRotationFromQuaternion(base.quaternion)).multiply(MIRROR_GUN);
-    return {position:base.position.clone().setX(-base.position.x),quaternion:new THREE.Quaternion().setFromRotationMatrix(m)};
+    let socket=base;
+    if(side==='left'){
+      // A left hand holds the same (left/right symmetric) revolver as the mirror image of the right-hand grip.
+      const m=MIRROR_HAND.clone().multiply(new THREE.Matrix4().makeRotationFromQuaternion(base.quaternion)).multiply(MIRROR_GUN);
+      socket={position:base.position.clone().setX(-base.position.x),quaternion:new THREE.Quaternion().setFromRotationMatrix(m)};
+    }
+    if(flip<=0)return socket;
+    const turn=new THREE.Matrix4().makeTranslation(GRIP_PIVOT.x,GRIP_PIVOT.y-(side==='left'?.03*flip:0),GRIP_PIVOT.z)
+      .multiply(new THREE.Matrix4().makeRotationY(Math.PI*flip*(side==='left'?-1:1))).multiply(new THREE.Matrix4().makeTranslation(-GRIP_PIVOT.x,-GRIP_PIVOT.y,-GRIP_PIVOT.z));
+    const turned=new THREE.Matrix4().compose(socket.position,socket.quaternion,UNIT_SCALE).multiply(turn),position=new THREE.Vector3(),quaternion=new THREE.Quaternion();
+    turned.decompose(position,quaternion,new THREE.Vector3());return {position,quaternion};
   }
-  function grip(rig:typeof captiveRig,side:'left'|'right') {const socket=gripSocket(rig,side);rig.arms[side].hand.add(gun);gun.position.copy(socket.position);gun.quaternion.copy(socket.quaternion);gun.scale.set(1,1,1);}
+  function grip(rig:typeof captiveRig,side:'left'|'right',flip=0) {const socket=gripSocket(rig,side,flip);rig.arms[side].hand.add(gun);gun.position.copy(socket.position);gun.quaternion.copy(socket.quaternion);gun.scale.set(1,1,1);}
+  /** Where a hand must be (world) to hold the revolver, as it is now, with the given socket. */
+  function handOnGun(rig:typeof captiveRig,side:'left'|'right',flip:number){
+    const socket=gripSocket(rig,side,flip),hand=gun.matrixWorld.clone().multiply(new THREE.Matrix4().compose(socket.position,socket.quaternion,UNIT_SCALE).invert());
+    const position=new THREE.Vector3(),quaternion=new THREE.Quaternion();hand.decompose(position,quaternion,new THREE.Vector3());return {position,quaternion};
+  }
   function solveWorld(rig:typeof captiveRig,side:'left'|'right',target:THREE.Vector3,palm?:THREE.Quaternion,raised=false,fullGrip=false,lean=true) {
     const local=rig.group.worldToLocal(target.clone()),localQ=palm?rig.group.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(palm):undefined;
     return rig.solveHand(side,local,raised?new THREE.Vector3(.5,.2,-.25):undefined,{allowRaisedElbow:raised,palmQuaternion:localQ,fullGrip,lean});
   }
-  function pointGun(rig:typeof captiveRig,side:'left'|'right',muzzle:THREE.Vector3,orientation:THREE.Quaternion,raised=false) {
-    const socket=gripSocket(rig,side),palm=orientation.clone().multiply(socket.quaternion.clone().invert());
+  function pointGun(rig:typeof captiveRig,side:'left'|'right',muzzle:THREE.Vector3,orientation:THREE.Quaternion,raised=false,flip=0) {
+    const socket=gripSocket(rig,side,flip),palm=orientation.clone().multiply(socket.quaternion.clone().invert());
     const offset=socket.position.clone().add(muzzlePoint.clone().applyQuaternion(socket.quaternion));
     const target=muzzle.clone().sub(offset.applyQuaternion(palm));
     for(let pass=0;pass<4;pass++) {
-      solveWorld(rig,side,target,palm,raised,true);grip(rig,side);scene.updateMatrixWorld(true);
+      solveWorld(rig,side,target,palm,raised,true);grip(rig,side,flip);scene.updateMatrixWorld(true);
       target.add(muzzle.clone().sub(model.muzzlePoint.getWorldPosition(new THREE.Vector3())));
     }
     rig.setGrip(side,1,1,.8);
@@ -478,10 +496,35 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     arm.thumb[0].rotation.set(-.18,(side==='left'?-1:1)*.12,0);arm.thumb[1].rotation.set(-.10,0,0);
   }
   const Y_AXIS=new THREE.Vector3(0,1,0);
-  /** Old (preferred) hold presentation: the muzzle turns toward the player's face and rises to the centre of view. */
+  /**
+   * The player's hold: both hands round the grip, thumbs on the trigger, the muzzle turned on your own face.
+   * Ready (0): low in front of the chest, pointing up at you. Full pull (1): the bore fills the centre of view.
+   */
   function playerAim(progress=0):Aim{
-    const q=view.getWorldQuaternion(new THREE.Quaternion()),lift=THREE.MathUtils.smoothstep(progress,0,.65);
-    return {muzzle:atCamera(.15*(1-lift),-.19*(1-lift),-.24-.15*(1-lift)),q:q.multiply(new THREE.Quaternion().setFromAxisAngle(Y_AXIS,-Math.PI/2))};
+    const lift=THREE.MathUtils.smoothstep(progress,0,.85);
+    const local=new THREE.Vector3(THREE.MathUtils.lerp(.025,0,lift),THREE.MathUtils.lerp(-.12,-.04,lift),THREE.MathUtils.lerp(-.30,-.22,lift));
+    const pitch=Math.atan2(-local.y,-local.z);
+    const q=view.getWorldQuaternion(new THREE.Quaternion()).multiply(new THREE.Quaternion().setFromAxisAngle(Y_AXIS,-Math.PI/2)).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1),pitch));
+    return {muzzle:atCamera(local.x,local.y,local.z),q};
+  }
+  /**
+   * k: 0 = gripped where it lies on the felt, 1 = raised in the self-facing two-hand hold at this trigger progress.
+   * The revolver turns round in the hand on the way up (normal grip to thumb-on-trigger) and the left hand joins it.
+   */
+  function playerHold(k:number,progress:number){
+    const spot=new THREE.Vector3(...GUN_PICKUP.player);
+    if(k<=0){directGrab(playerRig,spot,0,PLAYER_GRIP_K,playerAim(0),-.16);return;}
+    const aim=playerAim(progress),e=k*k*(3-2*k);
+    const restQ=flatQuaternion(0),restMuzzle=spot.clone().add(muzzlePoint.clone().applyQuaternion(restQ));
+    const muzzle=restMuzzle.lerp(aim.muzzle,e);muzzle.y+=Math.sin(e*Math.PI)*.07;
+    const flip=smooth(.1,.7,e);
+    pointGun(playerRig,'right',muzzle,restQ.slerp(aim.q,e),false,flip);
+    const join=smooth(.55,1,e);
+    if(join>0){
+      scene.updateMatrixWorld(true);const target=handOnGun(playerRig,'left',1),rest=playerRig.arms.left.hand.getWorldPosition(new THREE.Vector3());
+      solveWorld(playerRig,'left',rest.lerp(target.position,join),restingPalm(playerRig).slerp(target.quaternion,join),false,true,false);playerRig.setGrip('left',.3+.7*join,0,0);leftOnGun=true;
+    }
+    gunHolder='player';gun.userData.playerHold={k:+k.toFixed(3),flip:+flip.toFixed(3),twoHands:join>.99};
   }
   function captiveAim():Aim{
     const muzzle=head.localToWorld(new THREE.Vector3(.092,0,.012));
@@ -564,7 +607,13 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
   function setDownAndReturn(rig:typeof captiveRig,side:Side|'host',p:number,startK=1){
     if(rig===hostRig){directGrab(hostRig,gunRest,REST_YAW,1-smooth(0,.8,p),hostAim(),.20);if(p>=.8)flatGun(gunRest);return;}
     const spot=new THREE.Vector3(...GUN_PICKUP[side==='ai'?'ai':'player']);
-    if(p<.40){directGrab(rig,spot,0,startK*(1-smooth(0,.40,p)),rig===playerRig?playerAim(1):finalAim(rig),rig===playerRig?-.16:.12);return;}
+    if(rig===playerRig&&p<.40){
+      // Lower the revolver from the face back onto the felt, turning it back in the hand, then let go.
+      const lower=startK>PLAYER_GRIP_K?1-smooth(0,.28,p):0;
+      if(lower>0)playerHold(lower,1);else directGrab(rig,spot,0,PLAYER_GRIP_K*(1-smooth(.28,.40,p)),playerAim(0),-.16);
+      return;
+    }
+    if(p<.40){directGrab(rig,spot,0,startK*(1-smooth(0,.40,p)),finalAim(rig),.12);return;}
     const u=p<.52?1:p<.60?1-.12*smooth(.52,.60,p):.88*(1-smooth(.60,.95,p));
     const at=new THREE.Vector3(...gunSlidePoint(side==='ai'?'ai':'player',u));
     const behindFrom=rig===playerRig?view.getWorldPosition(new THREE.Vector3()):captive.getWorldPosition(new THREE.Vector3());
@@ -602,43 +651,65 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     captiveRig.arms.left.thumb[0].rotation.x=-.9;
   }
   /** Seated torso twist toward whoever the Host is about to shoot (the player, or the captive across the table). */
-  /** Inspect pose: the revolver held in front, side on, so the other hand can swipe the cylinder. */
-  function inspectAim(rig:typeof captiveRig):Aim{
-    // Player: a quarter roll up from the felt grip (no flip through the table): muzzle to the right, cylinder side toward the eye.
-    if(rig===playerRig)return {muzzle:atCamera(.13,-.15,-.42),q:view.getWorldQuaternion(new THREE.Quaternion())};
-    return {muzzle:captive.localToWorld(new THREE.Vector3(-.10,.45,.36)),q:captive.getWorldQuaternion(new THREE.Quaternion()).multiply(new THREE.Quaternion().setFromAxisAngle(Y_AXIS,Math.PI))};
+  /** Quaternion whose gun +x (barrel) points along `barrel` with gun +y as close as possible to `up`. */
+  function barrelQuaternion(barrel:THREE.Vector3,up:THREE.Vector3){
+    const x=barrel.clone().normalize(),z=new THREE.Vector3().crossVectors(x,up).normalize(),y=new THREE.Vector3().crossVectors(z,x);
+    return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x,y,z));
   }
   /**
-   * SPIN by hand (t: 0..1 over SPIN_MS): raise the revolver side-on (0–.30), bring the free hand to the cylinder (.30–.42),
-   * swipe down across it (.42–.55, the cylinder starts turning), withdraw (.55–.75), return the revolver (.80–1).
-   * The player returns it to the felt grip; the captive returns it to its temple.
+   * Inspect pose for a real reload-spin: the revolver upright in the shooting hand in front of the chest, muzzle up and
+   * away, so the cylinder can swing out to the side and be spun by the other palm.
+   */
+  function inspectAim(rig:typeof captiveRig):Aim{
+    if(rig===playerRig){
+      const eye=view.getWorldPosition(new THREE.Vector3()),forward=atCamera(0,0,-1).sub(eye),up=atCamera(0,1,0).sub(eye),right=atCamera(1,0,0).sub(eye);
+      // Muzzle up and away, the revolver's left side (where the cylinder swings out) turned toward your eyes.
+      const barrel=forward.clone().multiplyScalar(.45).addScaledVector(up,.85).addScaledVector(right,-.2);
+      return {muzzle:atCamera(-.02,-.03,-.40),q:barrelQuaternion(barrel,right)};
+    }
+    const toPlayer=captive.localToWorld(new THREE.Vector3(0,0,1)).sub(captive.getWorldPosition(new THREE.Vector3())),up=new THREE.Vector3(0,1,0);
+    const right=captive.localToWorld(new THREE.Vector3(1,0,0)).sub(captive.getWorldPosition(new THREE.Vector3()));
+    const barrel=toPlayer.clone().multiplyScalar(.45).addScaledVector(up,.8).addScaledVector(right,-.25);
+    return {muzzle:captive.localToWorld(new THREE.Vector3(-.05,.62,.34)),q:barrelQuaternion(barrel,right)};
+  }
+  /**
+   * SPIN like a real double-action revolver (t: 0..1 over SPIN_MS):
+   * raise it upright in the shooting hand (0–.24; the player turns it round from the self-facing hold), the free thumb
+   * pushes the cylinder out on its crane (.24–.36), the free palm sweeps it into a spin (.42–.55), a wrist flick snaps
+   * the crane shut (.60–.68) while the free hand withdraws, then the revolver goes back to the face or the temple (.80–1).
    */
   function spinPose(rig:typeof captiveRig,t:number){
-    const player=rig===playerRig,raise=smooth(0,.30,t)*(1-smooth(.80,1,t)),inspect=inspectAim(rig);
-    if(player){playerPose();directGrab(playerRig,new THREE.Vector3(...GUN_PICKUP.player),0,PLAYER_GRIP_K+(1-PLAYER_GRIP_K)*raise,inspect,-.16);}
-    else {
-      const temple=captiveAim(),eased=raise*raise*(3-2*raise);
-      pointGun(captiveRig,'right',temple.muzzle.clone().lerp(inspect.muzzle,eased),temple.q.clone().slerp(inspect.q,eased),eased<.35);gunHolder='ai';
-    }
+    const player=rig===playerRig,raise=smooth(0,.24,t)*(1-smooth(.80,1,t)),eased=raise*raise*(3-2*raise),inspect=inspectAim(rig);
+    const home=player?playerAim(0):captiveAim();
+    const flick=Math.sin(THREE.MathUtils.clamp((t-.60)/.08,0,1)*Math.PI);
+    const q=home.q.clone().slerp(inspect.q,eased).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0),-.55*flick*eased));
+    pointGun(rig,'right',home.muzzle.clone().lerp(inspect.muzzle,eased),q,!player&&eased<.35,player?1-eased:0);gunHolder=player?'player':'ai';
     rig.setGrip('right',1);
-    const reach=smooth(.28,.42,t)*(1-smooth(.55,.75,t));
-    if(reach>0){
-      scene.updateMatrixWorld(true);
-      const top=revolverCylinder.getWorldPosition(new THREE.Vector3()),down=new THREE.Vector3(0,-1,0);
-      const stroke=smooth(.42,.55,t),target=top.clone().add(new THREE.Vector3(0,.075-.11*stroke,0)).addScaledVector(down,0);
-      if(player)target.add(view.localToWorld(new THREE.Vector3(0,0,.05)).sub(view.getWorldPosition(new THREE.Vector3())));
-      else target.add(new THREE.Vector3(0,0,.05));
+    // The crane swings the cylinder out to the free hand's side, then the flick closes it.
+    const open=smooth(.24,.34,t)*(1-smooth(.62,.68,t));crane.rotation.x=-1.25*open;
+    const reach=smooth(.22,.36,t)*(1-smooth(.58,.72,t));
+    scene.updateMatrixWorld(true);
+    if(player&&raise<.3){
+      // Still (or again) in the two-hand hold.
+      const target=handOnGun(playerRig,'left',1);solveWorld(playerRig,'left',target.position,target.quaternion,false,true,false);playerRig.setGrip('left',1,0,0);leftOnGun=true;
+    } else if(reach>0){
+      const centre=revolverCylinder.getWorldPosition(new THREE.Vector3()),gunQ=gun.getWorldQuaternion(new THREE.Quaternion());
+      const side=new THREE.Vector3(0,0,1).applyQuaternion(gunQ),gunUp=new THREE.Vector3(0,1,0).applyQuaternion(gunQ);
+      // Thumb pushes the cylinder out, then the palm sweeps down across its far side.
+      const stroke=smooth(.42,.55,t),target=centre.clone().addScaledVector(side,-.045).addScaledVector(gunUp,.05-.10*stroke);
       const rest=rig.arms.left.hand.getWorldPosition(new THREE.Vector3());
-      const palmDown=player?view.getWorldQuaternion(new THREE.Quaternion()).multiply(new THREE.Quaternion().setFromAxisAngle(Y_AXIS,Math.PI)):captive.getWorldQuaternion(new THREE.Quaternion());
-      solveWorld(rig,'left',rest.lerp(target,reach),palmDown,false,false,false);relaxHand(rig,'left');
+      // Fingers along the barrel, palm turned onto the cylinder.
+      const barrelDir=new THREE.Vector3(1,0,0).applyQuaternion(gunQ),palmY=side.clone(),palmX=new THREE.Vector3().crossVectors(palmY,barrelDir).normalize();
+      const palm=new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(palmX,palmY,barrelDir));
+      solveWorld(rig,'left',rest.lerp(target,reach),palm,false,false,false);relaxHand(rig,'left');if(player)leftOnGun=true;
     }
-    gun.userData.spinStage=t<.30?'raise':t<.42?'reach':t<.55?'swipe':t<.80?'withdraw':'return';
+    gun.userData.spinStage=t<.24?'raise':t<.42?'reach':t<.55?'swipe':t<.80?'withdraw':'return';gun.userData.craneOpen=+open.toFixed(3);
   }
   function hostTwist(amount:number){host.rotation.y=Math.PI/2+(forceSide==='ai'?.45:-.38)*amount;host.updateWorldMatrix(true,true);}
   /** Timeout: the player sets the revolver down and pushes it back; the seated Host takes it and aims from its seat. */
   function forcedShotPose(age:number){
     host.position.set(...HOST_SEAT);hostTwist(0);hostRig.pose('host-idle');
-    if(age<1.4){if(forceSide==='ai')setDownAndReturn(captiveRig,'ai',age/1.4,1);else setDownAndReturn(playerRig,'player',age/1.4,PLAYER_GRIP_K);gun.userData.shotStage='return';return;}
+    if(age<1.4){if(forceSide==='ai')setDownAndReturn(captiveRig,'ai',age/1.4,1);else setDownAndReturn(playerRig,'player',age/1.4,1);gun.userData.shotStage='return';return;}
     if(forceSide==='player')playerPose();
     const k=THREE.MathUtils.clamp((age-1.4)/1.2,0,1);hostTwist(smooth(.5,1,k));hostRig.pose('host-idle');
     if(k<1)directGrab(hostRig,gunRest,REST_YAW,k,hostAim(),.20);
@@ -661,9 +732,10 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     restPlayerHand('right');
     if(holding) {
       restPlayerHand('left');
-      const raise=smooth(0,.25,progress);
-      if(raise<1)directGrab(playerRig,new THREE.Vector3(...GUN_PICKUP.player),0,PLAYER_GRIP_K+(1-PLAYER_GRIP_K)*raise,playerAim(0),-.16);
-      else {const aim=playerAim((progress-.25)/.75);pointGun(playerRig,'right',aim.muzzle,aim.q);}
+      // Once the revolver is yours you lift it and turn it on yourself on your own (about a second); pulling only finishes the lift sooner.
+      if(readySince<0)readySince=actorTime;
+      const k=Math.max(smooth(0,.9,actorTime-readySince),smooth(0,.25,progress));
+      playerHold(k,progress);
       playerRig.setGrip('right',1,progress,THREE.MathUtils.smoothstep(progress,.30,.7));gunHolder='player';
     }
   }
@@ -866,6 +938,8 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     priorShotEffect=state.shotEffect;
     if(state.forceShotAt!=null)forceSide=state.forceTarget==='ai'?'ai':'player';
     const transfer=state.dead==='ai'&&state.gunTransfer?.owner!=='host'?null:state.gunTransfer;
+    if(state.phase!=='PLAYER_SHOOTING'||transfer)readySince=-1;
+    leftOnGun=false;
     const spinning=state.spinning??null;
     if(spinning){const serial=state.spinSerial??0;if(serial!==lastSpinSerial){lastSpinSerial=serial;spinStartedAt=time;spinFrom=revolverCylinder.rotation.x;}}
     const spinT=spinning?THREE.MathUtils.clamp((time-spinStartedAt)/(SPIN_MS/1000),0,1):0;
@@ -881,6 +955,7 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     else if(state.phase==='PLAYER_SHOOTING'&&spinning==='player')spinPose(playerRig,spinT);
     else if(state.phase==='PLAYER_SHOOTING'){playerPose(true,state.triggerProgress??0);}
     else flatGun(gunRest);
+    if(!spinning)crane.rotation.x=0;
     // The cylinder only starts turning when the swipe lands.
     if(spinning){const swipe=SPIN_SWIPE_MS/SPIN_MS;revolverCylinder.rotation.x=spinFrom+Math.PI*6*(1-(1-THREE.MathUtils.clamp((spinT-swipe)/(1-swipe-.08),0,1))**3);}
     else revolverCylinder.rotation.x=(state.triggerProgress??0)*Math.PI/3;
@@ -912,7 +987,7 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     heldRig.position.set(0,0,0);
     if(peek==='player')solveWorld(playerRig,'left',atCamera(-.18,-.28,-.53),view.getWorldQuaternion(new THREE.Quaternion()).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI/2,Math.PI,0))));
     const busyLeft=!cardRevealed&&shootingLayStartedAt<0&&currentRound?.player.length&& !['START','OPENING','TRANSITION','SWEEPING'].includes(state.phase);
-    if(!busyLeft&&!boundPlayer&&peek!=='player'&&!(spinning==='player'&&spinT>.27&&spinT<.76))restPlayerHand('left');
+    if(!busyLeft&&!boundPlayer&&!leftOnGun&&peek!=='player'&&!(spinning==='player'&&spinT>.27&&spinT<.76))restPlayerHand('left');
     const playerRightBusy=gunHolder==='player'||!!transfer&&transfer.side==='player'||state.phase==='PLAYER_PEEKING'||state.phase==='HOST_FORCE_SHOT'&&forceAge<1.4&&forceSide==='player';
     if(!boundPlayer&&!playerRightBusy)restPlayerHand('right');
     if(state.speaker==='host' && !['SHUFFLING','DEALING','HITTING','DEALER_TURN','HOST_FORCE_SHOT'].includes(state.phase)&&time-hostGestureAt<1.5){hostRig.solveHand('left',new THREE.Vector3(-.10,.20,.22));hostRig.setGrip('left',.18);}

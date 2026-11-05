@@ -87,3 +87,8 @@ Characters now match the cinematic room. All joints, sizes and poses are unchang
 
 - **Every decision has 30 seconds.** A ring above the HIT / STAND buttons empties. With 10 seconds left it turns red and pulses and the Host says "Ten seconds." When it runs out the Host says "You took too long." and slides the revolver to you: you must face the chamber (or the Host does it for you as before). If the chamber is empty, your hand continues with a fresh 30 seconds. Each HIT starts a fresh clock. Opening How to play pauses the clock.
 - **Pulling the trigger narrows the world onto the revolver.** The field of view tightens with the pull (on top of the existing hammer, cylinder turn and darkening) and eases back afterwards; it is gentler with reduced motion. A captive's pull narrows it about half as much.
+
+## Holding and spinning the revolver like a person
+
+- **Self-facing two-hand hold.** When the revolver reaches you, you pick it up with a normal grip and, over about a second, turn it round in your hand on the way up. The left hand joins on the grip and both thumbs sit at the trigger, with the muzzle on your own face. Holding to pull brings the bore up into the centre of view. The forearms come from your own side, so there is no impossible wrist angle. Setting it down after an empty click (or when the Host takes over) reverses the motion.
+- **A real cylinder spin.** The revolver has a swing-out crane. SPIN raises the gun upright in the shooting hand with its left side toward the viewer. The free thumb pushes the cylinder out, the free palm sweeps it into a spin, and a wrist flick snaps it shut. The revolver then goes back to your face (or to the captive's temple). The captives spin the same way.

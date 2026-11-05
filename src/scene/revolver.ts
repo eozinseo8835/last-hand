@@ -67,8 +67,11 @@ export function createRevolverModel() {
   box('Sight highlight', [.007, .0015, .004], [.139, .060, 0], edge);
   box('Ejector rod', [.072, .005, .006], [.101, .028, -.011], cylinderSteel);
 
+  // Swing-out crane: the cylinder (and its ejector rod) hinge out to the side on a pivot below the frame, like a real double-action revolver.
+  const crane = new THREE.Group(); crane.name = 'Revolver crane'; crane.position.set(.005, -.004, .012); gun.add(crane);
   const cylinder = new THREE.Group(); cylinder.name = 'Revolver cylinder';
-  cylinder.position.set(.005, .025, 0); cylinder.userData.length = REVOLVER_DIMENSIONS.cylinderLength; gun.add(cylinder);
+  cylinder.position.set(0, .029, -.012); cylinder.userData.length = REVOLVER_DIMENSIONS.cylinderLength; crane.add(cylinder);
+  const ejector = gun.getObjectByName('Ejector rod'); if (ejector) crane.attach(ejector);
   addMesh(cylinder, 'Six chamber cylinder body', axisCylinder(.028, .070, 18), cylinderSteel, [0, 0, 0]);
   for (const direction of [-1, 1]) {
     addMesh(cylinder, `${direction > 0 ? 'Front' : 'Rear'} cylinder hub`, axisCylinder(.006, .002, 10), edge, [direction * .036, 0, 0]);
@@ -123,5 +126,5 @@ export function createRevolverModel() {
 
   const muzzlePoint = new THREE.Object3D(); muzzlePoint.name = 'Revolver muzzle contact'; muzzlePoint.position.set(...MUZZLE_LOCAL); gun.add(muzzlePoint);
   const gripPoint = new THREE.Object3D(); gripPoint.name = 'Revolver grip center'; gripPoint.position.set(...GRIP_LOCAL); gun.add(gripPoint);
-  return { gun, hammer, cylinder, revolverCylinder: cylinder, trigger, muzzlePoint, gripPoint };
+  return { gun, hammer, cylinder, revolverCylinder: cylinder, crane, trigger, muzzlePoint, gripPoint };
 }

@@ -10,7 +10,7 @@ describe('one real-scale procedural .38 revolver', () => {
     expect(size.x).toBeGreaterThan(.26); expect(size.x).toBeLessThan(.29);
     expect(REVOLVER_DIMENSIONS.barrelLength/REVOLVER_DIMENSIONS.cylinderLength).toBeCloseTo(1.3);
     for(const name of ['Hollow .38 barrel','Barrel front sight','Six chamber cylinder body','Curved wooden grip','Ring trigger guard','Curved trigger','Hammer spur']) expect(gun.getObjectByName(name)).toBeDefined();
-    expect(hammer.parent).toBe(gun); expect(cylinder.parent).toBe(gun); expect(trigger.parent).toBe(gun);
+    expect(hammer.parent).toBe(gun); expect(cylinder.parent?.name).toBe('Revolver crane'); expect(cylinder.parent?.parent).toBe(gun); expect(trigger.parent).toBe(gun);
     expect(muzzlePoint.position.toArray()).toEqual([...MUZZLE_LOCAL]); expect(gripPoint.position.toArray()).toEqual([...GRIP_LOCAL]);
     expect(gun.userData.modelId).toBe('procedural-38');
   });
