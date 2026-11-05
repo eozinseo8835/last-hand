@@ -98,6 +98,12 @@ export type RoomCampaign = {
   cinematic?: CinematicState | null;
   distantShot?: DistantShot | null;
   ambientEvent?: AmbientEvent | null;
+  /** 0..1: how close the shared cylinder is to the bullet (chambers already fired). */
+  tension?: number;
+  /** Someone is pulling the trigger right now. */
+  triggerHeld?: boolean;
+  /** Guests already dead in the campaign; one empty chair each, set out between rooms. */
+  guestsGone?: number;
 };
 
 /** The exit sequence waits at the table while the Host finishes announcing it. */
@@ -310,6 +316,25 @@ export function createRoom(scene: THREE.Scene): BunkerRoom {
   box(.56, .2, .05, wood, 0, 1.06, -.26, brokenChair);
   const brokenSlat = box(.55, .09, .045, wood, -.24, .075, .63, brokenChair); brokenSlat.rotation.y = .52; brokenSlat.rotation.z = .09;
   const fallenLeg = box(.06, .04, .43, metal, -.51, .03, .12, brokenChair); fallenLeg.rotation.y = .7;
+
+  // The dead are not taken away: one empty chair per lost guest is set out between rooms, a row of silent
+  // spectators behind the opponent, each with its owner's burlap hood hung over the backrest like a head.
+  const memorial = new THREE.Group(); memorial.name = 'empty-chairs'; root.add(memorial);
+  const memorialChairs: THREE.Group[] = [];
+  const sackMaterial = mat(0x6e5b40, { roughness: 1 });
+  for (const [index, x] of [-1.2, .95, -1.8, 1.55, -2.4, 2.15, -.6].entries()) {
+    const chair = new THREE.Group(); chair.name = `empty-chair-${index + 1}`;
+    const z = -3.25 + (index % 2) * .1; chair.position.set(x, 0, z); chair.rotation.y = Math.atan2(-x, -z) * .5; memorial.add(chair);
+    box(.43, .045, .38, darkMetal, 0, .43, 0, chair);
+    box(.43, .45, .035, darkMetal, 0, .7, -.18, chair);
+    for (const lx of [-.175, .175]) for (const lz of [-.15, .15]) box(.026, .43, .026, darkMetal, lx, .215, lz, chair);
+    const sackGeometry = new THREE.SphereGeometry(1, 10, 8); sackGeometry.scale(.12, .15, .1);
+    const sack = new THREE.Mesh(sackGeometry, sackMaterial); sack.position.set(0, .93, -.17); sack.rotation.set(.25, 0, (index % 3 - 1) * .12); chair.add(sack);
+    const draped = new THREE.Mesh(new THREE.BoxGeometry(.2, .2, .02), sackMaterial); draped.position.set(0, .8, -.13); chair.add(draped);
+    mergeStaticMeshes(chair);
+    chair.visible = false; memorialChairs.push(chair);
+  }
+  let shownChairs = 0;
   // Unlabelled discarded crates and one original battered ashtray.
   const crate = box(.7, .42, .61, mat(0x5b5540, { map: woodMap }), -3.42, .22, .6); crate.rotation.y = -.17;
   for (const y of [.08, .23, .38]) box(.73, .02, .018, darkMetal, -3.42, y, .92);
@@ -389,17 +414,25 @@ export function createRoom(scene: THREE.Scene): BunkerRoom {
       tvGlows[0].intensity = 1.45; tvGlows[1].intensity = 1.45 * .8;
       brokenSlat.position.z = .63; brokenSlat.rotation.y = .52; fallenLeg.position.x = -.51; fallenLeg.rotation.y = .7;
       lastDistantId = ''; dust.visible = drip.visible = guardEyes.visible = false; doorHandle.rotation.z = 0; root.userData.distantReaction = null; root.userData.ambientEvent = null;
+      shownChairs = 0; memorialChairs.forEach(chair => chair.visible = false); root.userData.emptyChairs = 0;
     },
     dispose() { eventMaterial.dispose(); eventTexture.dispose(); dustGeometry.dispose(); dustMaterial.dispose(); dust.removeFromParent(); drip.geometry.dispose(); drip.material.dispose(); drip.removeFromParent(); },
     update(time, delta, danger, suspense, impulse, event = null, now = Date.now(), campaign = {}) {
       const active = event && now >= event.startedAt && now < event.startedAt + event.duration ? event : null;
       root.userData.event = active?.kind ?? null;
       const number = campaign.roomNumber;
+      const tension = THREE.MathUtils.clamp(campaign.tension ?? 0, 0, 1), holding = !!campaign.triggerHeld;
+      const deciding = campaign.phase === 'PLAYER_DECISION' || campaign.phase === 'PLAYER_PEEKING';
       const mood = number === 2 ? { bulb: 0xf77c65, intensity: 26, sky: 0x994c3b, ambient: .25, glow: .8, emergency: 1 }
-        : number === 3 ? { bulb: 0xd0bc8b, intensity: 5.8, sky: 0x343d37, ambient: .035, glow: .32, emergency: .3 }
+        : number === 3 ? { bulb: 0xd0bc8b, intensity: 5.8, sky: 0x343d37, ambient: .035, glow: .32, emergency: .85 }
         : number === 1 ? { bulb: 0xb8cfa2, intensity: 20, sky: 0x7d8c72, ambient: .32, glow: 1, emergency: 1 }
         : { bulb: 0xffdfb0, intensity: 20, sky: 0x7d8c72, ambient: .32, glow: 1, emergency: 1 };
       root.userData.roomNumber = number ?? 1;
+      // Chairs are set out while the player is away from the table (opening / between rooms), never popping in mid-hand.
+      const settingUp = !campaign.phase || ['START', 'OPENING', 'TRANSITION'].includes(campaign.phase);
+      if (settingUp && campaign.guestsGone !== undefined) shownChairs = Math.max(0, Math.min(memorialChairs.length, Math.floor(campaign.guestsGone)));
+      memorialChairs.forEach((chair, index) => chair.visible = index < shownChairs);
+      root.userData.emptyChairs = shownChairs;
       bulbLight.color.setHex(mood.bulb); ambient.color.setHex(mood.sky);
       tvGlows[0].intensity = 1.45 * mood.glow; tvGlows[1].intensity = 1.45 * .8 * mood.glow;
       brokenSlat.rotation.y = number === 2 ? .18 : number === 3 ? -.3 : .52;
@@ -462,16 +495,26 @@ export function createRoom(scene: THREE.Scene): BunkerRoom {
       }
       if (time >= nextFlicker) {
         flickerUntil = time + .065 + staticRandom() * .12;
-        nextFlicker = time + (danger ? .65 : 2.3) + staticRandom() * (danger ? 1.7 : 4.1);
+        const nerves = 1 - .55 * tension;
+        nextFlicker = time + ((danger ? .65 : 2.3) + staticRandom() * (danger ? 1.7 : 4.1)) * nerves * (number === 3 ? .7 : 1);
       }
       if (impulse > lastImpulse) swing = Math.min(.16, swing + impulse * .035);
       lastImpulse = impulse;
       swing = Math.max(0, swing - delta * .009);
-      lamp.rotation.z = Math.sin(time * 2.8) * (.007 + swing);
-      lamp.rotation.x = Math.cos(time * 2.1) * swing * .45;
+      // The bulb never quite settles: it drifts more as the cylinder empties, and room 3's wire is always moving.
+      const drift = tension * .014 + (number === 3 ? .012 : 0) + (holding ? .01 : 0);
+      lamp.rotation.z = Math.sin(time * 2.8) * (.007 + swing + drift);
+      lamp.rotation.x = Math.cos(time * 2.1) * (swing * .45 + drift * .6);
       let flicker = time < flickerUntil ? .4 + staticRandom() * .14 : 1;
       if (ambientActive && ambientEvent.kind === 'bulb') flicker *= Math.sin(ambientAge * 29) > .35 ? .13 : 1;
       const dim = suspense ? .65 : 1;
+      // While a trigger is held the filament strains: a low, uneven brownout that deepens with every spent chamber.
+      // Choosing cards stays calm and readable: this never runs during a decision.
+      const strain = holding ? (1 - (.12 + .2 * tension) * (.5 + .5 * Math.sin(time * 7.3) * Math.sin(time * 2.9 + 1))) : 1;
+      // Room 3's failing supply sags hard every few seconds outside the player's own decision.
+      const sagCycle = time % 9.5, sag = number === 3 && !deciding && sagCycle < .5 ? .45 + .35 * Math.abs(Math.sin(sagCycle * 31)) : 1;
+      flicker *= strain * sag;
+      root.userData.lightStrain = +(1 - strain * sag).toFixed(3);
       let power = 1;
       if (active?.kind === 'blackout') {
         const remaining = active.startedAt + active.duration - now;
@@ -483,7 +526,7 @@ export function createRoom(scene: THREE.Scene): BunkerRoom {
       bulbMaterial.color.setHex(mood.bulb).multiplyScalar(flicker * power);
       filament.visible = power > .1;
       ambient.intensity = mood.ambient * power;
-      emergency.intensity = (1.2 + Math.sin(time * 1.4) * .12) * mood.emergency;
+      emergency.intensity = (1.2 + Math.sin(time * 1.4) * (number === 3 ? .55 : .12)) * mood.emergency * (1 + tension * .35);
       hazeMaterial.opacity = .003 * flicker * dim * power;
       if (active?.kind === 'tv') {
         watchedScreen.material = eventMaterial;

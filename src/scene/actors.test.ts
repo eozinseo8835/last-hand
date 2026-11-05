@@ -351,3 +351,18 @@ it('makes PEEK windows readable through card/deck glances and visibly returns be
  expect(new THREE.Vector3(...actors.host.userData.gazeTarget).distanceTo(world(actors.deck))).toBeLessThan(.002);expect(new THREE.Vector3(...actors.captive.userData.gazeTarget).distanceTo(world(actors.aiHeldRig))).toBeLessThan(.015);
  advance(.3,{attention:{host:{...away,returning:true},captive:{...away,returning:true},window:true}});expect(actors.host.userData.gazeTarget).toEqual(world(camera).toArray());expect(actors.captive.userData.gazeTarget).toEqual(world(camera).toArray());
 });
+
+describe('the Host watching you',()=>{
+ it('turns slowly onto you, then leans in and tilts its head the longer you hesitate',()=>{
+  settle();
+  advance(1,{phase:'PLAYER_DECISION'});
+  expect(actors.host.userData.watching).toMatchObject({hesitation:0,slowTurn:true});
+  const tilt0=actors.hostHead.rotation.z;
+  advance(12,{phase:'PLAYER_DECISION'});
+  expect(actors.host.userData.watching.hesitation).toBe(1);
+  expect(actors.host.userData.watching.lean).toBeGreaterThan(.5);
+  expect(actors.hostHead.rotation.z-tilt0).toBeGreaterThan(.15);
+  advance(.5,{phase:'REVEAL'});
+  expect(actors.host.userData.watching.hesitation).toBe(0);
+ });
+});

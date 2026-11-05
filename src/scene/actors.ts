@@ -932,7 +932,15 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     const hostTarget=state.phase==='HOST_FORCE_SHOT'?forceSide==='ai'?head.getWorldPosition(new THREE.Vector3()):eye:shooting?gunPoint:state.speaker==='host'?state.addressedTo==='captive'?head.getWorldPosition(new THREE.Vector3()):eye:state.speaker==='captive'?head.getWorldPosition(new THREE.Vector3()):dealing||state.attention?.host.away&&!state.attention.host.returning?deck.getWorldPosition(new THREE.Vector3()):eye;
     if(reaction.active&&reaction.gaze)captiveTarget=reaction.gaze==='player'?eye:new THREE.Vector3(0,.76,-.27);
     if(capSound>0&&sound){captiveTarget=new THREE.Vector3(...sound.position);captiveRig.chest.rotation.z+=Math.sin(Math.min(1,(epoch-sound.at)/180)*Math.PI)*sound.loudness*(room===1?.08:room===3?.02:.045);}
-    lookAtTarget(hostRig,hostSound>0&&sound?new THREE.Vector3(...sound.position):hostTarget,hostSound>0?dt*.55:dt,hv*.01*motion);
+    // While you decide, the Host's mask turns onto you slowly, as if it has all night.
+    const stareAtYou=state.phase==='PLAYER_DECISION'&&hostTarget===eye&&!(hostSound>0);
+    lookAtTarget(hostRig,hostSound>0&&sound?new THREE.Vector3(...sound.position):hostTarget,hostSound>0?dt*.55:stareAtYou?dt*.28:dt,hv*.01*motion);
+    // Hesitate and the Host leans in and tilts its head; hold the trigger and it leans closer with every bit of pull.
+    const hesitation=state.phase==='PLAYER_DECISION'?THREE.MathUtils.smoothstep(time-phaseStartedAt,6,12):0;
+    const pull=state.phase==='PLAYER_SHOOTING'&&state.triggerHeld?THREE.MathUtils.clamp(state.triggerProgress??0,0,1):0;
+    const lean=Math.max(hesitation*.7,pull)*motion;
+    hostRig.neck.rotation.x+=lean*.2;hostRig.head.rotation.z+=hesitation*.22*motion;
+    host.userData.watching={hesitation:+hesitation.toFixed(3),lean:+lean.toFixed(3),slowTurn:stareAtYou};
     if(state.dead!=='ai'&&gunHolder!=='ai'&&!captiveHood.visible)lookAtTarget(captiveRig,captiveTarget,capSound>0?dt*1.8:dt,cv*.01*motion);
     captive.userData.gazePriority=capSound>0?'sound':reaction.active&&reaction.gaze?'reaction':shooting||recentPlayer||state.speaker||dealing?'context':'cards';
     const forceActive=forceSide==='player'&&(state.phase==='HOST_FORCE_SHOT'||state.forceShotAt!=null&&state.phase==='ROUND_RESULT');

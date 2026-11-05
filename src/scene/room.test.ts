@@ -38,6 +38,42 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe('horror tension in the room', () => {
+  it('sets out one empty chair per dead guest between rooms, never in the middle of a hand, and clears them on replay', () => {
+    let before = 0; scene.traverse(() => before++);
+    const chairs = () => (scene.getObjectByName('empty-chairs')!.children).filter(chair => chair.visible).length;
+    room.update(.5, .016, false, false, 0, null, 1500, { roomNumber: 1, phase: 'PLAYER_DECISION', guestsGone: 0 });
+    expect(chairs()).toBe(0);
+    room.update(.6, .016, false, false, 0, null, 1600, { roomNumber: 1, phase: 'PLAYER_DECISION', guestsGone: 3 });
+    expect(chairs()).toBe(0);   // three tables just died on the monitors: nothing pops in behind the opponent
+    room.update(.7, .016, false, false, 0, null, 1700, { roomNumber: 2, phase: 'OPENING', guestsGone: 4 });
+    expect(chairs()).toBe(4);
+    room.update(.8, .016, false, false, 0, null, 1800, { roomNumber: 3, phase: 'TRANSITION', guestsGone: 6 });
+    expect(chairs()).toBe(6); expect(scene.getObjectByName('procedural-bunker')!.userData.emptyChairs).toBe(6);
+    let after = 0; scene.traverse(() => after++); expect(after).toBe(before);
+    room.reset(); expect(chairs()).toBe(0);
+  });
+
+  it('keeps the light steady while you choose cards, then strains the bulb harder during a trigger pull as chambers are spent', () => {
+    const average = (campaign: object) => { let sum = 0; for (let i = 0; i < 200; i++) { room.update(.2 + i * .007, .007, false, false, 0, null, 1500, campaign); sum += room.bulbLight.intensity; } return sum / 200; };
+    expect(average({ roomNumber: 1, phase: 'PLAYER_DECISION', tension: 1 })).toBeCloseTo(20, 5);
+    const early = average({ roomNumber: 1, phase: 'PLAYER_SHOOTING', tension: 0, triggerHeld: true });
+    const late = average({ roomNumber: 1, phase: 'PLAYER_SHOOTING', tension: 1, triggerHeld: true });
+    expect(early).toBeLessThan(20); expect(late).toBeLessThan(early); expect(late).toBeGreaterThan(20 * .6);
+  });
+
+  it('makes room 3 harsher with supply sags and a swinging bulb, but never sags during your decision', () => {
+    room.update(.2, .016, false, false, 0, null, 1500, { roomNumber: 3, phase: 'AI_SHOOTING' });
+    expect(scene.getObjectByName('procedural-bunker')!.userData.lightStrain).toBeGreaterThan(.1);
+    room.update(.2, .016, false, false, 0, null, 1500, { roomNumber: 3, phase: 'PLAYER_DECISION' });
+    expect(scene.getObjectByName('procedural-bunker')!.userData.lightStrain).toBe(0);
+    let swing3 = 0, swing1 = 0;
+    for (let i = 0; i < 100; i++) { room.update(3 + i * .03, .03, false, false, 0, null, 1500, { roomNumber: 3, phase: 'PLAYER_DECISION' }); swing3 = Math.max(swing3, Math.abs(room.lamp.rotation.z)); }
+    for (let i = 0; i < 100; i++) { room.update(3 + i * .03, .03, false, false, 0, null, 1500, { roomNumber: 1, phase: 'PLAYER_DECISION' }); swing1 = Math.max(swing1, Math.abs(room.lamp.rotation.z)); }
+    expect(swing3).toBeGreaterThan(swing1 * 2);
+  });
+});
+
 describe('temporary room tension events', () => {
   it('retains the original room lights and screens when no event is active', () => {
     const originalScreen = screen().material;

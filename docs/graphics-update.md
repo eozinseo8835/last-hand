@@ -74,3 +74,10 @@ Characters now match the cinematic room. All joints, sizes and poses are unchang
 
 - The Gambler (room 2) is now a Black man with deep brown skin and a close-cropped haircut, wearing a cobalt suit jacket over a dark waistcoat with a red tie and his gold ring. The same face appears at table 3 on the monitor wall.
 - Opponents still follow their own house rules and never look at your cards. They now sometimes crack and chase 21 past the safe line: the Gambler draws at hard 17 about 30% of the time and at 18 about 10%; the Survivor draws at 17 about 8% of the time. The Nervous Man already does this through his panic mistakes at 17 and 18.
+
+## Horror tension 1 (no sound yet)
+
+- **The Host watches you.** While you choose, its mask turns onto you slowly instead of snapping. Hesitate for more than about six seconds and it starts to lean in and tilt its head. While you hold the trigger it leans closer with every bit of pull.
+- **The light reacts to danger.** The bulb flickers more often and drifts more as chambers are spent. While anyone holds a trigger the filament strains in an uneven brownout that deepens with every spent chamber. While you are choosing cards the light stays steady, so faces and tells remain readable.
+- **Losses stay in the room.** Between rooms, one empty chair per dead guest is set out behind the opponent, each with its owner's burlap hood hung over the backrest like a head. There are 4 chairs in room 2 and 6 in room 3. They never pop in during a hand.
+- **Room 3 is harsher.** The power supply sags hard every few seconds (never during your decision), the bulb's wire keeps moving, and the red emergency light pulses more strongly.

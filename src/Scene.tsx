@@ -418,6 +418,8 @@ export default function Scene(props: SceneProps) {
       room.update(time, dt, state.danger, state.suspense, impulse, event, epoch, {
         roomNumber: state.roomNumber, phase: state.phase === 'GAME_OVER' && winPose ? 'ENDING_WIN' : state.phase,
         storyStage: state.storyStage, stageElapsed, cinematic: state.cinematic, distantShot: state.distantShot, ambientEvent: state.ambientEvent,
+        tension: Math.min(1, (state.chambersFired ?? 0) / 5), triggerHeld: !!state.triggerHeld || state.phase === 'AI_SHOOTING' || state.phase === 'HOST_FORCE_SHOT',
+        guestsGone: state.guestsRemaining === undefined ? undefined : 8 - state.guestsRemaining,
       });
       const hostVoiceLevel = tableAudio.getVoiceLevel('host'), captiveVoiceLevel = tableAudio.getVoiceLevel('captive');
       const voiceLevel = captiveVoiceLevel;
