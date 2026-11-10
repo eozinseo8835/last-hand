@@ -62,7 +62,6 @@ type CardSlot = {
   born: number; serial: number; identity: string; flip: number;
   fromPosition: THREE.Vector3; fromQuaternion: THREE.Quaternion; fromScale: number;
 };
-const SUITS = { spades: '♠', clubs: '♣', hearts: '♥', diamonds: '♦' };
 /** Captive card hand, in the captive's body space: held up in front of the chest, faces toward the
  * captive, backs squarely toward the player, tilted so the captive looks down onto them. */
 const AI_FAN_POSITION = [-.03, .55, .33] as const, AI_FAN_TILT = .40;
@@ -84,8 +83,54 @@ function box(parent: THREE.Object3D, size: [number, number, number], position: [
   parent.add(mesh);
   return mesh;
 }
+/** Suits are drawn as paths, not font glyphs, so every machine shows the same shapes (no emoji fallback). */
+function drawSuit(context: CanvasRenderingContext2D, suit: Card['suit'], x: number, y: number, size: number, upsideDown = false) {
+  const s = size;
+  context.save();
+  context.translate(x, y);
+  if (upsideDown) context.rotate(Math.PI);
+  context.beginPath();
+  if (suit === 'diamonds') {
+    context.moveTo(0, -.5 * s); context.lineTo(.36 * s, 0); context.lineTo(0, .5 * s); context.lineTo(-.36 * s, 0); context.closePath();
+  } else if (suit === 'hearts') {
+    context.moveTo(0, .46 * s);
+    context.bezierCurveTo(-.12 * s, .3 * s, -.5 * s, .06 * s, -.5 * s, -.16 * s);
+    context.bezierCurveTo(-.5 * s, -.44 * s, -.13 * s, -.54 * s, 0, -.26 * s);
+    context.bezierCurveTo(.13 * s, -.54 * s, .5 * s, -.44 * s, .5 * s, -.16 * s);
+    context.bezierCurveTo(.5 * s, .06 * s, .12 * s, .3 * s, 0, .46 * s);
+    context.closePath();
+  } else if (suit === 'spades') {
+    context.moveTo(0, -.5 * s);
+    context.bezierCurveTo(-.12 * s, -.32 * s, -.5 * s, -.1 * s, -.5 * s, .12 * s);
+    context.bezierCurveTo(-.5 * s, .36 * s, -.18 * s, .42 * s, -.03 * s, .2 * s);
+    context.lineTo(-.18 * s, .5 * s); context.lineTo(.18 * s, .5 * s); context.lineTo(.03 * s, .2 * s);
+    context.bezierCurveTo(.18 * s, .42 * s, .5 * s, .36 * s, .5 * s, .12 * s);
+    context.bezierCurveTo(.5 * s, -.1 * s, .12 * s, -.32 * s, 0, -.5 * s);
+    context.closePath();
+  } else {
+    const r = .21 * s;
+    for (const [cx, cy] of [[0, -.26 * s], [-.24 * s, .06 * s], [.24 * s, .06 * s]]) { context.moveTo(cx + r, cy); context.arc(cx, cy, r, 0, Math.PI * 2); }
+    context.moveTo(-.1 * s, -.05 * s); context.lineTo(.1 * s, -.05 * s); context.lineTo(.1 * s, .15 * s); context.lineTo(-.1 * s, .15 * s); context.closePath();
+    context.moveTo(-.04 * s, .1 * s); context.lineTo(-.18 * s, .5 * s); context.lineTo(.18 * s, .5 * s); context.lineTo(.04 * s, .1 * s); context.closePath();
+  }
+  context.fill();
+  context.restore();
+}
+/** Standard pip positions as [column, row]: column -1/0/1 = left/centre/right, row 0 = top … 1 = bottom. */
+export const PIP_LAYOUT: Record<string, [number, number][]> = {
+  A: [[0, .5]],
+  '2': [[0, 0], [0, 1]],
+  '3': [[0, 0], [0, .5], [0, 1]],
+  '4': [[-1, 0], [1, 0], [-1, 1], [1, 1]],
+  '5': [[-1, 0], [1, 0], [0, .5], [-1, 1], [1, 1]],
+  '6': [[-1, 0], [1, 0], [-1, .5], [1, .5], [-1, 1], [1, 1]],
+  '7': [[-1, 0], [1, 0], [0, .25], [-1, .5], [1, .5], [-1, 1], [1, 1]],
+  '8': [[-1, 0], [1, 0], [0, .25], [-1, .5], [1, .5], [0, .75], [-1, 1], [1, 1]],
+  '9': [[-1, 0], [1, 0], [-1, 1 / 3], [1, 1 / 3], [0, .5], [-1, 2 / 3], [1, 2 / 3], [-1, 1], [1, 1]],
+  '10': [[-1, 0], [1, 0], [0, 1 / 6], [-1, 1 / 3], [1, 1 / 3], [-1, 2 / 3], [1, 2 / 3], [0, 5 / 6], [-1, 1], [1, 1]],
+};
 /** Card faces are drawn locally; the unrevealed face never receives its secret texture. */
-function cardTexture(card: Card) {
+export function cardTexture(card: Card) {
   const canvas = document.createElement('canvas');
   canvas.width = 160;
   canvas.height = 224;
@@ -95,25 +140,40 @@ function cardTexture(card: Card) {
   context.strokeStyle = '#a9a58f';
   context.lineWidth = 3;
   context.strokeRect(4, 4, 152, 216);
-  context.fillStyle = card.suit === 'hearts' || card.suit === 'diamonds' ? '#a01919' : '#08130e';
-  context.textAlign = 'left';
-  context.textBaseline = 'top';
-  context.font = 'bold 49px monospace';
-  context.fillText(card.rank, 11, 9);
-  context.font = 'bold 42px Georgia, serif';
-  context.fillText(SUITS[card.suit], 11, 58);
-  context.textAlign = 'center';
-  context.textBaseline = 'middle';
-  context.font = 'bold 77px Georgia, serif';
-  context.fillText(SUITS[card.suit], 84, 132);
-  context.save();
-  context.translate(160, 224);
-  context.rotate(Math.PI);
-  context.textAlign = 'left';
-  context.textBaseline = 'top';
-  context.font = 'bold 36px monospace';
-  context.fillText(card.rank, 11, 9);
-  context.restore();
+  const ink = card.suit === 'hearts' || card.suit === 'diamonds' ? '#a01919' : '#08130e';
+  context.fillStyle = ink;
+  // Corner indices, top-left and (turned around) bottom-right, as on a real deck.
+  const corner = () => {
+    context.textAlign = 'center';
+    context.textBaseline = 'top';
+    context.font = card.rank === '10' ? 'bold 25px monospace' : 'bold 30px monospace';
+    context.fillText(card.rank, 23, 9);
+    drawSuit(context, card.suit, 23, 53, 20);
+  };
+  corner();
+  context.save(); context.translate(160, 224); context.rotate(Math.PI); corner(); context.restore();
+  const pips = PIP_LAYOUT[card.rank];
+  if (card.rank === 'A') drawSuit(context, card.suit, 80, 112, 66);
+  else if (pips) {
+    // Pip field between the corner indices; pips below the middle are printed upside down.
+    for (const [column, row] of pips) drawSuit(context, card.suit, 80 + column * 27, 42 + row * 140, pips.length > 8 ? 26 : 29, row > .5);
+  } else {
+    // Court cards: an original framed design, mirrored top-to-bottom like a real court card.
+    context.lineWidth = 2;
+    context.strokeStyle = ink;
+    context.strokeRect(42, 30, 76, 164);
+    context.globalAlpha = .1; context.fillRect(42, 30, 76, 164); context.globalAlpha = 1;
+    context.beginPath(); context.moveTo(42, 112); context.lineTo(118, 112); context.stroke();
+    const half = () => {
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      context.font = 'bold 50px Georgia, serif';
+      context.fillText(card.rank, 80, 64);
+      drawSuit(context, card.suit, 80, 97, 20);
+    };
+    half();
+    context.save(); context.translate(160, 224); context.rotate(Math.PI); half(); context.restore();
+  }
   // A few restrained dirt marks keep the cards within the room's palette.
   context.fillStyle = '#2b251309';
   for (let i = 0; i < 55; i++) {

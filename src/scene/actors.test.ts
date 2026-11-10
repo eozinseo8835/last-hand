@@ -2,7 +2,7 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 import * as THREE from 'three';
 import {CONFIG,type Card,type Round} from '../game';
-import {createActors,type ActorState} from './actors';
+import {createActors,PIP_LAYOUT,type ActorState} from './actors';
 import {CARD_WIDTH,CARD_HEIGHT,DECK_POSITION,GUN_REST,GUN_PICKUP,HOST_SEAT,HOST_HEAD,TABLE_CARD_Y,tableCardPosition,playerPeekDeck} from '../tableLayout';
 import {GRIP_SOCKET,MUZZLE_LOCAL} from './revolver';
 import {stageDurationMs,type CinematicStage} from '../cinematics';
@@ -33,7 +33,7 @@ function openingStage(stage:CinematicStage,fraction=.5){const duration=stageDura
 function visible(object:THREE.Object3D){for(let p:THREE.Object3D|null=object;p;p=p.parent)if(!p.visible)return false;return true;}
 
 beforeEach(()=>{
- vi.spyOn(HTMLCanvasElement.prototype,'getContext').mockImplementation(()=>({fillRect(){},strokeRect(){},fillText(){},save(){},restore(){},translate(){},rotate(){},beginPath(){},moveTo(){},lineTo(){},stroke(){}} as unknown as CanvasRenderingContext2D));
+ vi.spyOn(HTMLCanvasElement.prototype,'getContext').mockImplementation(()=>({fillRect(){},strokeRect(){},fillText(){},save(){},restore(){},translate(){},rotate(){},beginPath(){},moveTo(){},lineTo(){},stroke(){},fill(){},arc(){},closePath(){},bezierCurveTo(){}} as unknown as CanvasRenderingContext2D));
  now=0;vi.spyOn(Date,'now').mockImplementation(()=>epoch+now*1000);
  scene=new THREE.Scene();camera=new THREE.PerspectiveCamera(68,16/9,.055,28);camera.position.set(0,1.20,1.05);camera.rotation.x=-.12;scene.add(camera);
  actors=createActors(scene,camera);state={phase:'SHUFFLING',suspense:false,dead:null,shotEffect:null,roundNumber:1,revealed:false};actors.setCards(empty(),false);tick(0);
@@ -372,4 +372,17 @@ describe('the Host watching you',()=>{
   advance(.5,{phase:'REVEAL'});
   expect(actors.host.userData.watching.hesitation).toBe(0);
  });
+});
+
+describe('card faces',()=>{
+  it('prints as many pips as the rank, symmetric top to bottom',()=>{
+    for(const rank of ['2','3','4','5','6','7','8','9','10']){
+      const pips=PIP_LAYOUT[rank];expect(pips).toHaveLength(Number(rank));
+      const keys=new Set(pips.map(([c,r])=>`${c},${r.toFixed(3)}`));expect(keys.size).toBe(pips.length);
+      for(const [c,r] of pips){expect([-1,0,1]).toContain(c);expect(r).toBeGreaterThanOrEqual(0);expect(r).toBeLessThanOrEqual(1);}
+    }
+    expect(PIP_LAYOUT.A).toHaveLength(1);
+    // Rows 0..1 on the left/right columns mirror each other, like a printed deck.
+    for(const rank of ['4','6','8','9','10']){const side=PIP_LAYOUT[rank].filter(([c])=>c!==0).map(([,r])=>r).sort();expect(side.map(r=>+(1-r).toFixed(4)).sort()).toEqual(side.map(r=>+r.toFixed(4)));}
+  });
 });

@@ -8,7 +8,7 @@ import {createActors,type ActorState} from './actors';
 let scene:THREE.Scene,camera:THREE.PerspectiveCamera,actors:ReturnType<typeof createActors>;
 const state:ActorState={phase:'PLAYER_DECISION',suspense:false,dead:null,shotEffect:null,roundNumber:1,revealed:false};
 beforeEach(()=>{
- vi.spyOn(HTMLCanvasElement.prototype,'getContext').mockImplementation(()=>({fillRect(){},strokeRect(){},fillText(){},save(){},restore(){},translate(){},rotate(){},beginPath(){},moveTo(){},lineTo(){},stroke(){}} as unknown as CanvasRenderingContext2D));
+ vi.spyOn(HTMLCanvasElement.prototype,'getContext').mockImplementation(()=>({fillRect(){},strokeRect(){},fillText(){},save(){},restore(){},translate(){},rotate(){},beginPath(){},moveTo(){},lineTo(){},stroke(){},fill(){},arc(){},closePath(){},bezierCurveTo(){}} as unknown as CanvasRenderingContext2D));
  vi.spyOn(Date,'now').mockReturnValue(100000);
  scene=new THREE.Scene();camera=new THREE.PerspectiveCamera(68,1.6,.055,28);camera.rotation.order='YXZ';camera.position.set(0,1.20,1.05);camera.rotation.x=-.12;scene.add(camera);actors=createActors(scene,camera);
 });
