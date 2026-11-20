@@ -12,6 +12,9 @@ import { HOST, OPPONENTS, type RunStats } from './campaign';
 import { FINAL_HOST_LINE } from './campaignDialogue';
 import { opponentCardReadout } from './presentation';
 
+export const DEFAULT_NAME = 'GUEST 06';
+/** Letters, numbers, spaces, apostrophes and hyphens; at most 16 characters. */
+export function cleanName(raw: string) { return raw.replace(/[^\p{L}\p{N} '\-]/gu, '').replace(/\s+/g, ' ').trim().slice(0, 16); }
 const SUIT = { spades: '♠', hearts: '♥', diamonds: '♦', clubs: '♣' };
 /** Accessible equivalents of the physical cards, without exposing a hidden face. */
 function CardDescription({ card, hidden = false }: { card: Card; hidden?: boolean }) {
@@ -49,6 +52,15 @@ export default function App() {
   const [graphics,setGraphics]=useState<GraphicsMode>(()=>{try{return localStorage.getItem('last-hand-graphics')==='pixel'?'pixel':'cinematic';}catch{return 'cinematic';}});
   const chooseGraphics=(mode:GraphicsMode)=>{setGraphics(mode);try{localStorage.setItem('last-hand-graphics',mode);}catch{/* private mode */}};
   const { game, finishTyping, start, fold, hit, stand, beginTriggerHold, endTriggerHold, spinCylinder, peek, finishSpeech, advanceOpening, skipOpening, setOpponentInView, pauseDecisionClock } = useGame(textSpeed);
+  // Title menu: Story mode asks for a name (kept in this browser only), then plays the prologue film.
+  const [menuStep, setMenuStep] = useState<'menu' | 'name' | 'credits'>('menu');
+  const [playerName, setPlayerName] = useState(() => { try { return cleanName(localStorage.getItem('last-hand-name') ?? '') || DEFAULT_NAME; } catch { return DEFAULT_NAME; } });
+  const [nameDraft, setNameDraft] = useState(() => playerName === DEFAULT_NAME ? '' : playerName);
+  function beginStory() {
+    const name = cleanName(nameDraft) || DEFAULT_NAME;
+    setPlayerName(name); try { localStorage.setItem('last-hand-name', name === DEFAULT_NAME ? '' : name); } catch { /* private mode */ }
+    setMenuStep('menu'); start({ prologue: true });
+  }
   // The decision clock: a ring that empties over 30 seconds, red for the last ten.
   const [clockNow, setClockNow] = useState(() => Date.now());
   useEffect(() => { if (game.decisionDeadline == null) return; setClockNow(Date.now()); const id = setInterval(() => setClockNow(Date.now()), 250); return () => clearInterval(id); }, [game.decisionDeadline]);
@@ -112,7 +124,24 @@ export default function App() {
                 <div className="eyebrow"><span/> A GAME OF NERVE</div>
                 <h1>LAST<br/><span>HAND</span><i>♠</i></h1>
                 <p className="intro-subtitle">Eight guests. Four tables. One door.<br/>A hand you can’t afford to lose.</p>
-                <button className="primary-button sit-button" onClick={start}><span>Sit down</span><ArrowRight size={20}/></button>
+                {menuStep === 'menu' && <nav className="main-menu" aria-label="Main menu">
+                  <button className="primary-button sit-button" onClick={() => setMenuStep('name')}><span>Story mode</span><ArrowRight size={20}/></button>
+                  <button className="menu-option locked" disabled aria-describedby="online-soon"><span>Online 1v1</span><small id="online-soon">COMING SOON</small></button>
+                  <div className="menu-links"><button className="text-button" onClick={openRules}>How to play</button><button className="text-button" onClick={() => setMenuStep('credits')}>Credits</button></div>
+                </nav>}
+                {menuStep === 'name' && <form className="name-entry" onSubmit={event => { event.preventDefault(); beginStory(); }}>
+                  <label htmlFor="guest-name">WHAT DO THEY CALL YOU?</label>
+                  <input id="guest-name" value={nameDraft} maxLength={16} placeholder={DEFAULT_NAME} autoComplete="off" spellCheck={false} autoFocus onChange={event => setNameDraft(event.target.value)}/>
+                  <small>Leave it blank to stay {DEFAULT_NAME}. Saved in this browser only.</small>
+                  <div className="name-actions"><button type="button" className="text-button" onClick={() => setMenuStep('menu')}>Back</button><button type="submit" className="primary-button sit-button"><span>Sit down</span><ArrowRight size={20}/></button></div>
+                </form>}
+                {menuStep === 'credits' && <div className="credits-panel">
+                  <span className="small-label">CREDITS</span>
+                  <p>LAST HAND — an OPIM 3203 team project, UConn, Fall 2026.<br/>Product and development: Eozin (Austin) Seo, with the LAST HAND team.</p>
+                  <p>Built with three.js and React. Code written with help from Codex (OpenAI) and Claude (Anthropic); every change reviewed by the team.</p>
+                  <p className="credits-warning">Contains stylized gun violence. 18+.</p>
+                  <button className="text-button" onClick={() => setMenuStep('menu')}>Back</button>
+                </div>}
                 <p className="audio-notice">Headphones recommended. Gunshots are loud.</p><div className="intro-volume">{volumeControl('master')}</div><div className="intro-meta">SINGLE PLAYER <span>/</span> THREE ROOMS <span>/</span> ONE SURVIVOR</div>
               </div>
               <div className="intro-room-label"><span>THE HOST IS WAITING.</span><i/><small>THE AUDIENCE IS ALREADY HERE.</small></div>
@@ -128,7 +157,7 @@ export default function App() {
                 <span className="transmission-hint">CLICK TO FINISH · CLICK AGAIN TO ADVANCE</span>
               </div>}
               <div className={`result-line ${game.result ? `result-${game.result}` : ''}`} role="status">{statusMessage}</div>
-              {!story && !over && <div className="player-readout"><span className="small-label">YOUR HAND</span><div className="player-total" aria-label={`Your total: ${playerScore.soft ? 'Soft ' : ''}${playerScore.total}`}><b>{playerScore.soft && <small className="soft-prefix">Soft </small>}{game.round?.player.length ? playerScore.total : '—'}</b><span>YOUR TOTAL<br/><small>{playerScore.bust ? 'BUST' : 'CLOSEST TO 21 WINS'}</small></span></div></div>}
+              {!story && !over && <div className="player-readout"><span className="small-label">{playerName} · YOUR HAND</span><div className="player-total" aria-label={`Your total: ${playerScore.soft ? 'Soft ' : ''}${playerScore.total}`}><b>{playerScore.soft && <small className="soft-prefix">Soft </small>}{game.round?.player.length ? playerScore.total : '—'}</b><span>YOUR TOTAL<br/><small>{playerScore.bust ? 'BUST' : 'CLOSEST TO 21 WINS'}</small></span></div></div>}
               {!story && !over && <div className="game-actions">{game.phase === 'HOST_FORCE_SHOT' ? <span className="host-enforcement">{game.forceTarget==='ai'?'THE HOST IS COMPLETING THEIR TURN.':'THE HOST IS COMPLETING YOUR TURN.'}</span> : game.phase === 'PLAYER_SHOOTING' ? <>
                 {game.abilities.player.spin && <button className="secondary-button spin-button" onClick={spinCylinder} disabled={!game.awaitingTrigger || game.triggerHeld || game.triggerProgress > 0 || !!game.spinning}>SPIN CYLINDER<RotateCcw size={15}/></button>}
                 {game.triggerRemainingMs != null && <span className={`trigger-countdown ${game.triggerRemainingMs < 5000 ? 'urgent' : ''}`} role="timer" aria-label="Time remaining before Host assistance">{Math.ceil(game.triggerRemainingMs / 1000)}s</span>}
@@ -154,9 +183,16 @@ export default function App() {
           {game.dead === 'player' && (game.phase === 'ROUND_RESULT' || (game.phase === 'ENDING_DEATH' && game.storyStage === 'fall')) && <div className={`player-death-overlay ${CONFIG.GORE_LEVEL === 'low' ? 'low-gore' : ''}`}>
             {CONFIG.GORE_LEVEL !== 'low' && <svg className="blood-overlay" viewBox="0 0 1440 810"><path d="M0 0h130l-65 110 95 80-130-40L0 290zm1440 0h-165l75 95-70 155 100-65 60 110zM0 810V650l120 40 100-35-20 80 100 75zm1440 0h-280l80-120 80 30 120-130z"/><g stroke="#d0d2bb" strokeWidth="1" fill="none" opacity=".4"><path d="M930 320l-230-70-180-140M930 320l130-290M930 320l330 140 180-20M930 320l-20 160 220 330M930 320L500 670l-80 140M700 250l-60 80-180 20M1060 30l10 160 180 20M910 480l-130 70-50 260"/></g></svg>}
           </div>}
-          {opening && <div className="opening-controls"><span>{game.cinematic?.mode === 'arrival' ? `ROOM ${game.roomNumber} / 3` : game.introShort ? 'WELCOME BACK.' : `THE RULES · ${Math.min(game.introIndex + 1, 6)} / 6`}</span><button className="secondary-button" onClick={advanceOpening} disabled={game.storyStage !== 'rules'}>Continue<ArrowRight size={17}/></button><button className="text-button skip-opening" onClick={skipOpening}>Skip introduction</button></div>}
+          {game.storyStage === 'prologue' && <div className="prologue-overlay" key={game.cinematic?.startedAt}>
+            <div className="prologue-cctv"><span className="rec-dot"/> CAM 06 · SUBLEVEL 06 · REC</div>
+            <p className="prologue-line l1">Eight guests were invited.</p>
+            <p className="prologue-line l2">None of them remember saying yes.</p>
+            <p className="prologue-line l3"><b>{playerName}.</b> Seat six.</p>
+            <div className="prologue-fade" aria-hidden="true"/>
+          </div>}
+          {opening && <div className="opening-controls"><span>{game.storyStage === 'prologue' ? 'PROLOGUE' : game.cinematic?.mode === 'arrival' ? `ROOM ${game.roomNumber} / 3` : game.introShort ? 'WELCOME BACK.' : `THE RULES · ${Math.min(game.introIndex + 1, 6)} / 6`}</span>{game.storyStage !== 'prologue' && <button className="secondary-button" onClick={advanceOpening} disabled={game.storyStage !== 'rules'}>Continue<ArrowRight size={17}/></button>}<button className="text-button skip-opening" onClick={skipOpening}>Skip introduction</button></div>}
           {story && <div className={`story-overlay story-${game.phase.toLowerCase()} story-${game.storyStage}`} aria-hidden="true"><div className="hood-fabric"/><span className="story-room-label">{game.phase === 'TRANSITION' ? `ROOM ${game.roomNumber} / 3` : ''}</span>{game.phase === 'ENDING_DEATH' && game.storyStage === 'no-signal' && <span className="no-signal">NO SIGNAL</span>}{game.phase === 'ENDING_WIN' && game.storyStage === 'title' && <span className="ending-title">LAST HAND</span>}</div>}
-          {over && <div className="end-screen campaign-end"><div className="end-content"><span className="eyebrow">TRANSMISSION ENDED</span><h2>{game.stats.roomsCleared === 3 ? 'SURVIVED' : 'YOU DIED'}<span>.</span></h2><p>{game.stats.roomsCleared === 3 ? 'One guest. One open door.' : `Room ${game.roomNumber}. Your seat is empty.`}</p><RunSummary stats={game.stats} guests={game.guestsRemaining}/><button className="primary-button" onClick={start}><RotateCcw size={17}/>Play Again<ArrowRight size={18}/></button><span className="end-footnote">THE AUDIENCE WILL BE WAITING.</span></div></div>}
+          {over && <div className="end-screen campaign-end"><div className="end-content"><span className="eyebrow">TRANSMISSION ENDED</span><h2>{game.stats.roomsCleared === 3 ? 'SURVIVED' : 'YOU DIED'}<span>.</span></h2><p>{game.stats.roomsCleared === 3 ? 'One guest. One open door.' : `Room ${game.roomNumber}. Your seat is empty.`}</p><span className="run-name">{playerName}</span><RunSummary stats={game.stats} guests={game.guestsRemaining}/><button className="primary-button" onClick={() => start()}><RotateCcw size={17}/>Play Again<ArrowRight size={18}/></button><span className="end-footnote">THE AUDIENCE WILL BE WAITING.</span></div></div>}
         </section>
       </div>
     </main>

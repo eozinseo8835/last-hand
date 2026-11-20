@@ -14,7 +14,7 @@ import type { DialogueCategory } from './dialogue';
 import { tableAudio } from './audio';
 import { createVoicePlan } from './voice';
 import { chooseRoundEvent, cosmeticRandom } from './tension';
-import { OPENING_STAGES, stageDurationMs, type CinematicStage } from './cinematics';
+import { OPENING_STAGES, PROLOGUE_MS, stageDurationMs, type CinematicStage } from './cinematics';
 import { DISTANT_SHOT_GAP_MS } from './roomLife';
 
 vi.mock('./Scene', () => ({ default: () => null }));
@@ -75,7 +75,11 @@ function button(text: string): HTMLButtonElement {
   if (!found) throw new Error(`Button not found: ${text}`);
   return found;
 }
-function clickRaw(text: string) { act(() => button(text).click()); }
+function clickRaw(text: string) {
+  // Story mode leads to the name step, whose submit button is "Sit down".
+  if (text === 'Sit down' && ![...container.querySelectorAll('button')].some(node => node.textContent?.includes('Sit down'))) act(() => button('Story mode').click());
+  act(() => button(text).click());
+}
 function click(text: string) {
   clickRaw(text);
   if (text === 'Sit down') clickRaw('Skip introduction');
@@ -411,7 +415,7 @@ describe('rendered blackjack controls and hidden information', () => {
     mount(<App/>); advance(1000);
     expect(tableAudio.init).not.toHaveBeenCalled(); expect(tableAudio.startVoice).not.toHaveBeenCalled();
     clickRaw('Sit down'); expect(tableAudio.init).toHaveBeenCalledTimes(1);
-    advance(GUARD_TO_RULES);
+    expect(container.querySelector('.prologue-overlay')).not.toBeNull(); advance(PROLOGUE_MS + GUARD_TO_RULES);
     expect(tableAudio.startVoice).toHaveBeenLastCalledWith(createVoicePlan(OPENING_LINES[0], 'intro_rules', false, 0, HOST.voice), 'host');
     const introVoice = vi.mocked(tableAudio.startVoice).mock.calls.at(-1)![0];
     clickRaw('Skip introduction'); advance(DEAL_COMPLETE);
@@ -1371,4 +1375,19 @@ describe('Small Update 2 reading and public reactions',()=>{
  it('waits until the empty-click return has finished before the survival reaction',()=>{
   startPlayerShot();holdTrigger();expect(latest.game.reaction?.kind).not.toBe('player-click');advance(GUN_SET_DOWN_MS+GUN_SLIDE_MS+49);expect(latest.game.reaction?.kind).not.toBe('player-click');advance(1);expect(latest.game.gunTransfer).toBeNull();expect(latest.game.reaction).toMatchObject({kind:'player-click'});
  });
+});
+
+describe('story prologue', () => {
+  it('plays the establishing film only when asked, can be skipped to the hood, and leads into the normal opening', () => {
+    mount(); act(() => latest.start({ prologue: true }));
+    expect(latest.game.phase).toBe('OPENING'); expect(latest.game.storyStage).toBe('prologue');
+    expect(latest.game.tiesCut).toEqual({ player: false, ai: false });
+    advance(PROLOGUE_MS); expect(latest.game.storyStage).toBe('hooded');
+    act(() => latest.start({ prologue: true })); expect(latest.game.storyStage).toBe('hooded'); // a replay goes straight to the short opening
+  });
+  it('skips just the film', () => {
+    mount(); act(() => latest.start({ prologue: true })); advance(2000);
+    act(() => latest.skipPrologue()); expect(latest.game.storyStage).toBe('hooded');
+    advance(PROLOGUE_MS); expect(latest.game.storyStage).not.toBe('hooded');
+  });
 });

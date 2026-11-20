@@ -99,3 +99,9 @@ Characters now match the cinematic room. All joints, sizes and poses are unchang
 - Number cards now print the real pip count in the standard layout (the 7 of hearts shows seven hearts); pips below the middle are upside down like a printed deck.
 - Suits are drawn as shapes instead of font characters, so they look the same on every computer.
 - Corner indices top-left and bottom-right; J/Q/K use a simple original mirrored court design.
+
+## Story frame: title menu, name, prologue film
+
+- The title screen is now a menu: **Story mode**, **Online 1v1** (locked, "Coming soon"), How to play and Credits.
+- Story mode asks "What do they call you?" The name (letters, numbers, spaces; 16 characters max) is kept only in this browser and appears in the prologue, above your hand total and on the end screen. Blank stays GUEST 06.
+- A 13-second 3D prologue plays before the hood opening on a fresh run: a ceiling security camera over your shoulder, a slow move across the felt to the hooded opponent, then a push in on you, hooded in seat six. Captions: "Eight guests were invited." / "None of them remember saying yes." / "NAME. Seat six." "Skip introduction" still skips everything; replays go straight to the short opening.

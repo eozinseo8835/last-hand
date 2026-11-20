@@ -16,7 +16,7 @@ import type { RoomNumber, RunStats } from './campaign';
 import { HOST_DIALOGUE,OPPONENT_DIALOGUE,NERVOUS_BEGGING,FINAL_HOST_LINE, OPENING_LINES, ROOM_ARRIVAL, SHORT_INTRO, chooseExchange, chooseHostLine, shouldExchange } from './campaignDialogue';
 import type { HostCategory, SpeechLine } from './campaignDialogue';
 import { createVoicePlan } from './voice';
-import { OPENING_STAGES, TRANSFER_STAGES, stageDurationMs, tiesForStage, type CinematicMode, type CinematicStage, type CinematicState } from './cinematics';
+import { OPENING_STAGES, PROLOGUE_MS, TRANSFER_STAGES, stageDurationMs, tiesForStage, type CinematicMode, type CinematicStage, type CinematicState } from './cinematics';
 import { DISTANT_SHOT_GAP_MS, createAmbientEvent, nextAmbientDelay, type AmbientEvent, type DistantShot } from './roomLife';
 
 export type Session = {
@@ -414,6 +414,11 @@ export function useGame(textSpeed:TextSpeed='Normal') {
     const cinematic: CinematicState = { stage, startedAt: Date.now(), mode };
     update({ phase: 'OPENING', storyStage: stage, cinematic, tiesCut: tiesForStage(cinematic) });
     const duration = stageDurationMs(stage);
+    if (stage === 'prologue') {
+      later(() => tableAudio.playStory('boots'), PROLOGUE_MS * .74, storyTimers.current);
+      later(() => runOpeningStage('hooded', mode), duration, storyTimers.current);
+      return;
+    }
     if (stage === 'hooded') { tableAudio.setHooded(true); tableAudio.playStory('hood'); tableAudio.playStory('sob'); }
     if (stage === 'door-open') tableAudio.playStory('door-creak');
     if (stage === 'guard-approach' || stage === 'guard-exit') tableAudio.playStory('boots');
@@ -448,6 +453,12 @@ export function useGame(textSpeed:TextSpeed='Normal') {
       if (next >= openingLines().length) runOpeningStage('complete', mode); else showOpeningLine(next);
     }, 100);
   }
+  /** Skip only the establishing film; the hood, the guard and the rules still play. */
+  function skipPrologue() {
+    if (current.current.phase !== 'OPENING' || current.current.storyStage !== 'prologue') return;
+    clearGroup(storyTimers.current);
+    runOpeningStage('hooded', 'full');
+  }
   function skipOpening() {
     if (current.current.phase !== 'OPENING') return;
     clearGroup(storyTimers.current); clearSpeech(); tableAudio.setHooded(false);
@@ -455,7 +466,7 @@ export function useGame(textSpeed:TextSpeed='Normal') {
     speechGap.current = later(() => { speechGap.current = null; pumpSpeech(); }, 100);
     nextRound();
   }
-  function beginMatch(roomNumber: RoomNumber, arrival: boolean) {
+  function beginMatch(roomNumber: RoomNumber, arrival: boolean, prologue = false) {
     clearGroup(holdTimers.current); clearGroup(drainTimers.current);
     cancel(impatient.current); impatient.current = null;
     const state = current.current;
@@ -467,7 +478,8 @@ export function useGame(textSpeed:TextSpeed='Normal') {
       triggerHeld: false, triggerProgress: 0, spinning: null, peekActor: null, peekedCard: null,
       distantShot: null, ambientEvent: null, aiShotStartedAt: null, aiShotDurationMs: null,
       phase: 'OPENING', tiesCut: { player: false, ai: false } });
-    runOpeningStage('hooded', arrival ? 'arrival' : state.introShort ? 'short' : 'full');
+    const mode = arrival ? 'arrival' : state.introShort ? 'short' : 'full';
+    runOpeningStage(prologue && mode === 'full' ? 'prologue' : 'hooded', mode);
   }
   function runTransferStage(index: number, leavingRoom: RoomNumber) {
     const stage = TRANSFER_STAGES[index];
@@ -606,7 +618,8 @@ export function useGame(textSpeed:TextSpeed='Normal') {
     update({ phase: 'SWEEPING', suspense: false, awaitingTrigger: false, triggerHeld: false, triggerProgress: 0, peekActor: null, peekedCard: null });
     later(nextRound, 700);
   }
-  function start() {
+  /** `prologue` plays the establishing film first (the menu's Story mode does; replays and tests skip it). */
+  function start(options: { prologue?: boolean } = {}) {
     attentionPlan.current = null; penaltyShot.current = false; opponentInView.current = true;
     seenLoud.current.clear(); loudAt.current = reliefAt.current = -Infinity;
     clearTimers(); tableAudio.init(); tableAudio.stopVoice(); tableAudio.playAmbient(null);
@@ -618,7 +631,7 @@ export function useGame(textSpeed:TextSpeed='Normal') {
     const fresh = initial();
     fresh.introShort = openingSeen.current; openingSeen.current = true;
     current.current = fresh; setGame(fresh);
-    beginMatch(1, false);
+    beginMatch(1, false, !!options.prologue);
   }
   function fold() {
     const state = current.current;
@@ -852,5 +865,5 @@ export function useGame(textSpeed:TextSpeed='Normal') {
     if (paused && state.decisionDeadline !== null) { clearGroup(decisionTimers.current); update({ decisionPausedMs: Math.max(0, state.decisionDeadline - Date.now()), decisionDeadline: null }); }
     else if (!paused && state.decisionPausedMs !== null && (state.phase === 'PLAYER_DECISION' || state.phase === 'PLAYER_PEEKING')) armDecisionClock(Math.max(1000, state.decisionPausedMs));
   }
-  return { game, finishTyping, start, fold, hit, stand, pullTrigger, pauseDecisionClock, beginTriggerHold, endTriggerHold, spinCylinder, peek, finishSpeech, advanceOpening, skipOpening, setOpponentInView, forceShot };
+  return { game, finishTyping, start, fold, hit, stand, pullTrigger, pauseDecisionClock, beginTriggerHold, endTriggerHold, spinCylinder, peek, finishSpeech, advanceOpening, skipOpening, skipPrologue, setOpponentInView, forceShot };
 }

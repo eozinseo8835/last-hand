@@ -12,7 +12,8 @@ import { eventDoorPulse, type OpponentTell, type RoundEvent, type Side } from '.
 import { createActors } from './scene/actors';
 import { createCeilingFeed, createMonitorWall } from './scene/monitors';
 import { cameraRecenter, createLeanState, createLookKeys, createLookState, dragLook, updateKeyboardLook, updateLean, updateLook, wheelLean } from './scene/camera';
-import { cinematicProgress, focusRecovery, hoodCoverage, type CinematicState } from './cinematics';
+import { cinematicProgress, focusRecovery, hoodCoverage, prologueShot, type CinematicState } from './cinematics';
+import { createBurlapHood } from './scene/hood';
 import type { AmbientEvent, DistantShot } from './roomLife';
 import { playerPeekDeck, HOST_HEAD } from './tableLayout';
 import { applyCinematicLook, FilmPipeline, FILM_EFFECT_UNIFORMS } from './scene/cinematic';
@@ -218,6 +219,16 @@ export default function Scene(props: SceneProps) {
     surveillancePlayer.position.set(0,.45,.90); surveillancePlayer.rotation.y=Math.PI;
     surveillanceRig.pose('seated-resting');
     surveillancePlayer.traverse(object=>object.layers.set(1)); world.add(surveillancePlayer);
+    // Prologue: an outside camera that also sees the player's own hooded body (layer 1), before the first-person opening.
+    const prologueHood = createBurlapHood(); surveillanceRig.head.add(prologueHood.group); prologueHood.update(0);
+    prologueHood.group.traverse(object => object.layers.set(1)); prologueHood.group.visible = false;
+    const prologueCamera = new THREE.PerspectiveCamera(46, 16 / 9, .05, 28); prologueCamera.layers.enable(1); world.add(prologueCamera);
+    const prologueFrom = new THREE.Vector3(), prologueTo = new THREE.Vector3(), prologueLook = new THREE.Vector3();
+    const PROLOGUE_SHOTS: [[number, number, number], [number, number, number], [number, number, number]][] = [
+      [[1.75, 2.2, 2.25], [1.55, 2.12, 1.95], [-.05, .78, -.35]],   // ceiling camera over the player's shoulder
+      [[.80, 1.22, .50], [.42, 1.18, .38], [0, 1.02, -.80]],        // across the felt at the hooded opponent
+      [[-.80, 1.32, -.25], [-.42, 1.22, .28], [0, 1.08, .90]],     // pushing in on you, hooded, in seat six
+    ];
     const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
     const dustGeometry=new THREE.BufferGeometry(),dustPositions=new Float32Array(90);for(let i=0;i<30;i++){dustPositions[i*3]=Math.sin(i*7)*.8;dustPositions[i*3+1]=1.4+(i%7)*.07;dustPositions[i*3+2]=-.3+(i%5)*.15;}dustGeometry.setAttribute('position',new THREE.BufferAttribute(dustPositions,3));const dust=new THREE.Points(dustGeometry,new THREE.PointsMaterial({color:0xb7ac8a,size:.006,transparent:true,opacity:0}));world.add(dust);let dustAt=-Infinity;
     const blood = new THREE.Group();
@@ -259,7 +270,7 @@ export default function Scene(props: SceneProps) {
         renderer.setSize(width, CONFIG.PIXEL_HEIGHT, false);
         target.setSize(width, CONFIG.PIXEL_HEIGHT);
       }
-      camera.aspect = aspect; camera.updateProjectionMatrix();
+      camera.aspect = aspect; camera.updateProjectionMatrix(); prologueCamera.aspect = aspect; prologueCamera.updateProjectionMatrix();
     }
     const observer = new ResizeObserver(resize); observer.observe(mount); resize();
 
@@ -415,10 +426,26 @@ export default function Scene(props: SceneProps) {
       // No camera lunge during the player's grab: the revolver is delivered within reach and taken with a direct reach.
       if(state.forceTarget!=='ai'&&(state.phase==='HOST_FORCE_SHOT'||state.forceShotAt!=null&&!!state.gunTransfer)){const before=camera.quaternion.clone();camera.lookAt(HOST_HEAD[0],HOST_HEAD[1]-.02,HOST_HEAD[2]);camera.quaternion.slerpQuaternions(before,camera.quaternion.clone(),THREE.MathUtils.smoothstep((epoch-(state.forceShotAt??epoch))/1000,1.1,2.1));}
 
+      const prologue = state.cinematic?.stage === 'prologue';
+      // Everything in the room behaves as in the hooded opening; only the camera is outside.
+      const staged = prologue ? { ...state, storyStage: 'hooded', cinematic: { ...state.cinematic!, stage: 'hooded' as const } } : state;
+      if (prologue) {
+        const { shot, t } = prologueShot(cinematicProgress(state.cinematic, epoch)), [from, to, at] = PROLOGUE_SHOTS[shot];
+        const ease = THREE.MathUtils.smoothstep(t, 0, 1) * (motionPreference.matches ? .3 : 1);
+        prologueCamera.position.lerpVectors(prologueFrom.set(...from), prologueTo.set(...to), ease);
+        prologueCamera.lookAt(prologueLook.set(...at));
+        if (shot === 0) prologueCamera.rotation.z += Math.sin(time * .6) * .004;
+        prologueCamera.updateMatrixWorld(true);
+        const tied = (x: number) => new THREE.Vector3(x, .30, .24);
+        surveillanceRig.pose('seated-resting'); surveillanceRig.head.rotation.x += .22; surveillanceRig.head.rotation.y += Math.sin(time * .5) * .08;
+        surveillanceRig.solveHand('left', tied(-.03)); surveillanceRig.solveHand('right', tied(.03));
+      } else if (prologueHood.group.visible) surveillanceRig.pose('seated-resting');
+      prologueHood.group.visible = prologue;
+      canvas.dataset.prologue = String(prologue);
       camera.updateMatrixWorld(true);
       room.update(time, dt, state.danger, state.suspense, impulse, event, epoch, {
         roomNumber: state.roomNumber, phase: state.phase === 'GAME_OVER' && winPose ? 'ENDING_WIN' : state.phase,
-        storyStage: state.storyStage, stageElapsed, cinematic: state.cinematic, distantShot: state.distantShot, ambientEvent: state.ambientEvent,
+        storyStage: staged.storyStage, stageElapsed, cinematic: staged.cinematic, distantShot: state.distantShot, ambientEvent: state.ambientEvent,
         tension: Math.min(1, (state.chambersFired ?? 0) / 5), triggerHeld: !!state.triggerHeld || state.phase === 'AI_SHOOTING' || state.phase === 'HOST_FORCE_SHOT',
         guestsGone: state.guestsRemaining === undefined ? undefined : 8 - state.guestsRemaining,
       });
@@ -433,7 +460,8 @@ export default function Scene(props: SceneProps) {
       if(Math.abs(camera.fov-pushedFov)>.01){camera.fov=pushedFov;camera.updateProjectionMatrix();}
       canvas.dataset.fovPush=fovPush.toFixed(3);
       tableAudio.setSoundState({active:state.phase!=='START'&&!state.dead,fired:state.chambersFired??0,room:roomNumber,progress:shotProgress,holding:!!state.triggerHeld,hesitating:state.phase==='AI_SHOOTING',stress:state.stress??.2,nervous:roomNumber===1,speaking:!!state.speaker});
-      actors.update(time, dt, { ...state,worldSound:tableAudio.getWorldSound(), roomNumber, event, voiceLevel, hostVoiceLevel, captiveVoiceLevel, reducedMotion: motionPreference.matches });
+      actors.update(time, dt, { ...staged,worldSound:tableAudio.getWorldSound(), roomNumber, event, voiceLevel, hostVoiceLevel, captiveVoiceLevel, reducedMotion: motionPreference.matches });
+      if(prologue)actors.playerHands.visible=false;
       const reactionImpact=actors.captive.userData.reactionImpact;
       if(reactionImpact&&!reactionSounds.has(reactionImpact.id)){reactionSounds.add(reactionImpact.id);if(reactionSounds.size>64)reactionSounds.delete(reactionSounds.values().next().value!);tableAudio.playReaction(reactionImpact.sound,reactionImpact.position);}
       camera.rotation.z+=actors.reactionShake*(motionPreference.matches?.25:1);camera.updateMatrixWorld(true);
@@ -451,7 +479,7 @@ export default function Scene(props: SceneProps) {
         const heel = Math.floor(time * (4 + (state.stress ?? 0) * 2));
         if (body.bounce > .008 && lastHeel !== heel) { lastHeel = heel; tableAudio.playContact('heel', state.stress ?? .2); }
       }
-      monitors.update(state, time, epoch);
+      monitors.update(staged, time, epoch);
       const signalLost = (state.phase === 'ENDING_DEATH' && state.storyStage === 'no-signal') || (state.phase === 'GAME_OVER' && state.dead === 'player');
       monitors.setSignalLost(signalLost);
       postMaterial.uniforms.forcedContact.value=0;
@@ -518,12 +546,13 @@ export default function Scene(props: SceneProps) {
       renderer.shadowMap.needsUpdate = renderedFrames++ % 4 === 0;
       const ceilingActive = !signalLost && state.phase !== 'GAME_OVER' && (roomNumber === 3 || state.phase === 'ENDING_DEATH');
       ceilingFeed.render(renderer, time, ceilingActive);
-      monitors.renderTables(renderer, time, { camera, busy: !!state.suspense || ['PLAYER_SHOOTING', 'AI_SHOOTING', 'HOST_FORCE_SHOT'].includes(state.phase) });
+      monitors.renderTables(renderer, time, { camera: prologue ? prologueCamera : camera, busy: !!state.suspense || ['PLAYER_SHOOTING', 'AI_SHOOTING', 'HOST_FORCE_SHOT'].includes(state.phase) });
       canvas.dataset.tableVideoFrames = String(monitors.group.userData.videoFrames ?? 0);
       canvas.dataset.ceilingFeed = String(ceilingActive); canvas.dataset.ceilingFrames = String(ceilingFeed.frames);
       const deathMonitor = state.phase === 'ENDING_DEATH' && state.storyStage !== 'fall';
-      if (film) film.renderScene(world, camera);
-      else { renderer.setRenderTarget(target); renderer.render(world, camera); }
+      const view = prologue ? prologueCamera : camera;
+      if (film) film.renderScene(world, view);
+      else { renderer.setRenderTarget(target); renderer.render(world, view); }
       postMaterial.uniforms.sceneTexture.value = signalLost ? monitors.signalTexture : deathMonitor ? ceilingFeed.target.texture : target.texture;
       if (++fpsFrames > 0 && now - fpsStart > 1000) {
         canvas.dataset.fps = (fpsFrames * 1000 / (now - fpsStart)).toFixed(1);

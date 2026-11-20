@@ -2,9 +2,12 @@ export type CinematicMode = 'full' | 'short' | 'arrival' | 'transfer';
 /** The guard removes both hoods, cuts both restraints, and only then leaves; the Host's rules follow with everyone free. */
 export const OPENING_STAGES = ['hooded', 'door-open', 'guard-approach', 'player-unhood', 'player-focus', 'opponent-unhood', 'cut-opponent', 'cut-player', 'rub-wrists', 'guard-exit', 'rules', 'complete'] as const;
 export const TRANSFER_STAGES = ['guards-enter', 'transfer-hood', 'lift', 'dragging', 'door'] as const;
-export type CinematicStage = typeof OPENING_STAGES[number] | typeof TRANSFER_STAGES[number];
+/** A short 3D establishing film before the first opening: security-camera views of the room, then the hood. */
+export const PROLOGUE_MS = 13000;
+export type CinematicStage = 'prologue' | typeof OPENING_STAGES[number] | typeof TRANSFER_STAGES[number];
 export type CinematicState = { stage: CinematicStage; startedAt: number; mode: CinematicMode };
 const DURATIONS: Record<CinematicStage, number> = {
+  prologue: PROLOGUE_MS,
   hooded: 700, 'door-open': 850, 'guard-approach': 3000, 'player-unhood': 850,
   'player-focus': 1500, 'opponent-unhood': 4500, 'guard-exit': 3500, rules: 0,
   'cut-opponent': 1500, 'cut-player': 3500, 'rub-wrists': 650, complete: 0,
@@ -34,3 +37,10 @@ export function tiesForStage(state: CinematicState | null | undefined): { player
   return { player: false, ai: state.stage === 'cut-player' };
 }
 export const hoodAllowsLook = (state: CinematicState | null | undefined) => !!state && ['hooded', 'door-open', 'guard-approach'].includes(state.stage);
+
+/** The prologue's three shots: 0 = ceiling camera, 1 = across the table at the opponent, 2 = push in on the player. */
+export function prologueShot(progress: number): { shot: 0 | 1 | 2; t: number } {
+  if (progress < .36) return { shot: 0, t: progress / .36 };
+  if (progress < .68) return { shot: 1, t: (progress - .36) / .32 };
+  return { shot: 2, t: (progress - .68) / .32 };
+}

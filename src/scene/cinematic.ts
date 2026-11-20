@@ -402,6 +402,8 @@ export const filmFragment = `
   uniform float useDepth, bloomStrength, time, near, far, aperture, exposure;
   uniform float triggerDarkening, heartbeatPulse, forcedContact, hoodCovered, hoodLift, hoodDrop, focusBlur, glare, squint;
   uniform float farFocus;
+  uniform float darkness;
+  uniform vec3 shadowMul, shadowLift, highMul; uniform float saturation;
   uniform vec2 res; varying vec2 vUv;
   float lin(float d){ float z = d*2.-1.; return 2.*near*far/(far+near-z*(far-near)); }
   float h(vec2 p){ return fract(sin(dot(p, vec2(12.9898,78.233)) + time*7.1) * 43758.5453); }
@@ -430,9 +432,11 @@ export const filmFragment = `
     c *= exposure;
     c = aces(c);
     float l = dot(c, vec3(.299,.587,.114));
-    c = mix(c, c*vec3(.86,1.0,1.04) + vec3(0.,.008,.012), 1.-smoothstep(.0,.45,l));   // teal shadows
-    c = mix(c, c*vec3(1.07,1.0,.88), smoothstep(.35,1.,l));                            // warm highlights
-    c = mix(vec3(l), c, .9);
+    c = mix(c, c*shadowMul + shadowLift*(1.-darkness), 1.-smoothstep(.0,.45,l));   // shadow tint (lift fades as the room darkens)
+    // Darkness crushes the deep shadows (room edges, walls) while the lit table and faces keep their level.
+    float crush = darkness * .055; c = max(c - crush, vec3(0.)) / (1. - crush);
+    c = mix(c, c*highMul, smoothstep(.35,1.,l));                                         // highlight tint
+    c = mix(vec3(l), c, saturation);
     vec2 uv = off * vec2(1.12, 1.);
     float v = mix(.18, 1., 1. - smoothstep(.28, .95, length(off*vec2(1.15,1.))));
     v *= 1. - smoothstep(.03, .72, length(uv)) * triggerDarkening * (.30 + heartbeatPulse * .12);
@@ -475,7 +479,7 @@ export class FilmPipeline {
       fragmentShader: 'uniform sampler2D tex; uniform vec2 dir; varying vec2 vUv; void main(){ vec3 s = texture2D(tex,vUv).rgb*.227; s += (texture2D(tex,vUv+dir*1.38).rgb + texture2D(tex,vUv-dir*1.38).rgb)*.316; s += (texture2D(tex,vUv+dir*3.23).rgb + texture2D(tex,vUv-dir*3.23).rgb)*.070; gl_FragColor=vec4(s,1.); }' });
     this.finalMat = new THREE.ShaderMaterial({ vertexShader: quadVS, fragmentShader: filmFragment, depthTest: false, depthWrite: false, toneMapped: false,
       uniforms: { tex: { value: null }, depth: { value: depth }, bloom: { value: null }, useDepth: { value: 1 }, bloomStrength: { value: .9 }, time: { value: 0 },
-        near: { value: .055 }, far: { value: 28 }, farFocus: { value: 0 }, aperture: { value: .7 }, exposure: { value: 1.25 }, res: { value: new THREE.Vector2(width, height) },
+        near: { value: .055 }, far: { value: 28 }, farFocus: { value: 0 }, darkness: { value: 0 }, shadowMul: { value: new THREE.Vector3(.86, 1, 1.04) }, shadowLift: { value: new THREE.Vector3(0, .008, .012) }, highMul: { value: new THREE.Vector3(1.07, 1, .88) }, saturation: { value: .9 }, aperture: { value: .7 }, exposure: { value: 1.25 }, res: { value: new THREE.Vector2(width, height) },
         triggerDarkening: { value: 0 }, heartbeatPulse: { value: 0 }, forcedContact: { value: 0 }, hoodCovered: { value: 0 }, hoodLift: { value: 0 }, hoodDrop: { value: 1 },
         focusBlur: { value: 0 }, glare: { value: 0 }, squint: { value: 0 } } });
     this.quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.brightMat); this.qs.add(this.quad);

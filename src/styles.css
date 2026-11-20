@@ -47,7 +47,7 @@ a { color: inherit; text-decoration: none; }
 .scene-index { position: absolute; left: 64px; top: 42px; display: flex; align-items: center; gap: 10px; color: #b1b69b; font-size: 10px; letter-spacing: 1.7px; }
 .live-dot { width: 5px; height: 5px; background: #cfa16a; display: inline-block; box-shadow: 0 0 8px #ca9a5c33; flex: none; animation: indicator 9s steps(1) infinite; }
 .index-line { height: 1px; width: 28px; background: #788163; margin: 0 4px 0 8px; }
-.intro-copy { position: absolute; left: 76px; top: 146px; }
+.intro-copy { position: absolute; left: 76px; top: 110px; }
 .eyebrow { font-size: 10px; letter-spacing: 2.5px; color: #c49c68; display: flex; align-items: center; gap: 11px; }
 .eyebrow > span { height: 1px; width: 20px; background: #c49c68; }
 h1 { font-family: 'DM Sans', sans-serif; font-size: 117px; font-weight: 700; line-height: .86; letter-spacing: -7px; margin: 30px 0 25px; width: 400px; position: relative; color: #e1dec2; text-shadow: 2px 0 #bdbba828, -1px 1px #8c9a6f2e; }
@@ -61,7 +61,7 @@ h1 > span { color: #aeb99b; }h1 > i { font-family: Georgia, serif; font-size: 23
 .intro-meta span { color: #b9a374; }
 .intro-room-label { position: absolute; left: 1045px; top: 231px; display: flex; flex-direction: column; gap: 11px; font-size: 10px; letter-spacing: 2px; color: #c3c9ac; }
 .intro-room-label i { height: 1px; width: 42px; background: #c6c09d60; }.intro-room-label small { font-size: 7px; letter-spacing: 1px; color: #8d9a7e; }
-.intro-rules { position: absolute; top: 664px; left: 76px; display: flex; gap: 28px; border-top: 1px solid #8f9b7147; padding-top: 23px; }
+.intro-rules { position: absolute; top: 700px; left: 76px; display: flex; gap: 28px; border-top: 1px solid #8f9b7147; padding-top: 23px; }
 .intro-rules > div { display: flex; gap: 12px; min-width: 158px; }.intro-rules > div > span { color: #b49564; font-size: 9px; padding-top: 4px; }
 .intro-rules p { margin: 0; color: #7d9072; font-size: 11px; line-height: 1.8; }.intro-rules b { color: #b3bea2; font-weight: 400; }
 .scene-bottom { position: absolute; left: 40px; right: 40px; bottom: 22px; display: flex; justify-content: space-between; font-size: 8px; letter-spacing: 1.5px; color: #8a9b79; }
@@ -215,3 +215,40 @@ h1 > span { color: #aeb99b; }h1 > i { font-family: Georgia, serif; font-size: 23
 .dialogue-log h2 { font:18px monospace;margin:0; }.dialogue-log button { background:transparent;border:0;color:inherit; }
 .dialogue-log p { font-size:11px;color:#bfc4af; }.dialogue-log ol { list-style:none;padding:0; }.dialogue-log li { display:grid;gap:7px;padding:14px 0;border-top:1px solid #45503e;font-size:15px;line-height:1.6; }.dialogue-log b { font-size:11px;letter-spacing:1px;color:#d0c293; }
 .audio-settings select { background:#172019;color:#efe9d8;border:1px solid #6a725f;padding:5px; }
+
+/* Title menu, name entry and credits */
+.main-menu { display: flex; flex-direction: column; align-items: flex-start; gap: 9px; margin-bottom: 14px; }
+.menu-option { width: 224px; height: 42px; display: flex; align-items: center; justify-content: space-between; padding: 0 18px; background: #0f1810cc; border: 1px solid #6d745c80; color: #a9b494; font: inherit; font-size: 13px; letter-spacing: 1px; text-transform: uppercase; }
+.menu-option.locked { cursor: not-allowed; opacity: .72; }
+.menu-option small { font-size: 8px; letter-spacing: 1.2px; color: #c4a275; border: 1px solid #c4a27566; padding: 3px 6px; }
+.menu-links { display: flex; gap: 22px; padding-left: 2px; }
+.menu-links .text-button { font-size: 11px; letter-spacing: 1px; }
+.name-entry { display: flex; flex-direction: column; gap: 8px; width: 300px; margin-bottom: 14px; }
+.name-entry label { font-size: 10px; letter-spacing: 1.6px; color: #c4a275; }
+.name-entry input { height: 46px; padding: 0 14px; background: #070c08e6; border: 1px solid #89936b99; color: #e2e5cf; font: inherit; font-size: 18px; letter-spacing: 2px; text-transform: uppercase; outline: none; }
+.name-entry input:focus { border-color: #caa372; box-shadow: 0 0 0 2px #caa37233; }
+.name-entry small { font-size: 9px; color: #7e8d72; letter-spacing: .5px; }
+.name-actions { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; }
+.credits-panel { width: 340px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; margin-bottom: 14px; }
+.credits-panel p { margin: 0; font-size: 11px; line-height: 1.8; color: #a2b195; }
+.credits-panel .credits-warning { color: #c4a275; }
+.run-name { font-size: 11px; letter-spacing: 2px; color: #c4a275; margin-bottom: 14px; text-transform: uppercase; }
+
+/* Prologue film: letterbox, security-camera label, three captions timed to the three shots (13 s). */
+.prologue-overlay { position: absolute; inset: 0; z-index: 12; pointer-events: none; }
+.prologue-overlay::before, .prologue-overlay::after { content: ''; position: absolute; left: 0; right: 0; height: 72px; background: #000; }
+.prologue-overlay::before { top: 0; } .prologue-overlay::after { bottom: 0; }
+.prologue-cctv { position: absolute; left: 64px; top: 96px; font-size: 11px; letter-spacing: 2px; color: #cfe0c0; text-shadow: 0 0 6px #9fc28a88; opacity: 0; animation: prologueCctv 13s linear both; }
+.prologue-cctv .rec-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #d23a2a; margin-right: 6px; animation: recBlink 1s steps(2) infinite; }
+.prologue-line { position: absolute; left: 0; right: 0; bottom: 120px; margin: 0; text-align: center; font-family: 'DM Sans', sans-serif; font-size: 26px; letter-spacing: .5px; color: #e4e2cf; text-shadow: 0 2px 12px #000; opacity: 0; }
+.prologue-line b { color: #e7b06f; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; }
+.prologue-line.l1 { animation: prologueL1 13s linear both; } .prologue-line.l2 { animation: prologueL2 13s linear both; } .prologue-line.l3 { animation: prologueL3 13s linear both; }
+.prologue-fade { position: absolute; inset: 0; background: #000; animation: prologueFade 13s linear both; }
+@keyframes prologueCctv { 0% { opacity: 0 } 6% { opacity: .95 } 34% { opacity: .95 } 36%, 100% { opacity: 0 } }
+@keyframes prologueL1 { 0%, 6% { opacity: 0 } 10%, 31% { opacity: 1 } 34%, 100% { opacity: 0 } }
+@keyframes prologueL2 { 0%, 40% { opacity: 0 } 44%, 63% { opacity: 1 } 66%, 100% { opacity: 0 } }
+@keyframes prologueL3 { 0%, 73% { opacity: 0 } 77%, 93% { opacity: 1 } 96%, 100% { opacity: 0 } }
+@keyframes prologueFade { 0% { opacity: 1 } 6% { opacity: 0 } 35% { opacity: 0 } 36% { opacity: 1 } 37.5% { opacity: 0 } 67% { opacity: 0 } 68% { opacity: 1 } 69.5% { opacity: 0 } 93% { opacity: 0 } 99%, 100% { opacity: 1 } }
+@keyframes recBlink { to { opacity: 0 } }
+@media (prefers-reduced-motion: reduce) { .prologue-cctv .rec-dot { animation: none; } }
+.stage[data-story-stage="prologue"] .round-hud, .stage[data-story-stage="prologue"] .scene-bottom, .stage[data-story-stage="prologue"] .scene-corner { visibility: hidden; }
