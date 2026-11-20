@@ -16,7 +16,8 @@ import type { RoomNumber, RunStats } from './campaign';
 import { HOST_DIALOGUE,OPPONENT_DIALOGUE,NERVOUS_BEGGING,FINAL_HOST_LINE, OPENING_LINES, ROOM_ARRIVAL, SHORT_INTRO, chooseExchange, chooseHostLine, shouldExchange } from './campaignDialogue';
 import type { HostCategory, SpeechLine } from './campaignDialogue';
 import { createVoicePlan } from './voice';
-import { OPENING_STAGES, PROLOGUE_MS, TRANSFER_STAGES, stageDurationMs, tiesForStage, type CinematicMode, type CinematicStage, type CinematicState } from './cinematics';
+import { MASK_LINE, MASK_MS, PAYOUT_MS } from './storyBeats';
+import { OPENING_STAGES, PROLOGUE_FILM_MS, PROLOGUE_FLASHBACK_MS, TRANSFER_STAGES, stageDurationMs, tiesForStage, type CinematicMode, type CinematicStage, type CinematicState } from './cinematics';
 import { DISTANT_SHOT_GAP_MS, createAmbientEvent, nextAmbientDelay, type AmbientEvent, type DistantShot } from './roomLife';
 
 export type Session = {
@@ -415,7 +416,10 @@ export function useGame(textSpeed:TextSpeed='Normal') {
     update({ phase: 'OPENING', storyStage: stage, cinematic, tiesCut: tiesForStage(cinematic) });
     const duration = stageDurationMs(stage);
     if (stage === 'prologue') {
-      later(() => tableAudio.playStory('boots'), PROLOGUE_MS * .74, storyTimers.current);
+      // The blackout: a hood pulled tight and a body dragged, then the film; boots approach near its end.
+      later(() => tableAudio.playStory('hood-cinch'), PROLOGUE_FLASHBACK_MS - 2200, storyTimers.current);
+      later(() => tableAudio.playStory('drag'), PROLOGUE_FLASHBACK_MS - 1200, storyTimers.current);
+      later(() => tableAudio.playStory('boots'), PROLOGUE_FLASHBACK_MS + PROLOGUE_FILM_MS * .74, storyTimers.current);
       later(() => runOpeningStage('hooded', mode), duration, storyTimers.current);
       return;
     }
@@ -524,7 +528,9 @@ export function useGame(textSpeed:TextSpeed='Normal') {
         later(() => { update({ storyStage: 'stairs' }); hostSay('ending_win', FINAL_HOST_LINE); }, 1800, storyTimers.current);
         later(() => update({ storyStage: 'viewers' }), 5800, storyTimers.current);
         later(() => update({ storyStage: 'title' }), 7300, storyTimers.current);
-        later(finishRun, 9100, storyTimers.current);
+        // The twist: the audience has voted, and the survivor is offered the Host's mask for next season.
+        later(() => { update({ storyStage: 'mask' }); hostSay('ending_win', MASK_LINE); }, 9100, storyTimers.current);
+        later(finishRun, 9100 + MASK_MS, storyTimers.current);
       };
       maybeSpeechIdle();
     };
@@ -534,7 +540,9 @@ export function useGame(textSpeed:TextSpeed='Normal') {
     update({ phase: 'ENDING_DEATH', storyStage: 'fall' });
     later(() => { update({ storyStage: 'monitor' }); hostSay('ending_death'); }, 2400, storyTimers.current);
     later(() => update({ storyStage: 'no-signal' }), 4600, storyTimers.current);
-    later(finishRun, 6100, storyTimers.current);
+    // The broadcast settles its bets before the end screen.
+    later(() => update({ storyStage: 'payout' }), 6100, storyTimers.current);
+    later(finishRun, 6100 + PAYOUT_MS, storyTimers.current);
   }
   /** Arms the decision clock: a warning with ten seconds left, then the Host makes you face the chamber. */
   function armDecisionClock(remaining: number) {

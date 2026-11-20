@@ -105,3 +105,12 @@ Characters now match the cinematic room. All joints, sizes and poses are unchang
 - The title screen is now a menu: **Story mode**, **Online 1v1** (locked, "Coming soon"), How to play and Credits.
 - Story mode asks "What do they call you?" The name (letters, numbers, spaces; 16 characters max) is kept only in this browser and appears in the prologue, above your hand total and on the end screen. Blank stays GUEST 06.
 - A 13-second 3D prologue plays before the hood opening on a fresh run: a ceiling security camera over your shoulder, a slow move across the felt to the hooded opponent, then a push in on you, hooded in seat six. Captions: "Eight guests were invited." / "None of them remember saying yes." / "NAME. Seat six." "Skip introduction" still skips everything; replays go straight to the short opening.
+
+## Story: the secret broadcast (Season 6)
+
+- Story direction: LAST HAND is a paid, secret live broadcast in its sixth season. The guests accepted a gold invitation to a private casino night and woke up hooded in Sublevel 06.
+- The prologue is now 25 seconds: a 12-second flashback (the gold invitation addressed to your name, the casino floor, the lights going out, with a hood and a drag heard in the dark), then the 13-second security-camera film.
+- Captions were redesigned to fit the theme: typed monospace lines on a dark strip with a red edge and a brass tag (THREE WEEKS AGO, 11:58 PM, SUBLEVEL 06, your name).
+- Survivor ending: after the LAST HAND title, the Host's mask is offered to you ("The audience has voted. Put it on." / "Season 7 needs a new Host."), with the live viewer count.
+- Death ending: after NO SIGNAL, the stream settles its bets ("STREAM ENDED · VIEWERS · ALL BETS SETTLED") and "Seat six is available."
+- All story text lives in src/storyBeats.ts so the team can edit lines in one place.

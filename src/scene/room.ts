@@ -108,7 +108,7 @@ export type RoomCampaign = {
 
 /** The exit sequence waits at the table while the Host finishes announcing it. */
 export function isExitStage(phase?: string, stage?: string): boolean {
-  return phase === 'ENDING_WIN' && ['door', 'stairs', 'viewers', 'title'].includes(stage ?? '');
+  return phase === 'ENDING_WIN' && ['door', 'stairs', 'viewers', 'title', 'mask'].includes(stage ?? '');
 }
 
 export type BunkerRoom = {

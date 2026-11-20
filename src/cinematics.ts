@@ -2,8 +2,12 @@ export type CinematicMode = 'full' | 'short' | 'arrival' | 'transfer';
 /** The guard removes both hoods, cuts both restraints, and only then leaves; the Host's rules follow with everyone free. */
 export const OPENING_STAGES = ['hooded', 'door-open', 'guard-approach', 'player-unhood', 'player-focus', 'opponent-unhood', 'cut-opponent', 'cut-player', 'rub-wrists', 'guard-exit', 'rules', 'complete'] as const;
 export const TRANSFER_STAGES = ['guards-enter', 'transfer-hood', 'lift', 'dragging', 'door'] as const;
-/** A short 3D establishing film before the first opening: security-camera views of the room, then the hood. */
-export const PROLOGUE_MS = 13000;
+/**
+ * The prologue before the first opening: a 2D flashback (the gold invitation, the casino, the blackout),
+ * then a 3D establishing film of the room from its security cameras, ending on the player, hooded.
+ */
+export const PROLOGUE_FLASHBACK_MS = 12000, PROLOGUE_FILM_MS = 13000;
+export const PROLOGUE_MS = PROLOGUE_FLASHBACK_MS + PROLOGUE_FILM_MS;
 export type CinematicStage = 'prologue' | typeof OPENING_STAGES[number] | typeof TRANSFER_STAGES[number];
 export type CinematicState = { stage: CinematicStage; startedAt: number; mode: CinematicMode };
 const DURATIONS: Record<CinematicStage, number> = {
@@ -38,8 +42,9 @@ export function tiesForStage(state: CinematicState | null | undefined): { player
 }
 export const hoodAllowsLook = (state: CinematicState | null | undefined) => !!state && ['hooded', 'door-open', 'guard-approach'].includes(state.stage);
 
-/** The prologue's three shots: 0 = ceiling camera, 1 = across the table at the opponent, 2 = push in on the player. */
-export function prologueShot(progress: number): { shot: 0 | 1 | 2; t: number } {
+/** The film's three shots (the camera holds its first frame during the flashback): 0 = ceiling camera, 1 = across the table at the opponent, 2 = push in on the player. */
+export function prologueShot(prologueProgress: number): { shot: 0 | 1 | 2; t: number } {
+  const progress = Math.max(0, prologueProgress * PROLOGUE_MS - PROLOGUE_FLASHBACK_MS) / PROLOGUE_FILM_MS;
   if (progress < .36) return { shot: 0, t: progress / .36 };
   if (progress < .68) return { shot: 1, t: (progress - .36) / .32 };
   return { shot: 2, t: (progress - .68) / .32 };

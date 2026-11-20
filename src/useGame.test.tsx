@@ -14,6 +14,7 @@ import type { DialogueCategory } from './dialogue';
 import { tableAudio } from './audio';
 import { createVoicePlan } from './voice';
 import { chooseRoundEvent, cosmeticRandom } from './tension';
+import { MASK_LINE } from './storyBeats';
 import { OPENING_STAGES, PROLOGUE_MS, stageDurationMs, type CinematicStage } from './cinematics';
 import { DISTANT_SHOT_GAP_MS } from './roomLife';
 
@@ -877,6 +878,7 @@ describe('three-room campaign, bracket, and run statistics', () => {
     expect(latest.game.stats.guestsRemainingWhenFell).toBe(room === 2 ? 3 : 1);
     advance(2400); expect(latest.game.storyStage).toBe('monitor');
     advance(2200); expect(latest.game.storyStage).toBe('no-signal');
+    advance(1500); expect(latest.game.storyStage).toBe('payout'); expect(latest.game.phase).toBe('ENDING_DEATH');
     advanceStoryUntil(() => latest.game.phase === 'GAME_OVER');
     expect(latest.game.stats).toMatchObject({ roomsCleared: room - 1, handsLost: 1, hits: 2, busts: 1 });
     expect(latest.game.stats.endedAt).not.toBeNull();
@@ -966,6 +968,8 @@ describe('campaign rules, personality policies, and serialized speakers', () => 
     expect(latest.game.speech).toMatchObject({ speaker: 'host', category: 'ending_win', text: 'See you next season.', danger: false, chambersFired: 0 });
     advance(4000); expect(latest.game.storyStage).toBe('viewers');
     advance(1500); expect(latest.game.storyStage).toBe('title');
+    advance(1800); expect(latest.game.storyStage).toBe('mask');
+    expect(latest.game.speech).toMatchObject({ speaker: 'host', category: 'ending_win', text: MASK_LINE });
     advanceStoryUntil(() => latest.game.phase === 'GAME_OVER'); expect(latest.game.stats.roomsCleared).toBe(3);
   });
 

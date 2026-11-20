@@ -234,21 +234,69 @@ h1 > span { color: #aeb99b; }h1 > i { font-family: Georgia, serif; font-size: 23
 .credits-panel .credits-warning { color: #c4a275; }
 .run-name { font-size: 11px; letter-spacing: 2px; color: #c4a275; margin-bottom: 14px; text-transform: uppercase; }
 
-/* Prologue film: letterbox, security-camera label, three captions timed to the three shots (13 s). */
-.prologue-overlay { position: absolute; inset: 0; z-index: 12; pointer-events: none; }
-.prologue-overlay::before, .prologue-overlay::after { content: ''; position: absolute; left: 0; right: 0; height: 72px; background: #000; }
-.prologue-overlay::before { top: 0; } .prologue-overlay::after { bottom: 0; }
-.prologue-cctv { position: absolute; left: 64px; top: 96px; font-size: 11px; letter-spacing: 2px; color: #cfe0c0; text-shadow: 0 0 6px #9fc28a88; opacity: 0; animation: prologueCctv 13s linear both; }
-.prologue-cctv .rec-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #d23a2a; margin-right: 6px; animation: recBlink 1s steps(2) infinite; }
-.prologue-line { position: absolute; left: 0; right: 0; bottom: 120px; margin: 0; text-align: center; font-family: 'DM Sans', sans-serif; font-size: 26px; letter-spacing: .5px; color: #e4e2cf; text-shadow: 0 2px 12px #000; opacity: 0; }
-.prologue-line b { color: #e7b06f; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; }
-.prologue-line.l1 { animation: prologueL1 13s linear both; } .prologue-line.l2 { animation: prologueL2 13s linear both; } .prologue-line.l3 { animation: prologueL3 13s linear both; }
-.prologue-fade { position: absolute; inset: 0; background: #000; animation: prologueFade 13s linear both; }
-@keyframes prologueCctv { 0% { opacity: 0 } 6% { opacity: .95 } 34% { opacity: .95 } 36%, 100% { opacity: 0 } }
-@keyframes prologueL1 { 0%, 6% { opacity: 0 } 10%, 31% { opacity: 1 } 34%, 100% { opacity: 0 } }
-@keyframes prologueL2 { 0%, 40% { opacity: 0 } 44%, 63% { opacity: 1 } 66%, 100% { opacity: 0 } }
-@keyframes prologueL3 { 0%, 73% { opacity: 0 } 77%, 93% { opacity: 1 } 96%, 100% { opacity: 0 } }
-@keyframes prologueFade { 0% { opacity: 1 } 6% { opacity: 0 } 35% { opacity: 0 } 36% { opacity: 1 } 37.5% { opacity: 0 } 67% { opacity: 0 } 68% { opacity: 1 } 69.5% { opacity: 0 } 93% { opacity: 0 } 99%, 100% { opacity: 1 } }
+/* Story captions: a typed monospace line on a dark strip, like a field recorder's subtitle, with a small brass tag. */
+.story-caption { position: absolute; left: 0; right: 0; bottom: 118px; margin: 0; display: flex; flex-direction: column; align-items: center; gap: 9px; opacity: 0; pointer-events: none; }
+.caption-tag { font-family: 'Courier New', monospace; font-size: 13px; font-weight: 700; letter-spacing: 4px; text-transform: uppercase; color: #d4b07c; text-shadow: 0 0 8px #000; }
+.type-line { display: inline-block; padding: 10px 18px 10px 16px; background: linear-gradient(90deg, #000000d9, #050805c4); border-left: 2px solid #b0403a; box-shadow: 0 6px 30px #000a; }
+.type-text { display: inline-block; vertical-align: bottom; overflow: hidden; white-space: nowrap; width: 0; font-family: 'Courier New', monospace; font-size: 23px; font-weight: 700; letter-spacing: 0; color: #e9e1c9; text-shadow: 0 0 1px #fff6, 1px 0 0 #b0403a55, -1px 0 0 #3a8fa055;
+  animation: typeOn var(--dur) steps(var(--n), end) var(--delay) forwards; }
+.type-line::after { content: ''; display: inline-block; width: .55em; height: 1.05em; margin-left: 4px; vertical-align: -3px; background: #e9e1c9; animation: caretBlink .9s steps(2) infinite; }
+@keyframes typeOn { to { width: calc(var(--n) * 1ch); } }
+@keyframes caretBlink { 50% { opacity: 0; } }
 @keyframes recBlink { to { opacity: 0 } }
-@media (prefers-reduced-motion: reduce) { .prologue-cctv .rec-dot { animation: none; } }
+
+/* Prologue: 12 s flashback (invitation, casino, blackout), then the 13 s security-camera film. */
+.prologue-overlay { position: absolute; inset: 0; z-index: 12; pointer-events: none; }
+.prologue-overlay::before, .prologue-overlay::after { content: ''; position: absolute; left: 0; right: 0; height: 72px; background: #000; z-index: 6; }
+.prologue-overlay::before { top: 0; } .prologue-overlay::after { bottom: 0; }
+.flashback { position: absolute; inset: 0; background: #000; z-index: 5; animation: flashbackOut 12s linear both; }
+@keyframes flashbackOut { 0%, 98% { opacity: 1; } 100% { opacity: 0; visibility: hidden; } }
+.fb-card { position: absolute; inset: 0; opacity: 0; }
+.fb-invite { display: grid; place-items: center; padding-bottom: 120px; animation: fbInvite 12s linear both; background: radial-gradient(ellipse at 50% 40%, #2a2112 0%, #0a0805 55%, #000 80%); }
+.invite { width: 420px; height: 250px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; background: linear-gradient(135deg, #14110b, #0b0906); border: 1px solid #b8955a; outline: 1px solid #b8955a55; outline-offset: -9px; box-shadow: 0 30px 80px #000, inset 0 0 40px #000; transform: rotate(-3deg); color: #d8b979; font-family: Georgia, serif; text-align: center; animation: inviteDrift 4.5s ease-out both; }
+.invite small { font-size: 10px; letter-spacing: 4px; color: #a98c5a; }
+.invite strong { font-size: 30px; font-weight: 400; letter-spacing: 6px; color: #e9cf96; text-shadow: 0 1px 0 #000, 0 0 14px #c99d5440; }
+.invite em { font-size: 13px; color: #b89c69; }
+.invite-crest { font-size: 24px; color: #c4a062; }
+.invite-to { margin-top: 6px; font-family: 'Courier New', monospace; font-size: 12px; letter-spacing: 3px; color: #e9cf96; text-transform: uppercase; }
+.invite-from { font-style: italic; letter-spacing: 2px !important; }
+@keyframes inviteDrift { from { transform: rotate(-6deg) scale(.94) translateY(14px); } to { transform: rotate(-3deg) scale(1) translateY(0); } }
+@keyframes fbInvite { 0% { opacity: 0; } 4% { opacity: 1; } 34% { opacity: 1; } 37%, 100% { opacity: 0; } }
+.fb-casino { background: radial-gradient(ellipse at 50% 120%, #3a1410 0%, #0c0605 60%, #000 100%); animation: fbCasino 12s linear both; overflow: hidden; }
+.fb-casino i { position: absolute; width: calc(60px + var(--i) * 9px); aspect-ratio: 1; border-radius: 50%; background: radial-gradient(circle, #f2c46a 0%, #f2c46a55 40%, transparent 70%); filter: blur(6px); opacity: .5; animation: bokeh 4s ease-in-out infinite alternate; animation-delay: calc(var(--i) * -.37s); }
+.fb-casino i:nth-child(3n) { background: radial-gradient(circle, #e0503f 0%, #e0503f44 40%, transparent 70%); }
+@keyframes bokeh { from { transform: translateY(0) scale(1); opacity: .25; } to { transform: translateY(-18px) scale(1.12); opacity: .6; } }
+@keyframes fbCasino { 0%, 35% { opacity: 0; } 38% { opacity: 1; } 69% { opacity: 1; } 70% { opacity: .2; } 71% { opacity: 1; } 72%, 100% { opacity: 0; } }
+.fb-blackout { background: #000; animation: fbBlackout 12s linear both; }
+@keyframes fbBlackout { 0%, 71% { opacity: 0; } 72%, 100% { opacity: 1; } }
+.flashback .story-caption { z-index: 4; }
+.story-caption.c1 { animation: capC1 12s linear both; } .story-caption.c2 { animation: capC2 12s linear both; } .story-caption.c3 { animation: capC3 12s linear both; }
+@keyframes capC1 { 0%, 4% { opacity: 0; } 6%, 33% { opacity: 1; } 36%, 100% { opacity: 0; } }
+@keyframes capC2 { 0%, 37% { opacity: 0; } 39%, 68% { opacity: 1; } 70%, 100% { opacity: 0; } }
+@keyframes capC3 { 0%, 72% { opacity: 0; } 74%, 95% { opacity: 1; } 99%, 100% { opacity: 0; } }
+.film { position: absolute; inset: 0; }
+.film .story-caption { z-index: 4; }
+.prologue-cctv { position: absolute; left: 64px; top: 96px; z-index: 4; font-family: 'Courier New', monospace; font-size: 12px; letter-spacing: 3px; color: #cfe0c0; text-shadow: 0 0 6px #9fc28a88; opacity: 0; animation: prologueCctv 13s linear 12s both; }
+.rec-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #d23a2a; margin-right: 6px; animation: recBlink 1s steps(2) infinite; }
+.story-caption.l1 { animation: prologueL1 13s linear 12s both; } .story-caption.l2 { animation: prologueL2 13s linear 12s both; } .story-caption.l3 { animation: prologueL3 13s linear 12s both; }
+.prologue-fade { position: absolute; inset: 0; z-index: 2; background: #000; animation: prologueFade 13s linear 12s both; }
+@keyframes prologueCctv { 0% { opacity: 0 } 6% { opacity: .95 } 34% { opacity: .95 } 36%, 100% { opacity: 0 } }
+@keyframes prologueL1 { 0%, 6% { opacity: 0 } 9%, 31% { opacity: 1 } 34%, 100% { opacity: 0 } }
+@keyframes prologueL2 { 0%, 40% { opacity: 0 } 43%, 63% { opacity: 1 } 66%, 100% { opacity: 0 } }
+@keyframes prologueL3 { 0%, 72% { opacity: 0 } 75%, 93% { opacity: 1 } 96%, 100% { opacity: 0 } }
+@keyframes prologueFade { 0% { opacity: 1 } 6% { opacity: 0 } 35% { opacity: 0 } 36% { opacity: 1 } 37.5% { opacity: 0 } 67% { opacity: 0 } 68% { opacity: 1 } 69.5% { opacity: 0 } 93% { opacity: 0 } 99%, 100% { opacity: 1 } }
+
+/* Endings: the survivor is offered the Host's mask; a death settles the bets over a dead feed. */
+.mask-ending { position: absolute; inset: 0; z-index: 12; background: radial-gradient(ellipse at 50% 42%, #1b1a14 0%, #050504 55%, #000 85%); display: grid; place-items: center; padding-bottom: 150px; animation: endFade 1.2s both; }
+.host-mask { width: 150px; filter: drop-shadow(0 18px 40px #000) drop-shadow(0 0 22px #e8e1cf22); animation: maskRise 3s ease-out both; }
+@keyframes maskRise { from { transform: translateY(26px) scale(.92); opacity: 0; } to { transform: none; opacity: 1; } }
+.mask-live { position: absolute; left: 64px; top: 40px; font-family: 'Courier New', monospace; font-size: 12px; letter-spacing: 3px; color: #e2b9a8; }
+.mask-ending .story-caption.m1 { animation: capM1 8.5s linear both; } .mask-ending .story-caption.m2 { animation: capM2 8.5s linear both; }
+@keyframes capM1 { 0%, 5% { opacity: 0; } 8%, 36% { opacity: 1; } 39%, 100% { opacity: 0; } }
+@keyframes capM2 { 0%, 38% { opacity: 0; } 41%, 94% { opacity: 1; } 98%, 100% { opacity: 0; } }
+.payout-ending { position: absolute; inset: 0; z-index: 12; }
+.payout-ending .no-signal { animation: none; }
+.payout-ticker { position: absolute; left: 0; right: 0; top: 64px; text-align: center; font-family: 'Courier New', monospace; font-size: 13px; letter-spacing: 3px; color: #c8d0bd; text-shadow: 0 0 6px #000; }
+.payout-ending .story-caption.p1 { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .rec-dot, .type-line::after, .fb-casino i { animation: none; } .type-text { animation-duration: .01s; } }
 .stage[data-story-stage="prologue"] .round-hud, .stage[data-story-stage="prologue"] .scene-bottom, .stage[data-story-stage="prologue"] .scene-corner { visibility: hidden; }

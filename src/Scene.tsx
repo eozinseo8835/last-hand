@@ -480,7 +480,7 @@ export default function Scene(props: SceneProps) {
         if (body.bounce > .008 && lastHeel !== heel) { lastHeel = heel; tableAudio.playContact('heel', state.stress ?? .2); }
       }
       monitors.update(staged, time, epoch);
-      const signalLost = (state.phase === 'ENDING_DEATH' && state.storyStage === 'no-signal') || (state.phase === 'GAME_OVER' && state.dead === 'player');
+      const signalLost = (state.phase === 'ENDING_DEATH' && (state.storyStage === 'no-signal' || state.storyStage === 'payout')) || (state.phase === 'GAME_OVER' && state.dead === 'player');
       monitors.setSignalLost(signalLost);
       postMaterial.uniforms.forcedContact.value=0;
       postMaterial.uniforms.triggerDarkening.value = contact>0 ? .7*contact : state.phase === 'PLAYER_SHOOTING' ? Math.max(0, Math.min(1, state.triggerProgress ?? 0)) : 0;

@@ -11,10 +11,26 @@ import HoldTrigger from './HoldTrigger';
 import { HOST, OPPONENTS, type RunStats } from './campaign';
 import { FINAL_HOST_LINE } from './campaignDialogue';
 import { opponentCardReadout } from './presentation';
+import { FILM, FLASHBACK, MASK_CAPTIONS, PAYOUT_CAPTION, SEASON, viewerCount } from './storyBeats';
+import type { CSSProperties } from 'react';
 
 export const DEFAULT_NAME = 'GUEST 06';
 /** Letters, numbers, spaces, apostrophes and hyphens; at most 16 characters. */
 export function cleanName(raw: string) { return raw.replace(/[^\p{L}\p{N} '\-]/gu, '').replace(/\s+/g, ' ').trim().slice(0, 16); }
+/** A caption typed out letter by letter: monospace, so each letter is exactly 1ch wide. */
+function TypeLine({ text, delay }: { text: string; delay: number }) {
+  const style = { '--n': text.length, '--delay': `${delay}s`, '--dur': `${Math.min(2.6, .35 + text.length * .04).toFixed(2)}s` } as CSSProperties;
+  return <span className="type-line" style={style}><span className="type-text">{text}</span></span>;
+}
+/** The Host's mask, as offered to the survivor (an original design: a blank porcelain face). */
+function HostMask() {
+  return <svg className="host-mask" viewBox="0 0 120 160" aria-hidden="true">
+    <path d="M60 6C28 6 12 34 14 74c2 40 22 74 46 80 24-6 44-40 46-80C108 34 92 6 60 6Z" fill="#e8e1cf" stroke="#9c9378" strokeWidth="1.5"/>
+    <path d="M30 66c6-8 18-9 26-2-8 7-20 8-26 2Zm60 0c-6-8-18-9-26-2 8 7 20 8 26 2Z" fill="#0b0d0a"/>
+    <path d="M50 120c6 3 14 3 20 0" stroke="#0b0d0a" strokeWidth="3" strokeLinecap="round" fill="none"/>
+    <path d="M60 18v20" stroke="#cfc6ae" strokeWidth="1"/>
+  </svg>;
+}
 const SUIT = { spades: '♠', hearts: '♥', diamonds: '♦', clubs: '♣' };
 /** Accessible equivalents of the physical cards, without exposing a hidden face. */
 function CardDescription({ card, hidden = false }: { card: Card; hidden?: boolean }) {
@@ -184,15 +200,39 @@ export default function App() {
             {CONFIG.GORE_LEVEL !== 'low' && <svg className="blood-overlay" viewBox="0 0 1440 810"><path d="M0 0h130l-65 110 95 80-130-40L0 290zm1440 0h-165l75 95-70 155 100-65 60 110zM0 810V650l120 40 100-35-20 80 100 75zm1440 0h-280l80-120 80 30 120-130z"/><g stroke="#d0d2bb" strokeWidth="1" fill="none" opacity=".4"><path d="M930 320l-230-70-180-140M930 320l130-290M930 320l330 140 180-20M930 320l-20 160 220 330M930 320L500 670l-80 140M700 250l-60 80-180 20M1060 30l10 160 180 20M910 480l-130 70-50 260"/></g></svg>}
           </div>}
           {game.storyStage === 'prologue' && <div className="prologue-overlay" key={game.cinematic?.startedAt}>
-            <div className="prologue-cctv"><span className="rec-dot"/> CAM 06 · SUBLEVEL 06 · REC</div>
-            <p className="prologue-line l1">Eight guests were invited.</p>
-            <p className="prologue-line l2">None of them remember saying yes.</p>
-            <p className="prologue-line l3"><b>{playerName}.</b> Seat six.</p>
-            <div className="prologue-fade" aria-hidden="true"/>
+            <div className="flashback">
+              <div className="fb-card fb-invite"><div className="invite">
+                <span className="invite-crest">♠</span><small>YOU ARE CORDIALLY INVITED TO</small><strong>A PRIVATE TABLE</strong><em>One night only. Dress well.</em>
+                <span className="invite-to">FOR · {playerName}</span><small className="invite-from">— THE HOUSE</small>
+              </div></div>
+              <div className="fb-card fb-casino" aria-hidden="true">{Array.from({ length: 14 }, (_, i) => <i key={i} style={{ '--i': i, left: `${4 + i * 6.7}%`, top: `${14 + (i * 37) % 60}%` } as CSSProperties}/>)}</div>
+              <div className="fb-card fb-blackout" aria-hidden="true"/>
+              <p className="story-caption c1"><span className="caption-tag">THREE WEEKS AGO</span><TypeLine text={FLASHBACK[0]} delay={.7}/></p>
+              <p className="story-caption c2"><span className="caption-tag">THE CASINO · VIP FLOOR</span><TypeLine text={FLASHBACK[1]} delay={4.7}/></p>
+              <p className="story-caption c3"><span className="caption-tag">11:58 PM</span><TypeLine text={FLASHBACK[2]} delay={8.9}/></p>
+            </div>
+            <div className="film">
+              <div className="prologue-cctv"><span className="rec-dot"/> LIVE · LAST HAND · SEASON {SEASON} · CAM 06</div>
+              <p className="story-caption l1"><span className="caption-tag">SUBLEVEL 06</span><TypeLine text={FILM[0]} delay={12.9}/></p>
+              <p className="story-caption l2"><span className="caption-tag">● LIVE</span><TypeLine text={FILM[1]} delay={17.4}/></p>
+              <p className="story-caption l3"><span className="caption-tag">{playerName}</span><TypeLine text={FILM[2]} delay={21.6}/></p>
+              <div className="prologue-fade" aria-hidden="true"/>
+            </div>
+          </div>}
+          {game.phase === 'ENDING_WIN' && game.storyStage === 'mask' && <div className="mask-ending">
+            <div className="mask-live"><span className="rec-dot"/> LIVE · {viewerCount(game.stats.roundsPlayed * 7 + 3).toLocaleString('en-US')} WATCHING</div>
+            <HostMask/>
+            <p className="story-caption m1"><TypeLine text={MASK_CAPTIONS(playerName)[0]} delay={.6}/></p>
+            <p className="story-caption m2"><TypeLine text={MASK_CAPTIONS(playerName)[1]} delay={3.4}/></p>
+          </div>}
+          {game.phase === 'ENDING_DEATH' && game.storyStage === 'payout' && <div className="payout-ending">
+            <span className="no-signal">NO SIGNAL</span>
+            <div className="payout-ticker">STREAM ENDED · {viewerCount(game.stats.roundsPlayed * 7 + 1).toLocaleString('en-US')} VIEWERS · ALL BETS SETTLED</div>
+            <p className="story-caption p1"><TypeLine text={PAYOUT_CAPTION} delay={.9}/></p>
           </div>}
           {opening && <div className="opening-controls"><span>{game.storyStage === 'prologue' ? 'PROLOGUE' : game.cinematic?.mode === 'arrival' ? `ROOM ${game.roomNumber} / 3` : game.introShort ? 'WELCOME BACK.' : `THE RULES · ${Math.min(game.introIndex + 1, 6)} / 6`}</span>{game.storyStage !== 'prologue' && <button className="secondary-button" onClick={advanceOpening} disabled={game.storyStage !== 'rules'}>Continue<ArrowRight size={17}/></button>}<button className="text-button skip-opening" onClick={skipOpening}>Skip introduction</button></div>}
           {story && <div className={`story-overlay story-${game.phase.toLowerCase()} story-${game.storyStage}`} aria-hidden="true"><div className="hood-fabric"/><span className="story-room-label">{game.phase === 'TRANSITION' ? `ROOM ${game.roomNumber} / 3` : ''}</span>{game.phase === 'ENDING_DEATH' && game.storyStage === 'no-signal' && <span className="no-signal">NO SIGNAL</span>}{game.phase === 'ENDING_WIN' && game.storyStage === 'title' && <span className="ending-title">LAST HAND</span>}</div>}
-          {over && <div className="end-screen campaign-end"><div className="end-content"><span className="eyebrow">TRANSMISSION ENDED</span><h2>{game.stats.roomsCleared === 3 ? 'SURVIVED' : 'YOU DIED'}<span>.</span></h2><p>{game.stats.roomsCleared === 3 ? 'One guest. One open door.' : `Room ${game.roomNumber}. Your seat is empty.`}</p><span className="run-name">{playerName}</span><RunSummary stats={game.stats} guests={game.guestsRemaining}/><button className="primary-button" onClick={() => start()}><RotateCcw size={17}/>Play Again<ArrowRight size={18}/></button><span className="end-footnote">THE AUDIENCE WILL BE WAITING.</span></div></div>}
+          {over && <div className="end-screen campaign-end"><div className="end-content"><span className="eyebrow">TRANSMISSION ENDED</span><h2>{game.stats.roomsCleared === 3 ? 'SURVIVED' : 'YOU DIED'}<span>.</span></h2><p>{game.stats.roomsCleared === 3 ? `One guest. One open door. Season ${SEASON + 1} is coming.` : `Room ${game.roomNumber}. Your seat is empty.`}</p><span className="run-name">{playerName}</span><RunSummary stats={game.stats} guests={game.guestsRemaining}/><button className="primary-button" onClick={() => start()}><RotateCcw size={17}/>Play Again<ArrowRight size={18}/></button><span className="end-footnote">THE AUDIENCE WILL BE WAITING.</span></div></div>}
         </section>
       </div>
     </main>
