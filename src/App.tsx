@@ -11,7 +11,7 @@ import HoldTrigger from './HoldTrigger';
 import { HOST, OPPONENTS, type RunStats } from './campaign';
 import { FINAL_HOST_LINE } from './campaignDialogue';
 import { opponentCardReadout } from './presentation';
-import { FILM, FLASHBACK, MASK_CAPTIONS, PAYOUT_CAPTION, SEASON, viewerCount } from './storyBeats';
+import { FILM, FLASHBACK, MASK_CAPTIONS, PAYOUT_CAPTION, SEASON, TRANSFER_STORY, liveOdds, viewerCount } from './storyBeats';
 import type { CSSProperties } from 'react';
 
 export const DEFAULT_NAME = 'GUEST 06';
@@ -164,7 +164,7 @@ export default function App() {
               <div className="intro-rules"><div><span>01</span><p>Get close to 21.<br/><b>Never go over.</b></p></div><div><span>02</span><p>Lose the hand.<br/><b>Pull the trigger.</b></p></div><div><span>03</span><p>Six chambers.<br/><b>One bullet.</b></p></div></div>
             </> : <>
               <div className="game-hud hud-left"><span className="small-label">FOLDS LEFT</span><div className="fold-indicators">{Array.from({ length: 3 }, (_, i) => <span key={i} className={i < game.folds ? 'full' : ''}/>)}<b>{game.folds} / 3</b></div><span className="ability-summary" aria-label={`Your abilities: SPIN ${Number(game.abilities.player.spin)}, PEEK ${Number(game.abilities.player.peek)}`}>SPIN {Number(game.abilities.player.spin)} · PEEK {Number(game.abilities.player.peek)}</span></div>
-              <div className="round-hud campaign-hud"><div><span className="live-dot"/> <b>ROOM {game.roomNumber} / 3</b><i/><span>ROUND {String(game.roundNumber).padStart(2, '0')}</span></div><span className="opponent-name">{opponent.name}</span><span className="guest-count" role="status">GUESTS REMAINING: {game.guestsRemaining}</span></div>
+              <div className="round-hud campaign-hud"><div><span className="live-dot"/> <b>ROOM {game.roomNumber} / 3</b><i/><span>ROUND {String(game.roundNumber).padStart(2, '0')}</span></div><span className="opponent-name">{opponent.name}</span><span className="guest-count" role="status">GUESTS REMAINING: {game.guestsRemaining}</span>{game.roomNumber >= 2 && (() => { const odds = liveOdds(chambersFired, game.lossStreak ?? 0, game.roomNumber); return <span className="live-odds" aria-label="Live betting odds"><span className="rec-dot"/>LIVE · {(viewerCount(game.roomNumber * 13) + chambersFired * 1840).toLocaleString('en-US')} WATCHING · <b>{playerName} {odds.you}x</b> · {opponent.name.replace(/^THE /, '')} {odds.them}x</span>; })()}</div>
               <div className={`game-hud hud-right ${danger ? 'danger-hud' : ''}`}><div><span className="small-label">SHARED CYLINDER</span><b>CHAMBER {Math.min(game.revolver.currentChamber, 6)} <span>/ 6</span></b><span className="ability-summary" aria-label={`${opponent.name} abilities: SPIN ${Number(game.abilities.ai.spin)}, PEEK ${Number(game.abilities.ai.peek)}`}>SPIN {Number(game.abilities.ai.spin)} · PEEK {Number(game.abilities.ai.peek)}</span></div><Cylinder chamber={game.revolver.currentChamber}/></div>
               {!story && !over && <div className="opponent-readout"><span className="small-label">{opponent.name}</span><span className="opponent-card-readout" aria-label={`Visible cards for ${opponent.name}`}>{opponentCardReadout(game.round?.ai ?? [], game.revealed)}</span><b>{game.revealed && game.round ? <>{dealerScore.soft && <small className="soft-prefix">Soft </small>}{dealerScore.total}</> : '??'}<small> POINTS</small></b></div>}
               {game.speech && !over && <div className={`stranger-transmission speaker-${speaker}`} data-speaker={speaker} data-speech-id={game.speech.id}>
@@ -218,6 +218,9 @@ export default function App() {
               <p className="story-caption l3"><span className="caption-tag">{playerName}</span><TypeLine text={FILM[2]} delay={21.6}/></p>
               <div className="prologue-fade" aria-hidden="true"/>
             </div>
+          </div>}
+          {game.phase === 'TRANSITION' && (game.roomNumber === 1 || game.roomNumber === 2) && ['transfer-hood', 'lift', 'dragging', 'door'].includes(game.storyStage) && <div className="transfer-story" key={`transfer-${game.roomNumber}`}>
+            <p className="story-caption"><span className="caption-tag">{TRANSFER_STORY[game.roomNumber].tag}</span><TypeLine text={TRANSFER_STORY[game.roomNumber].line} delay={.35}/></p>
           </div>}
           {game.phase === 'ENDING_WIN' && game.storyStage === 'mask' && <div className="mask-ending">
             <div className="mask-live"><span className="rec-dot"/> LIVE · {viewerCount(game.stats.roundsPlayed * 7 + 3).toLocaleString('en-US')} WATCHING</div>

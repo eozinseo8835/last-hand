@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { attentionAt, canOpponentPeek, planAttention } from './attention';
-import { approachStress, bodyLanguage, smoothNoise, stressTarget } from './bodyLanguage';
+import { approachStress, bodyLanguage, fidgetPeriod, smoothNoise, stressTarget } from './bodyLanguage';
 import { createTensionRandom, heartbeatSettings } from './tension';
 import { simulateStandRounds } from './bustSimulation';
 
@@ -68,4 +68,20 @@ it('keeps the Gambler controlled before chamber four, then permits face-wiping f
  const before=Array.from({length:100},(_,i)=>bodyLanguage(2,.65,i*.7,3,'PLAYER_DECISION').fidget);
  const after=Array.from({length:100},(_,i)=>bodyLanguage(2,.65,i*.7,4,'PLAYER_DECISION').fidget);
  expect(before).not.toContain('sweat'); expect(after).toContain('sweat');
+});
+
+describe('smooth body rhythms', () => {
+  it('a small stress change late in a session never jumps the breathing, foot bounce or fidget timing', () => {
+    for (const room of [1, 2, 3] as const) for (const time of [37.3, 300.2, 1234.5]) {
+      const a = bodyLanguage(room, .40, time, 2, 'PLAYER_DECISION'), b = bodyLanguage(room, .41, time, 2, 'PLAYER_DECISION');
+      expect(Math.abs(a.breath - b.breath)).toBeLessThan(1e-4);
+      expect(Math.abs(a.bounce - b.bounce)).toBeLessThan(.002);
+      expect(a.serial).toBe(b.serial); expect(a.fidget).toBe(b.fidget);
+      expect(Math.abs(a.fidgetAmount - b.fidgetAmount)).toBeLessThan(1e-9);
+    }
+  });
+  it('fidgets come sooner as chambers are fired', () => {
+    expect(fidgetPeriod(1, 5)).toBeLessThan(fidgetPeriod(1, 1));
+    expect(fidgetPeriod(3, 1)).toBeGreaterThan(fidgetPeriod(1, 1));
+  });
 });

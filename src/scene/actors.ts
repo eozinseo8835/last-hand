@@ -728,8 +728,9 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     if(rig===playerRig){
       const eye=view.getWorldPosition(new THREE.Vector3()),forward=atCamera(0,0,-1).sub(eye),up=atCamera(0,1,0).sub(eye),right=atCamera(1,0,0).sub(eye);
       // Muzzle up and away, the revolver's left side (where the cylinder swings out) turned toward your eyes.
-      const barrel=forward.clone().multiplyScalar(.45).addScaledVector(up,.85).addScaledVector(right,-.2);
-      return {muzzle:atCamera(-.05,-.08,-.50),q:barrelQuaternion(barrel,right)};
+      // Held lower and further out (chest height, not in your face), so the revolver reads at a natural size on screen.
+      const barrel=forward.clone().multiplyScalar(.6).addScaledVector(up,.6).addScaledVector(right,-.3);
+      return {muzzle:atCamera(-.03,-.15,-.62),q:barrelQuaternion(barrel,right)};
     }
     const toPlayer=captive.localToWorld(new THREE.Vector3(0,0,1)).sub(captive.getWorldPosition(new THREE.Vector3())),up=new THREE.Vector3(0,1,0);
     const right=captive.localToWorld(new THREE.Vector3(1,0,0)).sub(captive.getWorldPosition(new THREE.Vector3()));
@@ -918,7 +919,9 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     captive.visible=host.visible=playerHands.visible=true;hostChair.visible=true;chair.visible=true;deck.visible=true;heldRig.visible=true;gun.visible=true;
     captive.position.set(0,.45,-.80);captive.rotation.set(0,0,0);host.position.set(...HOST_SEAT);host.rotation.set(0,Math.PI/2,0);playerHands.position.set(0,-.75,0);
     captiveRig.pose('seated-resting');hostRig.pose('host-idle');relaxHand(hostRig,'left');relaxHand(hostRig,'right');relaxHand(captiveRig,'right');playerPose();
-    if(!cardRevealed&&cardSlots.some(slot=>slot.active&&slot.owner==='ai'))holdCaptiveFan();
+    const holdingFan=!cardRevealed&&cardSlots.some(slot=>slot.active&&slot.owner==='ai');
+    if(holdingFan)holdCaptiveFan();
+    captive.userData.holdingFan=holdingFan;
     for(const rig of guardRigs){rig.group.visible=false;rig.pose('guard-walking',time);}
     const cine=state.cinematic,stage=cine?.stage??state.storyStage??'',p=cinematicProgress(cine,epoch);
     const body=bodyLanguage(room,state.stress??.2,time,(state.chambersFired??0)+1,state.phase,state.tell?.disposition==='calm');
@@ -930,14 +933,16 @@ export function createActors(scene: THREE.Scene, camera?: THREE.Camera) {
     captiveRig.spine.rotation.x+=body.hunch*.15;
     captiveRig.legs.right.thigh.rotation.x+=body.bounce*.8;
     captiveRig.legs.right.shin.rotation.x-=body.bounce*.8;
-    for(const arm of Object.values(captiveRig.arms))for(const chain of arm.fingers)for(const digit of chain)digit.rotation.x+=Math.sin(time*41+digit.id)*body.tremor*motion;
+    // The hand holding the cards keeps its grip: only a faint tremor there, and fidgets move to the free (right) hand.
+    for(const [side,arm] of Object.entries(captiveRig.arms))for(const chain of arm.fingers)for(const digit of chain)digit.rotation.x+=Math.sin(time*41+digit.id)*body.tremor*motion*(holdingFan&&side==='left'?.3:1);
+    const fidgetArm=holdingFan?captiveRig.arms.right:captiveRig.arms.left;
     if(body.fidget==='host')head.rotation.y-=body.fidgetAmount*.18;
     if(body.fidget==='neck')head.rotation.z+=body.fidgetAmount*.08;
-    if(body.fidget==='drum'||body.fidget==='felt')captiveRig.arms.left.fingers.forEach((chain,i)=>chain[0].rotation.x-=body.fidgetAmount*Math.max(0,Math.sin(time*9+i))*.25);
-    if(body.fidget==='sweat'||body.fidget==='collar'||body.fidget==='tie')captiveRig.arms.left.forearm.rotation.x-=body.fidgetAmount*.55;
+    if(body.fidget==='drum'||body.fidget==='felt')fidgetArm.fingers.forEach((chain,i)=>chain[0].rotation.x-=body.fidgetAmount*Math.max(0,Math.sin(time*9+i))*.25);
+    if(body.fidget==='sweat'||body.fidget==='collar'||body.fidget==='tie')fidgetArm.forearm.rotation.x-=body.fidgetAmount*.55;
     if(state.tell&&state.phase==='PLAYER_DECISION') {
       if(state.tell.kind==='avert')head.rotation.y+=.22;
-      if(state.tell.kind==='tap')captiveRig.arms.left.fingers.forEach((f,i)=>f[0].rotation.x-=Math.max(0,Math.sin(time*10+i))*.25);
+      if(state.tell.kind==='tap')fidgetArm.fingers.forEach((f,i)=>f[0].rotation.x-=Math.max(0,Math.sin(time*10+i))*.25);
     }
     if(state.speaker==='host'&&lastSpeaker!=='host')hostGestureAt=time;lastSpeaker=state.speaker;
     const active=state.speaker===undefined?'captive':state.speaker;

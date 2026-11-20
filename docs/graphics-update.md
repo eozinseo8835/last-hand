@@ -114,3 +114,12 @@ Characters now match the cinematic room. All joints, sizes and poses are unchang
 - Survivor ending: after the LAST HAND title, the Host's mask is offered to you ("The audience has voted. Put it on." / "Season 7 needs a new Host."), with the live viewer count.
 - Death ending: after NO SIGNAL, the stream settles its bets ("STREAM ENDED · VIEWERS · ALL BETS SETTLED") and "Seat six is available."
 - All story text lives in src/storyBeats.ts so the team can edit lines in one place.
+
+## Fixes and the middle of the story
+
+- **Card hand stutter fixed.** The opponent's breathing, foot bounce and fidget timing used to speed up or slow down with his stress level, which changes several times a second, so his body (and the hand holding the cards) jumped. The rhythms now follow the room and the chambers fired instead. Fidgets that used his card hand (tapping, wiping sweat, tugging the collar) now use his free hand.
+- **Revolver during the cylinder spin** is held lower and further away (chest height instead of in front of your face), so it no longer fills the screen.
+- **Table colour A (muted green), slightly darker room.** Muted, worn felt; neutral shadows instead of the teal cast; less saturation; dimmer ambient light; part of the bulb's light now falls in a cone onto the table so the walls fade into the dark. (Cinematic graphics only; Classic pixel is unchanged.)
+- **Room 2 arrival:** "Our audience has grown. They are betting on you now." From room 2 a live odds line appears under the room label (viewers, your odds and the opponent's), and your odds lengthen with every chamber fired and every hand you lose.
+- **Room 3 arrival:** the Host: "I sat in your chair once. Season four." / "I won. Look at what winning bought me." (sets up the mask ending).
+- **Between rooms:** a typed line over the hood while you are dragged away ("Somewhere above you, people are placing bets." / "Only one of you walks out. They have already chosen.").

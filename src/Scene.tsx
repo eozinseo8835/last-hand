@@ -2,7 +2,7 @@ import type {Reaction} from './reactions';
 import type { GunTransfer } from './gunTransfer';
 import { createCharacter } from './scene/skeleton';
 import type { Attention } from './attention';
-import { bodyLanguage, shotBodyOnly } from './bodyLanguage';
+import { bodyLanguage, bounceRate, shotBodyOnly } from './bodyLanguage';
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { CONFIG, type Card, type GamePhase, type Round } from './game';
@@ -449,6 +449,7 @@ export default function Scene(props: SceneProps) {
         tension: Math.min(1, (state.chambersFired ?? 0) / 5), triggerHeld: !!state.triggerHeld || state.phase === 'AI_SHOOTING' || state.phase === 'HOST_FORCE_SHOT',
         guestsGone: state.guestsRemaining === undefined ? undefined : 8 - state.guestsRemaining,
       });
+      cinematicLook?.grade.apply(room.bulbLight);
       const hostVoiceLevel = tableAudio.getVoiceLevel('host'), captiveVoiceLevel = tableAudio.getVoiceLevel('captive');
       const voiceLevel = captiveVoiceLevel;
       const heartbeat = tableAudio.getHeartbeatLevel();camera.rotation.z+=heartbeat*.0015*(motionPreference.matches?.2:1);
@@ -476,7 +477,7 @@ export default function Scene(props: SceneProps) {
         if (body.fidget && body.fidgetAmount > .25 && contactSerial !== body.serial) {
           contactSerial = body.serial; tableAudio.playContact(body.fidget, state.stress ?? .2);
         }
-        const heel = Math.floor(time * (4 + (state.stress ?? 0) * 2));
+        const heel = Math.floor(time * bounceRate(roomNumber));
         if (body.bounce > .008 && lastHeel !== heel) { lastHeel = heel; tableAudio.playContact('heel', state.stress ?? .2); }
       }
       monitors.update(staged, time, epoch);

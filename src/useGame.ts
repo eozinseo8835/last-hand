@@ -16,7 +16,7 @@ import type { RoomNumber, RunStats } from './campaign';
 import { HOST_DIALOGUE,OPPONENT_DIALOGUE,NERVOUS_BEGGING,FINAL_HOST_LINE, OPENING_LINES, ROOM_ARRIVAL, SHORT_INTRO, chooseExchange, chooseHostLine, shouldExchange } from './campaignDialogue';
 import type { HostCategory, SpeechLine } from './campaignDialogue';
 import { createVoicePlan } from './voice';
-import { MASK_LINE, MASK_MS, PAYOUT_MS } from './storyBeats';
+import { ARRIVAL_STORY, MASK_LINE, MASK_MS, PAYOUT_MS } from './storyBeats';
 import { OPENING_STAGES, PROLOGUE_FILM_MS, PROLOGUE_FLASHBACK_MS, TRANSFER_STAGES, stageDurationMs, tiesForStage, type CinematicMode, type CinematicStage, type CinematicState } from './cinematics';
 import { DISTANT_SHOT_GAP_MS, createAmbientEvent, nextAmbientDelay, type AmbientEvent, type DistantShot } from './roomLife';
 
@@ -404,7 +404,7 @@ export function useGame(textSpeed:TextSpeed='Normal') {
   }
   function openingLines() {
     const mode = current.current.cinematic?.mode;
-    return mode === 'arrival' ? [ROOM_ARRIVAL[current.current.roomNumber]] : current.current.introShort ? [SHORT_INTRO] : OPENING_LINES;
+    return mode === 'arrival' ? [ROOM_ARRIVAL[current.current.roomNumber], ...ARRIVAL_STORY[current.current.roomNumber]] : current.current.introShort ? [SHORT_INTRO] : OPENING_LINES;
   }
   function showOpeningLine(index: number) {
     const mode = current.current.cinematic?.mode ?? (current.current.introShort ? 'short' : 'full');

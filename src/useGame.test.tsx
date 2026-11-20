@@ -9,12 +9,12 @@ import App from './App';
 import { useGame } from './useGame';
 import { CONFIG, createDeck, createRevolver, dealRound, handTotal, type Card, type Round } from './game';
 import { HOST, OPPONENTS, opponentAction } from './campaign';
-import { HOST_DIALOGUE, OPENING_LINES, OPPONENT_DIALOGUE, SHORT_INTRO, shouldExchange } from './campaignDialogue';
+import { HOST_DIALOGUE, OPENING_LINES, OPPONENT_DIALOGUE, ROOM_ARRIVAL, SHORT_INTRO, shouldExchange } from './campaignDialogue';
 import type { DialogueCategory } from './dialogue';
 import { tableAudio } from './audio';
 import { createVoicePlan } from './voice';
 import { chooseRoundEvent, cosmeticRandom } from './tension';
-import { MASK_LINE } from './storyBeats';
+import { ARRIVAL_STORY, MASK_LINE } from './storyBeats';
 import { OPENING_STAGES, PROLOGUE_MS, stageDurationMs, type CinematicStage } from './cinematics';
 import { DISTANT_SHOT_GAP_MS } from './roomLife';
 
@@ -1081,6 +1081,9 @@ describe('guard hoods, restraints, and safe room arrivals', () => {
       advanceOpeningTo('rules');
       expect(latest.game.speech?.speaker).toBe('host');
       expect(latest.game.tiesCut).toEqual({ player: true, ai: true });
+      // The room's arrival line, then its story lines (room 2: the audience; room 3: the Host's past).
+      expect(latest.game.speech?.text).toBe(ROOM_ARRIVAL[room]);
+      for (const story of ARRIVAL_STORY[room]) { act(() => latest.advanceOpening()); advance(100); expect(latest.game.speech?.text).toBe(story); }
       act(() => latest.advanceOpening()); advance(100);
       expect(latest.game.phase).toBe('SHUFFLING');
       advance(DEAL_COMPLETE);

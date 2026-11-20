@@ -300,3 +300,11 @@ h1 > span { color: #aeb99b; }h1 > i { font-family: Georgia, serif; font-size: 23
 .payout-ending .story-caption.p1 { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .rec-dot, .type-line::after, .fb-casino i { animation: none; } .type-text { animation-duration: .01s; } }
 .stage[data-story-stage="prologue"] .round-hud, .stage[data-story-stage="prologue"] .scene-bottom, .stage[data-story-stage="prologue"] .scene-corner { visibility: hidden; }
+
+/* Room 2 onwards: the broadcast's live odds under the room label. */
+.campaign-hud .live-odds { display: inline-flex; align-items: center; gap: 0; font-family: 'Courier New', monospace; font-size: 10px; letter-spacing: 1.5px; color: #c9b9a0; background: #00000080; padding: 4px 9px; border-left: 2px solid #b0403a; }
+.campaign-hud .live-odds b { color: #e7b06f; font-weight: 700; text-transform: uppercase; }
+.campaign-hud .live-odds .rec-dot { width: 6px; height: 6px; }
+/* Dragged between rooms: one typed line over the hood. */
+.transfer-story { position: absolute; inset: 0; z-index: 12; pointer-events: none; }
+.transfer-story .story-caption { opacity: 1; animation: endFade .4s both; }

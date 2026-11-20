@@ -42,10 +42,10 @@ function blotches(c: CanvasRenderingContext2D, s: number, r: () => number, n: nu
 }
 
 const feltColor = () => canvasTex(1024, (c, s, r) => {
-  c.fillStyle = '#1d4a34'; c.fillRect(0, 0, s, s);
-  blotches(c, s, r, 60, 'rgba(10,30,20,1)', .5, 160);          // worn, darker patches
-  blotches(c, s, r, 30, 'rgba(60,95,70,1)', .25, 120);          // rubbed lighter areas
-  speckle(c, s, r, 90000, .35, '#3f6e55', '#0e2419', 1.1);      // fibres
+  c.fillStyle = '#22392b'; c.fillRect(0, 0, s, s);                // muted, worn green (no fluorescent cast)
+  blotches(c, s, r, 60, 'rgba(12,24,17,1)', .5, 160);          // worn, darker patches
+  blotches(c, s, r, 30, 'rgba(66,84,70,1)', .25, 120);          // rubbed lighter areas
+  speckle(c, s, r, 90000, .35, '#41594a', '#0f1c15', 1.1);      // fibres
   c.strokeStyle = 'rgba(120,150,120,0.08)';
   for (let i = 0; i < 1600; i++) { c.lineWidth = .6; c.beginPath(); const x = r() * s, y = r() * s, a = r() * 6.28; c.moveTo(x, y); c.lineTo(x + Math.cos(a) * 6, y + Math.sin(a) * 6); c.stroke(); }
   blotches(c, s, r, 6, 'rgba(25,20,10,1)', .35, 50);            // old drink stains
@@ -479,7 +479,7 @@ export class FilmPipeline {
       fragmentShader: 'uniform sampler2D tex; uniform vec2 dir; varying vec2 vUv; void main(){ vec3 s = texture2D(tex,vUv).rgb*.227; s += (texture2D(tex,vUv+dir*1.38).rgb + texture2D(tex,vUv-dir*1.38).rgb)*.316; s += (texture2D(tex,vUv+dir*3.23).rgb + texture2D(tex,vUv-dir*3.23).rgb)*.070; gl_FragColor=vec4(s,1.); }' });
     this.finalMat = new THREE.ShaderMaterial({ vertexShader: quadVS, fragmentShader: filmFragment, depthTest: false, depthWrite: false, toneMapped: false,
       uniforms: { tex: { value: null }, depth: { value: depth }, bloom: { value: null }, useDepth: { value: 1 }, bloomStrength: { value: .9 }, time: { value: 0 },
-        near: { value: .055 }, far: { value: 28 }, farFocus: { value: 0 }, darkness: { value: 0 }, shadowMul: { value: new THREE.Vector3(.86, 1, 1.04) }, shadowLift: { value: new THREE.Vector3(0, .008, .012) }, highMul: { value: new THREE.Vector3(1.07, 1, .88) }, saturation: { value: .9 }, aperture: { value: .7 }, exposure: { value: 1.25 }, res: { value: new THREE.Vector2(width, height) },
+        near: { value: .055 }, far: { value: 28 }, farFocus: { value: 0 }, darkness: { value: ROOM_GRADE.darkness }, shadowMul: { value: new THREE.Vector3(1, 1, 1) }, shadowLift: { value: new THREE.Vector3(0, 0, 0) }, highMul: { value: new THREE.Vector3(1.06, 1, .9) }, saturation: { value: .75 }, aperture: { value: .7 }, exposure: { value: 1.25 }, res: { value: new THREE.Vector2(width, height) },
         triggerDarkening: { value: 0 }, heartbeatPulse: { value: 0 }, forcedContact: { value: 0 }, hoodCovered: { value: 0 }, hoodLift: { value: 0 }, hoodDrop: { value: 1 },
         focusBlur: { value: 0 }, glare: { value: 0 }, squint: { value: 0 } } });
     this.quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.brightMat); this.qs.add(this.quad);
@@ -522,6 +522,35 @@ export class FilmPipeline {
 }
 
 /** One call that turns a built bunker into the cinematic version. */
+/**
+ * The chosen room look (option A, "slightly darker, muted green"): neutral shadows instead of a teal cast, less saturation,
+ * a dimmer ambient, and part of the bulb's light moved into a downward cone so the table stays lit while the walls fall away.
+ */
+export const ROOM_GRADE = { spill: .55, ambient: .6, darkness: .35, ambientDesaturate: .8 } as const;
+export function createRoomGrade(world: THREE.Scene) {
+  let spot: THREE.SpotLight | null = null, lastAmbient = -1;
+  const grey = new THREE.Color();
+  /** Call every frame after the room has set its light levels for the frame. */
+  function apply(bulb: THREE.PointLight | undefined) {
+    const ambient = world.getObjectByName('ambient-room-light') as THREE.HemisphereLight | undefined;
+    if (ambient) {
+      ambient.intensity *= ROOM_GRADE.ambient;
+      if (ambient.color.getHex() !== lastAmbient) {   // the room changed its mood colour: take the colour out of it once
+        const l = ambient.color.r * .299 + ambient.color.g * .587 + ambient.color.b * .114;
+        ambient.color.lerp(grey.setRGB(l, l, l), ROOM_GRADE.ambientDesaturate); lastAmbient = ambient.color.getHex();
+      }
+    }
+    if (!bulb?.parent) return;
+    if (!spot) {
+      spot = new THREE.SpotLight(0xffffff, 0, 0, Math.PI / 3.1, .75, 2); spot.name = 'bulb-downlight';
+      spot.castShadow = true; spot.shadow.mapSize.set(1024, 1024); spot.shadow.bias = -.002;
+      bulb.parent.add(spot); bulb.parent.add(spot.target);
+    }
+    spot.position.copy(bulb.position); spot.target.position.set(bulb.position.x, bulb.position.y - 1, bulb.position.z);
+    spot.color.copy(bulb.color); spot.intensity = bulb.intensity * (1 - ROOM_GRADE.spill); bulb.intensity *= ROOM_GRADE.spill;
+  }
+  return { apply };
+}
 export function applyCinematicLook(world: THREE.Scene, renderer: THREE.WebGLRenderer | null) {
   upgradeMaterials(world); upgradeCharacters(world);
   upgradeRevolver(world, renderer); detailRevolver(world);
@@ -536,7 +565,8 @@ export function applyCinematicLook(world: THREE.Scene, renderer: THREE.WebGLRend
     }
   });
   const fx = new GunshotFX(world);
-  return { shaft, fx };
+  const grade = createRoomGrade(world);
+  return { shaft, fx, grade };
 }
 
 /* ------------------------------------------------------------------ */

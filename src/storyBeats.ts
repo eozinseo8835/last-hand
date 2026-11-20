@@ -20,3 +20,20 @@ export const PAYOUT_MS = 4500;
 export const PAYOUT_CAPTION = 'Seat six is available.';
 /** A stable, plausible audience size for this run's broadcast (no randomness in render). */
 export function viewerCount(seed: number) { return 41000 + Math.abs(Math.round(Math.sin(seed * 12.9898) * 43758.5453)) % 17000; }
+/** Extra Host lines when a new room begins (after the room's arrival line). Room 3 plants the mask twist. */
+export const ARRIVAL_STORY: Record<1 | 2 | 3, readonly string[]> = {
+  1: [],
+  2: ['Our audience has grown. They are betting on you now.'],
+  3: ['I sat in your chair once. Season four.', 'I won. Look at what winning bought me.'],
+};
+/** Typed over the hood while you are dragged to the next room (keyed by the room you are leaving). */
+export const TRANSFER_STORY: Record<1 | 2, { tag: string; line: string }> = {
+  1: { tag: 'GUESTS REMAINING · 4', line: 'Somewhere above you, people are placing bets.' },
+  2: { tag: 'GUESTS REMAINING · 2', line: 'Only one of you walks out. They have already chosen.' },
+};
+/** Live betting odds shown from room 2: your price lengthens with every chamber fired and every hand you lose. */
+export function liveOdds(chambersFired: number, lossStreak: number, room: number) {
+  const you = 1.6 + chambersFired * .45 + lossStreak * .35 + (room - 2) * .3;
+  const them = Math.max(1.1, 3.4 - chambersFired * .3 - lossStreak * .25);
+  return { you: you.toFixed(1), them: them.toFixed(1) };
+}
