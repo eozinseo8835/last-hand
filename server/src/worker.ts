@@ -21,7 +21,13 @@ function allowedOrigin(request: Request, env: Env): string | null {
   const origin = request.headers.get('Origin');
   if (!origin) return null;
   const allowed = (env.ALLOWED_ORIGINS ?? '').split(',').map(s => s.trim()).filter(Boolean);
-  return allowed.length === 0 || allowed.includes(origin) ? origin : null;
+  return allowed.length === 0 || allowed.some(pattern => originMatches(pattern, origin)) ? origin : null;
+}
+/** An allowed origin may use * for one name part, e.g. https://last-hand*.pages.dev or https://*.last-hand.pages.dev. */
+export function originMatches(pattern: string, origin: string) {
+  if (!pattern.includes('*')) return pattern === origin;
+  const regex = new RegExp('^' + pattern.split('*').map(part => part.replace(/[.+?^${}()|[\]\\/]/g, '\\$&')).join('[a-z0-9-]*') + '$');
+  return regex.test(origin);
 }
 function cors(origin: string | null): Record<string, string> {
   return origin ? { 'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Methods': 'GET, OPTIONS', Vary: 'Origin' } : {};

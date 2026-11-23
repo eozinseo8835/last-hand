@@ -21,5 +21,5 @@ tag = "v2"
 new_sqlite_classes = ["Matchmaker"]
 
 [vars]
-# Sites allowed to open rooms (the Netlify game and local development).
-ALLOWED_ORIGINS = "https://dulcet-zuccutto-df56d7.netlify.app,https://poetic-alfajores-084ea6.netlify.app,http://localhost:5173,http://127.0.0.1:5173"
+# Sites allowed to open rooms: the game on Cloudflare Pages (and its preview links), the old Netlify sites, local development.
+ALLOWED_ORIGINS = "https://last-hand*.pages.dev,https://*.last-hand*.pages.dev,https://dulcet-zuccutto-df56d7.netlify.app,https://poetic-alfajores-084ea6.netlify.app,http://localhost:5173,http://127.0.0.1:5173"

@@ -77,3 +77,16 @@ describe('room server', () => {
     expect(b2.last('welcome')?.seat).toBe(1); expect(a.view().seats[1].connected).toBe(true);
   });
 });
+
+describe('allowed sites', () => {
+  it('accepts the game on Cloudflare Pages and its preview links, and nothing else', async () => {
+    const { originMatches } = await import('../../server/src/worker');
+    expect(originMatches('https://last-hand*.pages.dev', 'https://last-hand.pages.dev')).toBe(true);
+    expect(originMatches('https://last-hand*.pages.dev', 'https://last-hand-3xk.pages.dev')).toBe(true);
+    expect(originMatches('https://*.last-hand*.pages.dev', 'https://a1b2c3.last-hand.pages.dev')).toBe(true);
+    expect(originMatches('https://last-hand*.pages.dev', 'https://evil.pages.dev')).toBe(false);
+    expect(originMatches('https://last-hand*.pages.dev', 'https://last-hand.pages.dev.evil.com')).toBe(false);
+    expect(originMatches('https://*.last-hand*.pages.dev', 'https://x.y.last-hand.pages.dev')).toBe(false);
+    expect(originMatches('http://localhost:5173', 'http://localhost:5173')).toBe(true);
+  });
+});
