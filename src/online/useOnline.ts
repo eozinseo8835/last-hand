@@ -3,21 +3,23 @@
  * and automatic rejoin (same seat) if the connection drops.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { normalizeRoomCode, type Action, type ClientMessage, type RoomView, type ServerMessage } from './protocol';
+import { normalizeRoomCode, type Action, type ClientMessage, type QueueClientMessage, type QueueServerMessage, type RoomView, type ServerMessage } from './protocol';
 
 /** Set at build time in .env.production as VITE_SERVER_URL, e.g. https://last-hand-server.<you>.workers.dev */
 export const SERVER_URL: string = (import.meta.env?.VITE_SERVER_URL as string | undefined)?.replace(/\/$/, '') ?? '';
 export const onlineAvailable = () => SERVER_URL.startsWith('https://') || SERVER_URL.startsWith('http://localhost') || SERVER_URL.startsWith('http://127.0.0.1');
 
-export type OnlineStatus = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'closed';
-export type OnlineState = { status: OnlineStatus; code: string | null; view: RoomView | null; error: string | null; clockOffset: number };
+export type OnlineStatus = 'idle' | 'queue' | 'connecting' | 'open' | 'reconnecting' | 'closed';
+export type QueueInfo = { players: number; since: number; canStartAlone: boolean };
+export type OnlineState = { status: OnlineStatus; code: string | null; view: RoomView | null; error: string | null; clockOffset: number; queue: QueueInfo | null };
 
 const tokenKey = (code: string) => `last-hand-seat-${code}`;
 function readToken(code: string) { try { return sessionStorage.getItem(tokenKey(code)) ?? undefined; } catch { return undefined; } }
 function saveToken(code: string, token: string) { try { sessionStorage.setItem(tokenKey(code), token); } catch { /* private mode */ } }
 
 export function useOnline(playerName: string) {
-  const [state, setState] = useState<OnlineState>({ status: 'idle', code: null, view: null, error: null, clockOffset: 0 });
+  const [state, setState] = useState<OnlineState>({ status: 'idle', code: null, view: null, error: null, clockOffset: 0, queue: null });
+  const queueSocket = useRef<WebSocket | null>(null);
   const socket = useRef<WebSocket | null>(null), wanted = useRef<string | null>(null), retries = useRef(0), retryTimer = useRef<number | null>(null);
   const nameRef = useRef(playerName); nameRef.current = playerName;
 
@@ -64,16 +66,37 @@ export function useOnline(playerName: string) {
     retries.current = 0; open(code);
   }, [open]);
 
+  /** Join the matchmaking queue; when the server matches us, it hands over a room code and we join that room. */
+  const findMatch = useCallback(() => {
+    queueSocket.current?.close();
+    const ws = new WebSocket(`${SERVER_URL.replace(/^http/, 'ws')}/api/queue`); queueSocket.current = ws;
+    setState(s => ({ ...s, status: 'queue', error: null, queue: null }));
+    ws.onopen = () => ws.send(JSON.stringify({ t: 'queue', name: nameRef.current } satisfies QueueClientMessage));
+    ws.onmessage = event => {
+      let message: QueueServerMessage; try { message = JSON.parse(String(event.data)); } catch { return; }
+      if (message.t === 'waiting') setState(s => ({ ...s, queue: { players: message.players, since: message.since - (message.serverNow - Date.now()), canStartAlone: message.canStartAlone } }));
+      else if (message.t === 'matched') { queueSocket.current = null; ws.close(); retries.current = 0; setState(s => ({ ...s, queue: null })); open(message.code); }
+    };
+    ws.onclose = () => { if (queueSocket.current === ws) { queueSocket.current = null; setState(s => ({ ...s, status: 'idle', queue: null, error: 'Lost the connection to the queue. Try again.' })); } };
+  }, [open]);
+  const startNow = useCallback(() => { queueSocket.current?.send(JSON.stringify({ t: 'start-now' } satisfies QueueClientMessage)); }, []);
+  const cancelQueue = useCallback(() => {
+    const ws = queueSocket.current; queueSocket.current = null;
+    try { ws?.send(JSON.stringify({ t: 'cancel' } satisfies QueueClientMessage)); } catch { /* closed */ }
+    ws?.close(); setState(s => ({ ...s, status: 'idle', queue: null }));
+  }, []);
+
   const leave = useCallback(() => {
     wanted.current = null; if (retryTimer.current) clearTimeout(retryTimer.current);
     send({ t: 'leave' }); socket.current?.close(); socket.current = null;
-    setState({ status: 'idle', code: null, view: null, error: null, clockOffset: 0 });
+    const queued = queueSocket.current; queueSocket.current = null; queued?.close();
+    setState({ status: 'idle', code: null, view: null, error: null, clockOffset: 0, queue: null });
   }, [send]);
 
   const start = useCallback(() => send({ t: 'start' }), [send]);
   const act = useCallback((action: Action) => send({ t: 'act', action }), [send]);
   const clearError = useCallback(() => setState(s => ({ ...s, error: null })), []);
 
-  useEffect(() => () => { wanted.current = null; if (retryTimer.current) clearTimeout(retryTimer.current); socket.current?.close(); }, []);
-  return { ...state, create, join, leave, start, act, clearError };
+  useEffect(() => () => { wanted.current = null; if (retryTimer.current) clearTimeout(retryTimer.current); socket.current?.close(); const q = queueSocket.current; queueSocket.current = null; q?.close(); }, []);
+  return { ...state, create, join, leave, start, act, clearError, findMatch, startNow, cancelQueue };
 }

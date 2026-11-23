@@ -19,7 +19,11 @@ export type Table = {
   shooter: number | null; shot: Shot | null; outcome: { winner: number | null; fold: number | null } | null;
   dead: number | null; winner: number | null; aiNextAt: Record<number, number>;
 };
-export type Room = { code: string; stage: RoomStage; bracketRoom: number; seats: Seat[]; host: number | null; tables: Table[]; winner: number | null };
+export type Room = {
+  code: string; stage: RoomStage; bracketRoom: number; seats: Seat[]; host: number | null; tables: Table[]; winner: number | null;
+  /** Rooms made by the matchmaker start by themselves: when every matched player has joined, or at this time. */
+  autoStartAt?: number | null; expectedHumans?: number;
+};
 
 export const MAX_FOLDS_ONLINE = 3;
 const AI_NAMES = ['GUEST 01', 'GUEST 02', 'GUEST 03', 'GUEST 04', 'GUEST 05', 'GUEST 06', 'GUEST 07', 'GUEST 08'];
@@ -54,10 +58,18 @@ export function disconnect(room: Room, seat: number) {
 
 const aiControlled = (room: Room, seat: number) => room.seats[seat].kind !== 'human' || !room.seats[seat].connected;
 
+/** A matchmade room: nobody presses start; it begins when the matched players are seated (or after `waitMs`). */
+export function prepareMatch(room: Room, expectedHumans: number, now: number, waitMs: number) {
+  room.expectedHumans = expectedHumans; room.autoStartAt = now + waitMs;
+}
 /** The host starts: empty seats are filled by computer guests and the eight are paired at random. */
 export function startGame(room: Room, by: number, now: number, random: RandomSource): string | null {
   if (room.stage !== 'lobby') return 'The game has already started.';
   if (by !== room.host) return 'Only the host can start the game.';
+  return beginGame(room, now, random);
+}
+function beginGame(room: Room, now: number, random: RandomSource): string | null {
+  room.autoStartAt = null;
   room.seats.forEach((s, i) => { if (s.kind === 'empty') room.seats[i] = { name: AI_NAMES[i], kind: 'ai', token: null, connected: false, alive: true, table: null }; });
   room.stage = 'playing'; room.bracketRoom = 1;
   seatTables(room, room.seats.map((_, i) => i), now, random);
@@ -138,6 +150,11 @@ function fire(room: Room, table: Table, seat: number, forced: boolean, now: numb
 
 /** Moves every table along by the clock and plays the computer-controlled seats. Call on every message and alarm. */
 export function tick(room: Room, now: number, random: RandomSource) {
+  if (room.stage === 'lobby' && room.autoStartAt) {
+    const seated = room.seats.filter(s => s.kind === 'human').length;
+    if (seated > 0 && (now >= room.autoStartAt || seated >= (room.expectedHumans ?? MAX_SEATS))) beginGame(room, now, random);
+    else if (seated === 0 && now >= room.autoStartAt + 60_000) room.autoStartAt = null;   // nobody came
+  }
   if (room.stage !== 'playing') return;
   for (const table of room.tables) {
     for (let guard = 0; guard < 8 && table.phase !== 'over'; guard++) { if (!stepTable(room, table, now, random)) break; }
@@ -197,6 +214,7 @@ function stepTable(room: Room, table: Table, now: number, random: RandomSource):
 
 /** When the server should wake up next (the earliest phase deadline or computer move), or null when idle. */
 export function nextWakeAt(room: Room): number | null {
+  if (room.stage === 'lobby') return room.autoStartAt ?? null;
   if (room.stage !== 'playing') return null;
   let next = Infinity;
   for (const t of room.tables) {
@@ -211,7 +229,7 @@ export function nextWakeAt(room: Room): number | null {
 export function viewFor(room: Room, you: number, now: number): RoomView {
   const mine = room.tables.find(t => t.seats.includes(you)) ?? null;
   return {
-    code: room.code, stage: room.stage, bracketRoom: room.bracketRoom, you, serverNow: now, winner: room.winner,
+    code: room.code, stage: room.stage, bracketRoom: room.bracketRoom, you, serverNow: now, winner: room.winner, autoStartAt: room.autoStartAt ?? null,
     guestsRemaining: room.seats.filter(s => s.kind !== 'empty' && s.alive).length,
     seats: room.seats.map((s, seat) => ({ seat, name: s.name, kind: s.kind, connected: s.kind === 'ai' || s.connected, alive: s.alive, table: s.table, host: seat === room.host })),
     table: mine ? tableView(mine, you) : null,

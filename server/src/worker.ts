@@ -3,15 +3,17 @@
  *
  *   GET  /api/new           → { code }  a fresh 4-character room code
  *   GET  /api/room/<CODE>   → WebSocket into that room (one Durable Object per code)
+ *   GET  /api/queue         → WebSocket into the matchmaking queue (one global Durable Object)
  *
  * The Durable Object keeps the whole room (src/online/room.ts) and is the only place that knows
  * the deck, both hands and the bullet chamber. Every browser gets a view made for its own seat.
  */
-import { act, createRoom, disconnect, joinRoom, nextWakeAt, startGame, tick, viewFor, type Room } from '../../src/online/room';
-import { normalizeRoomCode, randomRoomCode, type ClientMessage, type ServerMessage } from '../../src/online/protocol';
+import { act, createRoom, disconnect, joinRoom, nextWakeAt, prepareMatch, startGame, tick, viewFor, type Room } from '../../src/online/room';
+import { MATCH_JOIN_WAIT_MS, cleanPlayerName, normalizeRoomCode, randomRoomCode, type ClientMessage, type QueueClientMessage, type QueueServerMessage, type ServerMessage } from '../../src/online/protocol';
+import { canStartAlone, decideMatch, type Waiting } from '../../src/online/queue';
 import type { DurableObjectNamespace, DurableObjectState, WebSocketWithAttachment } from './cf';
 
-export interface Env { ROOMS: DurableObjectNamespace; ALLOWED_ORIGINS?: string }
+export interface Env { ROOMS: DurableObjectNamespace; MATCHMAKER: DurableObjectNamespace; ALLOWED_ORIGINS?: string }
 
 const MAX_MESSAGE_BYTES = 1024;
 
@@ -32,6 +34,10 @@ export default {
     if (request.headers.get('Origin') && !origin) return new Response('Origin not allowed', { status: 403 });
     if (url.pathname === '/api/new') {
       return Response.json({ code: randomRoomCode() }, { headers: { ...cors(origin), 'Cache-Control': 'no-store' } });
+    }
+    if (url.pathname === '/api/queue') {
+      if (request.headers.get('Upgrade') !== 'websocket') return new Response('Expected a WebSocket', { status: 426, headers: cors(origin) });
+      return env.MATCHMAKER.get(env.MATCHMAKER.idFromName('global')).fetch(request);
     }
     const match = url.pathname.match(/^\/api\/room\/([A-Za-z0-9]+)$/);
     if (match) {
@@ -55,7 +61,15 @@ export class LastHandRoom {
   }
 
   async fetch(request: Request): Promise<Response> {
-    const code = new URL(request.url).searchParams.get('code') ?? 'XXXX';
+    const url = new URL(request.url), code = url.searchParams.get('code') ?? 'XXXX';
+    if (url.pathname === '/init') {
+      // Only the matchmaker calls this (the public routes never forward here): open a fresh room that starts by itself.
+      if (this.room && this.room.stage !== 'finished' && this.room.seats.some(s => s.kind !== 'empty')) return new Response('busy', { status: 409 });
+      const now = Date.now();
+      this.room = createRoom(code); prepareMatch(this.room, Math.max(1, Number(url.searchParams.get('expected')) || 1), now, MATCH_JOIN_WAIT_MS);
+      await this.save(); await this.state.storage.setAlarm(this.room.autoStartAt!);
+      return new Response('ok');
+    }
     if (!this.room) { this.room = createRoom(code); await this.save(); }
     const pair = new WebSocketPair(), [client, server] = Object.values(pair);
     this.state.acceptWebSocket(server);
@@ -117,3 +131,63 @@ export class LastHandRoom {
   }
   private save() { return this.state.storage.put('room', this.room); }
 }
+
+type QueueAttachment = Waiting | Record<string, never>;
+/** The matchmaking queue: one object for everyone. Each waiting player is a socket; its attachment holds their place. */
+export class Matchmaker {
+  constructor(private state: DurableObjectState, private env: Env) {}
+
+  async fetch(): Promise<Response> {
+    const pair = new WebSocketPair(), [client, server] = Object.values(pair);
+    this.state.acceptWebSocket(server);
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  async webSocketMessage(ws: WebSocketWithAttachment, data: string | ArrayBuffer) {
+    if (typeof data !== 'string' || data.length > MAX_MESSAGE_BYTES) return;
+    let message: QueueClientMessage; try { message = JSON.parse(data); } catch { return; }
+    const now = Date.now(), place = ws.deserializeAttachment() as QueueAttachment | null;
+    if (message.t === 'queue' && !(place && 'id' in place)) ws.serializeAttachment({ id: crypto.randomUUID(), name: cleanPlayerName(message.name, 'GUEST'), since: now } satisfies Waiting);
+    else if (message.t === 'start-now' && place && 'id' in place) {
+      const waiting = this.waiting();
+      if (waiting.length > 1 || canStartAlone(waiting.map(w => w.place), place as Waiting, now)) ws.serializeAttachment({ ...(place as Waiting), startNow: true });
+    } else if (message.t === 'cancel') { ws.serializeAttachment({}); ws.close(1000, 'cancelled'); }
+    await this.settle(now);
+  }
+  async webSocketClose(ws: WebSocketWithAttachment) { ws.serializeAttachment({}); await this.settle(Date.now()); }
+  async webSocketError(ws: WebSocketWithAttachment) { ws.serializeAttachment({}); await this.settle(Date.now()); }
+  async alarm() { await this.settle(Date.now()); }
+
+  private waiting() {
+    return this.state.getWebSockets().map(ws => ({ ws, place: ws.deserializeAttachment() as Waiting | null })).filter((w): w is { ws: WebSocketWithAttachment; place: Waiting } => !!w.place && 'id' in w.place);
+  }
+
+  /** Match whoever should leave together, tell everyone else how the queue looks, and check again in a second. */
+  private async settle(now: number) {
+    let waiting = this.waiting();
+    const group = decideMatch(waiting.map(w => w.place), now);
+    if (group) {
+      const code = await this.openRoom(group.length);
+      if (code) {
+        for (const member of group) {
+          const entry = waiting.find(w => w.place.id === member.id)!;
+          send(entry.ws, { t: 'matched', code }); entry.ws.serializeAttachment({}); try { entry.ws.close(1000, 'matched'); } catch { /* gone */ }
+        }
+        waiting = this.waiting();
+      }
+    }
+    const places = waiting.map(w => w.place);
+    for (const w of waiting) send(w.ws, { t: 'waiting', players: waiting.length, since: w.place.since, serverNow: now, canStartAlone: canStartAlone(places, w.place, now) });
+    if (waiting.length) await this.state.storage.setAlarm(now + 1000); else await this.state.storage.deleteAlarm();
+  }
+
+  private async openRoom(expected: number): Promise<string | null> {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const code = randomRoomCode();
+      const response = await this.env.ROOMS.get(this.env.ROOMS.idFromName(code)).fetch(new Request(`https://room/init?code=${code}&expected=${expected}`, { method: 'POST' }));
+      if (response.ok) return code;
+    }
+    return null;
+  }
+}
+function send(ws: WebSocket, message: QueueServerMessage) { try { ws.send(JSON.stringify(message)); } catch { /* closed */ } }

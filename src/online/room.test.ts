@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { act, createRoom, disconnect, handWinner, joinRoom, nextWakeAt, startGame, tick, viewFor, type Room } from './room';
+import { act, createRoom, disconnect, handWinner, joinRoom, nextWakeAt, prepareMatch, startGame, tick, viewFor, type Room } from './room';
 import { DEAL_MS, GUN_SLIDE_MS, ONLINE_DECISION_MS, ONLINE_TRIGGER_MS, RESULT_MS, REVEAL_MS, isHidden, normalizeRoomCode, randomRoomCode } from './protocol';
 import type { Card } from '../game';
 
@@ -169,5 +169,29 @@ describe('computer guests, dropped players and the bracket', () => {
     tick(room, 1000 + DEAL_MS, random);
     const wake = nextWakeAt(room)!;
     expect(wake).toBeGreaterThan(1000 + DEAL_MS); expect(wake).toBeLessThanOrEqual(1000 + DEAL_MS + ONLINE_DECISION_MS);
+  });
+});
+
+describe('matchmaking', () => {
+  it('eight in the queue leave together at once; fewer wait for more players first', async () => {
+    const { decideMatch } = await import('./queue');
+    const { QUEUE_FILL_WAIT_MS } = await import('./protocol');
+    const w = (id: number, since = 0) => ({ id: String(id), name: `P${id}`, since });
+    expect(decideMatch(Array.from({ length: 9 }, (_, i) => w(i, i)), 1)!.map(x => x.id)).toEqual(['0', '1', '2', '3', '4', '5', '6', '7']);
+    expect(decideMatch([w(1), w(2)], QUEUE_FILL_WAIT_MS - 1)).toBeNull();
+    expect(decideMatch([w(1), w(2)], QUEUE_FILL_WAIT_MS)!.length).toBe(2);
+    expect(decideMatch([w(1)], 10 * QUEUE_FILL_WAIT_MS)).toBeNull();               // alone: never matched automatically
+    expect(decideMatch([{ ...w(1), startNow: true }], 1)!.length).toBe(1);      // unless they choose to start now
+  });
+  it('a matchmade room starts by itself once the matched players are seated, or at its deadline', () => {
+    const room = createRoom('MTCH'), random = seeded(51);
+
+    prepareMatch(room, 2, 0, 12000);
+    joinRoom(room, 'A', undefined, token); tick(room, 100, random); expect(room.stage).toBe('lobby');
+    expect(nextWakeAt(room)).toBe(12000);
+    joinRoom(room, 'B', undefined, token); tick(room, 200, random); expect(room.stage).toBe('playing');
+    const lonely = createRoom('LONE'); prepareMatch(lonely, 3, 0, 12000);
+    joinRoom(lonely, 'A', undefined, token); tick(lonely, 11999, random); expect(lonely.stage).toBe('lobby');
+    tick(lonely, 12000, random); expect(lonely.stage).toBe('playing'); expect(lonely.seats.filter(s => s.kind === 'ai')).toHaveLength(7);
   });
 });

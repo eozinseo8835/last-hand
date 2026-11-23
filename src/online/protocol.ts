@@ -18,6 +18,15 @@ export type SeatKind = 'empty' | 'human' | 'ai';
 export type TablePhase = 'dealing' | 'deciding' | 'reveal' | 'shooting' | 'result' | 'over';
 export type Action = 'hit' | 'stand' | 'fold' | 'spin' | 'pull';
 
+/** Matchmaking: wait a little for real players, then fill the rest of the eight seats with computer guests. */
+export const QUEUE_FILL_WAIT_MS = 20000;     // two or more waiting this long → start with whoever is here
+export const QUEUE_SOLO_OFFER_MS = 30000;    // alone this long → offer to start with computer guests
+export const MATCH_JOIN_WAIT_MS = 12000;     // a matched room starts when everyone has joined, or after this
+/** Browser → matchmaker. */
+export type QueueClientMessage = { t: 'queue'; name: string } | { t: 'start-now' } | { t: 'cancel' };
+/** Matchmaker → browser. */
+export type QueueServerMessage = { t: 'waiting'; players: number; since: number; serverNow: number; canStartAlone: boolean } | { t: 'matched'; code: string };
+
 /** Browser → server. */
 export type ClientMessage =
   | { t: 'join'; name: string; token?: string }
@@ -76,6 +85,8 @@ export type RoomView = {
   guestsRemaining: number;
   winner: number | null;
   serverNow: number;
+  /** Matchmade rooms: when the game starts by itself (null for rooms started by a host). */
+  autoStartAt: number | null;
 };
 
 /** Server → browser. */

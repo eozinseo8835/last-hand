@@ -61,8 +61,16 @@ export default function OnlineGame({ playerName, graphics, onExit }: { playerNam
     <div className="scene-edge"/>
     <div className="hud-layer online-hud">
       <div className="scene-corner top-left"/><div className="scene-corner top-right"/><div className="scene-corner bottom-left"/><div className="scene-corner bottom-right"/>
-      {(!view || status === 'idle') && <OnlineStart status={status} codeDraft={codeDraft} setCodeDraft={setCodeDraft} onCreate={online.create} onJoin={() => online.join(codeDraft)} onBack={leave} playerName={playerName}/>}
-      {view?.stage === 'lobby' && <OnlineLobby view={view} onStart={online.start} onLeave={leave}/>}
+      {(!view || status === 'idle') && status !== 'queue' && <OnlineStart status={status} codeDraft={codeDraft} setCodeDraft={setCodeDraft} onCreate={online.create} onJoin={() => online.join(codeDraft)} onFind={online.findMatch} onBack={leave} playerName={playerName}/>}
+      {status === 'queue' && <div className="online-panel queue">
+        <span className="small-label">FINDING GUESTS</span>
+        <h2>{online.queue ? `${online.queue.players} waiting` : 'Joining the queue…'}</h2>
+        <p className="queue-time">{online.queue ? `${Math.floor(Math.max(0, now - online.queue.since) / 1000)}s` : ''}</p>
+        <p>When eight guests are waiting the game starts at once. With two or more, it starts after a short wait and computer guests take the empty seats.</p>
+        {online.queue?.canStartAlone && <button className="primary-button sit-button" onClick={online.startNow}><span>Start with computer guests</span><ArrowRight size={18}/></button>}
+        <button className="text-button" onClick={online.cancelQueue}><ArrowLeft size={14}/>Cancel</button>
+      </div>}
+      {view?.stage === 'lobby' && <OnlineLobby view={view} now={now - 0} clockOffset={online.clockOffset} onStart={online.start} onLeave={leave}/>}
       {view && view.stage !== 'lobby' && <div className="online-topbar">
         <span><span className="rec-dot"/>LIVE · ROOM {view.code}</span><b>ROOM {view.bracketRoom} / 3</b><span>GUESTS REMAINING: {view.guestsRemaining}</span>
       </div>}
@@ -103,15 +111,17 @@ export default function OnlineGame({ playerName, graphics, onExit }: { playerNam
   </>;
 }
 
-function OnlineStart({ status, codeDraft, setCodeDraft, onCreate, onJoin, onBack, playerName }: {
-  status: string; codeDraft: string; setCodeDraft: (v: string) => void; onCreate: () => void; onJoin: () => void; onBack: () => void; playerName: string;
+function OnlineStart({ status, codeDraft, setCodeDraft, onCreate, onJoin, onFind, onBack, playerName }: {
+  status: string; codeDraft: string; setCodeDraft: (v: string) => void; onCreate: () => void; onJoin: () => void; onFind: () => void; onBack: () => void; playerName: string;
 }) {
   const busy = status === 'connecting';
   return <div className="online-panel">
     <span className="small-label">ONLINE · UP TO 8 GUESTS</span>
     <h2>Private table</h2>
-    <p>Playing as <b>{playerName}</b>. Make a room and share its code, or enter a friend's code.</p>
-    <button className="primary-button sit-button" disabled={busy} onClick={onCreate}><span>{busy ? 'Opening…' : 'Create room'}</span><ArrowRight size={18}/></button>
+    <p>Playing as <b>{playerName}</b>. Find a match with other guests, or open a private room and share its code.</p>
+    <button className="primary-button sit-button" disabled={busy} onClick={onFind}><span>Find a match</span><ArrowRight size={18}/></button>
+    <span className="small-label or-label">OR PLAY WITH FRIENDS</span>
+    <button className="secondary-button" disabled={busy} onClick={onCreate}>{busy ? 'Opening…' : 'Create private room'}</button>
     <form className="join-row" onSubmit={e => { e.preventDefault(); onJoin(); }}>
       <input aria-label="Room code" placeholder="CODE" maxLength={4} value={codeDraft} onChange={e => setCodeDraft(e.target.value.toUpperCase())} autoComplete="off" spellCheck={false}/>
       <button className="secondary-button" type="submit" disabled={busy || codeDraft.length < 4}>Join</button>
@@ -120,8 +130,9 @@ function OnlineStart({ status, codeDraft, setCodeDraft, onCreate, onJoin, onBack
   </div>;
 }
 
-function OnlineLobby({ view, onStart, onLeave }: { view: RoomView; onStart: () => void; onLeave: () => void }) {
+function OnlineLobby({ view, now, clockOffset, onStart, onLeave }: { view: RoomView; now: number; clockOffset: number; onStart: () => void; onLeave: () => void }) {
   const isHost = view.seats[view.you]?.host, humans = view.seats.filter(s => s.kind === 'human').length;
+  const autoIn = view.autoStartAt ? Math.max(0, Math.ceil((view.autoStartAt - clockOffset - now) / 1000)) : null;
   const [copied, setCopied] = useState(false);
   const copy = () => { navigator.clipboard?.writeText(view.code).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }).catch(() => {}); };
   return <div className="online-panel lobby">
@@ -133,7 +144,8 @@ function OnlineLobby({ view, onStart, onLeave }: { view: RoomView; onStart: () =
         <span>{String(i + 1).padStart(2, '0')}</span><b>{s.kind === 'human' ? s.name : 'empty seat'}</b><small>{s.host ? 'HOST' : i === view.you ? 'YOU' : ''}</small></li>; })}
     </ol>
     <p className="lobby-note"><Users size={13}/> {humans} of 8 seated. Empty seats are filled by computer guests when the game starts.</p>
-    {isHost ? <button className="primary-button sit-button" onClick={onStart}><span>Start the game</span><ArrowRight size={18}/></button> : <p className="lobby-note">Waiting for the host to start…</p>}
+    {autoIn !== null ? <p className="lobby-note">Matched. The game starts when everyone is seated (at most {autoIn}s).</p>
+      : isHost ? <button className="primary-button sit-button" onClick={onStart}><span>Start the game</span><ArrowRight size={18}/></button> : <p className="lobby-note">Waiting for the host to start…</p>}
     <button className="text-button" onClick={onLeave}><ArrowLeft size={14}/>Leave room</button>
   </div>;
 }
