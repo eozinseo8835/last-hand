@@ -10,7 +10,8 @@ import { CONFIG, handScore, type Card } from '../game';
 import { tableAudio } from '../audio';
 import { useOnline } from './useOnline';
 import { onlineSceneProps, type LocalTrigger } from './onlineScene';
-import { isHidden, MAX_SEATS, type RoomView } from './protocol';
+import { isHidden, MAX_SEATS, SPIN_MS, type RoomView } from './protocol';
+import { SPIN_SWIPE_MS } from '../gunTransfer';
 
 const SUIT = { spades: '♠', hearts: '♥', diamonds: '♦', clubs: '♣' };
 const cardText = (c: Card) => `${c.rank}${SUIT[c.suit]}`;
@@ -20,7 +21,10 @@ export default function OnlineGame({ playerName, graphics, onExit }: { playerNam
   const { view, status, error } = online;
   const [codeDraft, setCodeDraft] = useState('');
   const [now, setNow] = useState(() => Date.now());
-  const [trigger, setTrigger] = useState<LocalTrigger>({ held: false, progress: 0, spinningUntil: 0, spinSerial: 0 });
+  const [trigger, setTrigger] = useState<LocalTrigger>({ held: false, progress: 0 });
+  const timers = useRef<number[]>([]);
+  const later = (fn: () => void, ms: number) => { timers.current.push(window.setTimeout(fn, ms)); };
+  useEffect(() => () => { timers.current.forEach(clearTimeout); }, []);
   const holdStart = useRef<number | null>(null), pulled = useRef(false);
   useEffect(() => { const id = setInterval(() => setNow(Date.now()), 200); return () => clearInterval(id); }, []);
   useEffect(() => { tableAudio.init(); }, []);
@@ -29,6 +33,9 @@ export default function OnlineGame({ playerName, graphics, onExit }: { playerNam
 
   const table = view?.table ?? null;
   const shooting = table?.phase === 'shooting' && table.shooter === table.me;
+  const toLocal = (serverTime: number) => serverTime - online.clockOffset;
+  const spinBusy = !!table?.spin && now < toLocal(table.spin.at) + SPIN_MS;
+  const gunArriving = !!table && table.phase === 'shooting' && now - toLocal(table.phaseStartedAt) < 1500;
   // Holding the trigger: three seconds, as in story mode; releasing early lets the hammer back down.
   useEffect(() => {
     if (!trigger.held) return;
@@ -42,13 +49,59 @@ export default function OnlineGame({ playerName, graphics, onExit }: { playerNam
     frame = requestAnimationFrame(step);
     return () => cancelAnimationFrame(frame);
   }, [trigger.held]);
-  useEffect(() => { if (!shooting) { holdStart.current = null; pulled.current = false; setTrigger(t => ({ ...t, held: false, progress: 0 })); } }, [shooting, table?.round]);
+  useEffect(() => { if (!shooting) { holdStart.current = null; pulled.current = false; setTrigger({ held: false, progress: 0 }); } }, [shooting, table?.round]);
+  // A released trigger eases back down, as in story mode.
+  useEffect(() => {
+    if (trigger.held || trigger.progress <= 0 || pulled.current) return;
+    const from = trigger.progress, started = Date.now(); let frame = 0;
+    const drain = () => { const f = Math.min(1, (Date.now() - started) / 600); setTrigger(t => (t.held ? t : { ...t, progress: from * (1 - f) })); if (f < 1) frame = requestAnimationFrame(drain); };
+    frame = requestAnimationFrame(drain); return () => cancelAnimationFrame(frame);
+  }, [trigger.held]);
+  function holdTrigger() {
+    if (!shooting || spinBusy || gunArriving) return;
+    holdStart.current = Date.now(); pulled.current = false; setTrigger({ held: true, progress: 0 }); online.act('hold');
+    // The hammer cocks a third of the way in, the cylinder clacks at two thirds.
+    const started = holdStart.current;
+    later(() => { if (holdStart.current === started) tableAudio.play('hammer'); }, CONFIG.TRIGGER_HOLD_MS / 3);
+    later(() => { if (holdStart.current === started) tableAudio.play('clack'); }, CONFIG.TRIGGER_HOLD_MS * 2 / 3);
+  }
+  function releaseTrigger() {
+    if (pulled.current) return;
+    holdStart.current = null; setTrigger(t => ({ ...t, held: false })); online.act('release');
+  }
+  // Story-mode sounds for what happens at the table (driven by the server's view, so both players hear the same moments).
+  const heard = useRef(new Set<string>());
+  const once = (key: string, fn: () => void) => { if (heard.current.has(key)) return; heard.current.add(key); if (heard.current.size > 400) heard.current.clear(); fn(); };
+  useEffect(() => {
+    if (!table) return;
+    const id = `${view!.bracketRoom}:${table.id}:${table.round}`;
+    if (table.phase === 'dealing') once(`deal:${id}`, () => { tableAudio.play('card'); later(() => tableAudio.play('card'), 350); });
+    if (table.phase === 'shooting' && table.shooter !== table.me && table.hold) {
+      const hold = table.hold;
+      once(`hold:${id}:${hold.startedAt}`, () => { tableAudio.play('tension'); later(() => tableAudio.play('hammer'), Math.min(900, hold.duration * .55)); });
+    }
+    if (table.spin) once(`spin:${id}:${table.spin.at}`, () => later(() => tableAudio.play('spin'), Math.max(0, toLocal(table.spin!.at) + SPIN_SWIPE_MS - Date.now())));
+    if (table.phase === 'forced' && table.forcedAt !== null) once(`forced:${id}`, () => {
+      const at = toLocal(table.forcedAt!);
+      later(() => tableAudio.playContact('metal', 1), Math.max(0, at + 2200 - Date.now()));
+      later(() => tableAudio.play('hammer'), Math.max(0, at + 2800 - Date.now()));
+    });
+  }, [table?.phase, table?.hold?.startedAt, table?.spin?.at, table?.round]);
+  useEffect(() => { if (table && table.myCards.length > 2) tableAudio.play('card'); }, [table?.myCards.length]);
+  // The heartbeat quickens with the chambers spent and while a trigger is in play.
+  const chambersFired = table ? table.currentChamber - 1 : 0;
+  useEffect(() => {
+    const active = !!table && ['deciding', 'reveal', 'shooting', 'forced'].includes(table.phase);
+    tableAudio.setHeartbeat({ active, chambersFired, pulling: trigger.held || table?.phase === 'forced', urgency: shooting ? Math.max(0, 1 - (toLocal(table!.phaseEndsAt) - now) / 10000) : 0 });
+  }, [table?.phase, chambersFired, trigger.held, shooting && Math.ceil((toLocal(table!.phaseEndsAt) - now) / 1000)]);
+  useEffect(() => () => tableAudio.setHeartbeat({ active: false, chambersFired: 0, pulling: false }), []);
   // Shot sounds come from the result the server sends.
   const lastShot = useRef<string>('');
   useEffect(() => {
     const shot = table?.shot; if (!shot) return;
     const key = `${table!.id}:${table!.round}:${shot.at}`; if (lastShot.current === key) return; lastShot.current = key;
-    if (shot.fired) tableAudio.playShot({ id: key, kind: 'local', roomId: Math.min(3, view?.bracketRoom ?? 1) as 1 | 2 | 3 }); else tableAudio.play('click');
+    if (shot.fired) tableAudio.playShot({ id: key, kind: 'local', roomId: Math.min(3, view?.bracketRoom ?? 1) as 1 | 2 | 3 });
+    else { tableAudio.play('click'); if (shot.seat !== table!.me) tableAudio.playStory('gasp'); }
   }, [table?.shot?.at]);
 
   const leave = () => { online.leave(); onExit(); };
@@ -89,13 +142,13 @@ export default function OnlineGame({ playerName, graphics, onExit }: { playerNam
           </>}
           {table.phase === 'deciding' && table.myDone && <span className="online-wait">Waiting for {opponentName}…</span>}
           {shooting && <>
-            <button className="secondary-button" disabled={table.spinUsed || trigger.held || now - (table.phaseStartedAt - online.clockOffset) < 1500}
-              onClick={() => { online.act('spin'); setTrigger(t => ({ ...t, spinningUntil: Date.now() + 1400, spinSerial: t.spinSerial + 1 })); }}>SPIN CYLINDER</button>
-            <HoldTrigger progress={trigger.progress} holding={trigger.held} disabled={now < trigger.spinningUntil || now - (table.phaseStartedAt - online.clockOffset) < 1500}
-              onHold={() => { holdStart.current = Date.now(); pulled.current = false; setTrigger(t => ({ ...t, held: true })); }}
-              onRelease={() => { if (!pulled.current) setTrigger(t => ({ ...t, held: false, progress: 0 })); }}/>
+            <button className="secondary-button" disabled={table.spinUsed || trigger.held || trigger.progress > 0 || spinBusy || gunArriving}
+              onClick={() => online.act('spin')}>SPIN CYLINDER</button>
+            <HoldTrigger progress={trigger.progress} holding={trigger.held} disabled={spinBusy || gunArriving} onHold={holdTrigger} onRelease={releaseTrigger}/>
           </>}
-          {table.phase === 'shooting' && !shooting && <span className="online-wait">{opponentName} holds the revolver…</span>}
+          {table.phase === 'shooting' && !shooting && <span className="online-wait">{table.hold ? `${opponentName} raises the revolver…` : spinBusy ? 'The cylinder turns…' : `${opponentName} holds the revolver…`}</span>}
+          {table.phase === 'forced' && <span className="host-enforcement">{table.shooter === table.me ? 'THE HOST IS COMPLETING YOUR TURN.' : 'THE HOST IS COMPLETING THEIR TURN.'}</span>}
+          {shooting && <span className="online-hint">{trigger.held ? 'Keep holding. Do not let go.' : spinBusy ? 'The cylinder turns. Six chambers again.' : gunArriving ? '' : 'Hold to pull. Releasing lets the hammer back down.'}</span>}
         </div>
         <ResultLine view={view}/>
       </>}

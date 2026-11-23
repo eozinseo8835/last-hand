@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { act, createRoom, disconnect, handWinner, joinRoom, nextWakeAt, prepareMatch, startGame, tick, viewFor, type Room } from './room';
-import { DEAL_MS, GUN_SLIDE_MS, ONLINE_DECISION_MS, ONLINE_TRIGGER_MS, RESULT_MS, REVEAL_MS, isHidden, normalizeRoomCode, randomRoomCode } from './protocol';
+import { DEAL_MS, FORCED_SHOT_MS, GUN_SLIDE_MS, ONLINE_DECISION_MS, ONLINE_TRIGGER_MS, RESULT_MS, REVEAL_MS, SPIN_MS, TRIGGER_HOLD_MS, isHidden, normalizeRoomCode, randomRoomCode } from './protocol';
 import type { Card } from '../game';
 
 /** A seeded random source so every run deals the same cards. */
@@ -13,6 +13,11 @@ function lobby(humans = 2) {
   return { room, joined };
 }
 const card = (rank: string, suit: Card['suit'] = 'spades'): Card => ({ rank, suit, id: `${rank}${suit}${Math.random()}` });
+/** A human pull: hold the trigger for three seconds, then pull (as the browser does). */
+function holdAndPull(room: Room, seat: number, now: number, random: () => number) {
+  const held = act(room, seat, 'hold', now, random); if (held) return held;
+  return act(room, seat, 'pull', now + TRIGGER_HOLD_MS, random);
+}
 /** Runs the clock forward in small steps, as the server's alarms would. */
 function run(room: Room, from: number, ms: number, random: () => number, step = 250) {
   let now = from; for (; now <= from + ms; now += step) tick(room, now, random); return now;
@@ -85,14 +90,15 @@ describe('a 1v1 table', () => {
     table.hands[a] = [card('10'), card('9')]; table.hands[b] = [card('10'), card('5')];
     act(room, a, 'stand', now, random); act(room, b, 'stand', now, random); now += REVEAL_MS; tick(room, now, random);
     table.revolver = { bulletChamber: 2, currentChamber: 1 };
-    now += GUN_SLIDE_MS; expect(act(room, b, 'pull', now, random)).toBeNull();
+    now += GUN_SLIDE_MS; expect(act(room, b, 'pull', now, random)).toBe('Hold the trigger to pull it.');
+    expect(holdAndPull(room, b, now, random)).toBeNull(); now += TRIGGER_HOLD_MS;
     expect(table.shot).toMatchObject({ seat: b, fired: false, forced: false }); expect(table.phase).toBe('result');
     now += RESULT_MS; tick(room, now, random); expect(table.phase).toBe('dealing'); expect(table.round).toBe(2);
     now += DEAL_MS; tick(room, now, random);
     table.hands[a] = [card('10'), card('5')]; table.hands[b] = [card('10'), card('9')];
     act(room, a, 'stand', now, random); act(room, b, 'stand', now, random); now += REVEAL_MS; tick(room, now, random);
     expect(table.shooter).toBe(a);
-    now += GUN_SLIDE_MS + 10; act(room, a, 'pull', now, random);
+    now += GUN_SLIDE_MS + 10; holdAndPull(room, a, now, random); now += TRIGGER_HOLD_MS;
     expect(table.shot).toMatchObject({ seat: a, fired: true }); expect(room.seats[a].alive).toBe(false); expect(table.winner).toBe(b);
     now += RESULT_MS; tick(room, now, random); expect(table.phase).toBe('over');
   });
@@ -105,6 +111,8 @@ describe('a 1v1 table', () => {
     act(room, a, 'stand', now, random); act(room, b, 'stand', now, random); now += REVEAL_MS; tick(room, now, random);
     table.revolver = { bulletChamber: 6, currentChamber: 1 };
     now += GUN_SLIDE_MS + ONLINE_TRIGGER_MS; tick(room, now, random);
+    expect(table.phase).toBe('forced'); expect(table.shot).toBeNull(); expect(viewFor(room, b, now).table!.forcedAt).toBe(now);
+    now += FORCED_SHOT_MS; tick(room, now, random);
     expect(table.shot).toMatchObject({ seat: b, forced: true, fired: false });
   });
   it('a decision clock that runs out stands for the player', () => {
@@ -135,7 +143,12 @@ describe('a 1v1 table', () => {
     now += GUN_SLIDE_MS;
     table.revolver = { bulletChamber: 3, currentChamber: 2 };
     expect(act(room, b, 'spin', now, random)).toBeNull(); expect(table.revolver.currentChamber).toBe(1);
+    expect(viewFor(room, a, now).table!.spin).toMatchObject({ seat: b, at: now });   // the opponent sees the spin
     expect(act(room, b, 'spin', now, random)).toBe('You have already spun the cylinder in this room.');
+    expect(act(room, b, 'hold', now + 100, random)).toBe('Wait for the cylinder to stop.');
+    expect(act(room, b, 'hold', now + SPIN_MS, random)).toBeNull();
+    expect(viewFor(room, a, now + SPIN_MS).table!.hold).toMatchObject({ seat: b, duration: TRIGGER_HOLD_MS });
+    expect(act(room, b, 'release', now + SPIN_MS + 500, random)).toBeNull(); expect(table.hold).toBeNull();
   });
   it('both busting is a tie with no shot', () => {
     const { room } = lobby(2); startGame(room, 0, 0, seeded());
@@ -193,5 +206,21 @@ describe('matchmaking', () => {
     const lonely = createRoom('LONE'); prepareMatch(lonely, 3, 0, 12000);
     joinRoom(lonely, 'A', undefined, token); tick(lonely, 11999, random); expect(lonely.stage).toBe('lobby');
     tick(lonely, 12000, random); expect(lonely.stage).toBe('playing'); expect(lonely.seats.filter(s => s.kind === 'ai')).toHaveLength(7);
+  });
+});
+
+describe('story-mode staging online', () => {
+  it('a computer shooter hesitates, raises the revolver over a visible hold, then fires', () => {
+    const { room } = lobby(1), random = seeded(61); startGame(room, 0, 0, random);
+    disconnect(room, 0);
+    let now = 0, sawHold = false, sawShot = false;
+    for (; now < 120_000 && !sawShot; now += 100) {
+      tick(room, now, random);
+      for (const t of room.tables) {
+        if (t.phase === 'shooting' && t.hold) { sawHold = true; expect(t.hold.duration).toBeGreaterThanOrEqual(1500); expect(t.hold.duration).toBeLessThanOrEqual(4000); }
+        if (t.shot && !t.shot.forced) sawShot = true;
+      }
+    }
+    expect(sawHold).toBe(true); expect(sawShot).toBe(true);
   });
 });

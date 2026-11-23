@@ -351,3 +351,4 @@ h1 > span { color: #aeb99b; }h1 > i { font-family: Georgia, serif; font-size: 23
 .online-panel .or-label { margin-top: 6px; }
 .online-panel .secondary-button { min-height: 40px; padding: 0 16px; }
 .online-panel.queue .queue-time { font-family: 'Courier New', monospace; font-size: 28px; color: #f0d6a8; }
+.online-hint { position: absolute; left: 50%; bottom: -26px; transform: translateX(-50%); white-space: nowrap; font-family: 'Courier New', monospace; font-size: 11px; letter-spacing: 1px; color: #c9cdb5; }

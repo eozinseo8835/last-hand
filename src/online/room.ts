@@ -4,9 +4,9 @@
  * and so the server can save it between messages. Time is always passed in as `now` (ms).
  */
 import { createDeck, createRevolver, fireRevolver, handScore, shuffleDeck, type Card, type RandomSource, type Revolver } from '../game';
-import { opponentAction, type RoomNumber } from '../campaign';
+import { OPPONENTS, opponentAction, type RoomNumber } from '../campaign';
 import {
-  DEAL_MS, GUN_SLIDE_MS, MAX_SEATS, ONLINE_DECISION_MS, ONLINE_TRIGGER_MS, RESULT_MS, REVEAL_MS,
+  DEAL_MS, FORCED_SHOT_MS, GUN_SLIDE_MS, MAX_SEATS, ONLINE_DECISION_MS, ONLINE_TRIGGER_MS, RESULT_MS, REVEAL_MS, SPIN_MS, TRIGGER_HOLD_MS,
   cleanPlayerName, type Action, type FeedView, type RoomStage, type RoomView, type SeatKind, type TablePhase, type TableView, type ViewCard,
 } from './protocol';
 
@@ -17,6 +17,9 @@ export type Table = {
   deck: Card[]; hands: Record<number, Card[]>; done: Record<number, boolean>; hit: Record<number, boolean>;
   folds: Record<number, number>; spinUsed: Record<number, boolean>; revolver: Revolver;
   shooter: number | null; shot: Shot | null; outcome: { winner: number | null; fold: number | null } | null;
+  hold: { seat: number; startedAt: number; duration: number } | null; spin: { seat: number; at: number } | null; forcedAt: number | null;
+  /** The computer shooter's plan: what it does next at aiNextAt. */
+  aiStep?: 'spin' | 'hold' | 'fire' | null;
   dead: number | null; winner: number | null; aiNextAt: Record<number, number>;
 };
 export type Room = {
@@ -83,7 +86,7 @@ function seatTables(room: Room, alive: number[], now: number, random: RandomSour
     const seats: [number, number] = [order[i], order[i + 1]];
     const table: Table = { id: room.tables.length, seats, phase: 'dealing', phaseStartedAt: now, phaseEndsAt: now, round: 0, deck: [], hands: {}, done: {}, hit: {},
       folds: { [seats[0]]: MAX_FOLDS_ONLINE, [seats[1]]: MAX_FOLDS_ONLINE }, spinUsed: {}, revolver: createRevolver(random),
-      shooter: null, shot: null, outcome: null, dead: null, winner: null, aiNextAt: {} };
+      shooter: null, shot: null, outcome: null, dead: null, winner: null, aiNextAt: {}, hold: null, spin: null, forcedAt: null, aiStep: null };
     room.tables.push(table); seats.forEach(s => { room.seats[s].table = table.id; });
     newHand(table, now, random);
   }
@@ -96,7 +99,7 @@ function setPhase(table: Table, phase: TablePhase, now: number, duration: number
 function newHand(table: Table, now: number, random: RandomSource) {
   table.deck = shuffleDeck(createDeck(), random); table.round++;
   for (const s of table.seats) { table.hands[s] = [table.deck.pop()!, table.deck.pop()!]; table.done[s] = false; table.hit[s] = false; }
-  table.shooter = null; table.shot = null; table.outcome = null; table.aiNextAt = {};
+  table.shooter = null; table.shot = null; table.outcome = null; table.aiNextAt = {}; table.hold = null; table.forcedAt = null; table.aiStep = null;
   setPhase(table, 'dealing', now, DEAL_MS);
 }
 
@@ -134,16 +137,22 @@ function applyAction(room: Room, table: Table, seat: number, action: Action, now
   }
   if (table.phase !== 'shooting' || table.shooter !== seat || table.shot) return 'It is not your turn with the revolver.';
   if (now < table.phaseStartedAt + GUN_SLIDE_MS) return 'The revolver is still on its way to you.';
+  const spinning = table.spin !== null && now < table.spin.at + SPIN_MS;
   if (action === 'spin') {
     if (table.spinUsed[seat]) return 'You have already spun the cylinder in this room.';
-    table.spinUsed[seat] = true; table.revolver = createRevolver(random); return null;
+    if (table.hold || spinning) return 'Not while the revolver is moving.';
+    table.spinUsed[seat] = true; table.revolver = createRevolver(random); table.spin = { seat, at: now }; return null;
   }
+  if (action === 'hold') { if (spinning) return 'Wait for the cylinder to stop.'; table.hold = { seat, startedAt: now, duration: TRIGGER_HOLD_MS }; return null; }
+  if (action === 'release') { table.hold = null; return null; }
+  // A pull must follow a held trigger (a little early is fine: messages take time to arrive).
+  if (!table.hold || now - table.hold.startedAt < TRIGGER_HOLD_MS - 600) return 'Hold the trigger to pull it.';
   fire(room, table, seat, false, now); return null;
 }
 
 function fire(room: Room, table: Table, seat: number, forced: boolean, now: number) {
   const result = fireRevolver(table.revolver);
-  table.revolver = result.revolver; table.shot = { seat, fired: result.fired, forced, at: now };
+  table.revolver = result.revolver; table.shot = { seat, fired: result.fired, forced, at: now }; table.hold = null;
   if (result.fired) { table.dead = seat; room.seats[seat].alive = false; table.winner = table.seats.find(s => s !== seat)!; }
   setPhase(table, 'result', now, RESULT_MS);
 }
@@ -193,17 +202,32 @@ function stepTable(room: Room, table: Table, now: number, random: RandomSource):
       const winner = handWinner(table);
       table.outcome = { winner, fold: null };
       if (winner === null) { setPhase(table, 'result', now, RESULT_MS); return true; }
-      table.shooter = table.seats.find(s => s !== winner)!;
+      table.shooter = table.seats.find(s => s !== winner)!; table.hold = null; table.spin = null;
       setPhase(table, 'shooting', now, GUN_SLIDE_MS + ONLINE_TRIGGER_MS);
-      table.aiNextAt[table.shooter] = now + GUN_SLIDE_MS + 1500 + random() * 2000;
+      // A computer shooter behaves like the story-mode captives: maybe a spin, a hesitation, then a slow raise to the temple.
+      const remaining = 6 - table.revolver.currentChamber + 1;
+      const spins = !table.spinUsed[table.shooter] && remaining <= OPPONENTS[Math.min(3, room.bracketRoom) as RoomNumber].spinRemaining;
+      table.aiStep = spins ? 'spin' : 'hold';
+      table.aiNextAt[table.shooter] = now + GUN_SLIDE_MS + 500 + random() * 1000;
       return true;
     }
     case 'shooting': {
       const shooter = table.shooter!;
-      if (aiControlled(room, shooter) && now >= (table.aiNextAt[shooter] ?? Infinity)) { fire(room, table, shooter, false, now); return true; }
-      if (due) { fire(room, table, shooter, true, now); return true; }   // the Host takes the shot for a player who stalls
+      if (aiControlled(room, shooter) && now >= (table.aiNextAt[shooter] ?? Infinity)) {
+        if (table.aiStep === 'spin') { applyAction(room, table, shooter, 'spin', now, random); table.aiStep = 'hold'; table.aiNextAt[shooter] = now + SPIN_MS + 300; return true; }
+        if (table.aiStep !== 'fire') {
+          const fired = table.revolver.currentChamber - 1, duration = Math.min(4000, 1500 + fired * 300 + random() * 1000);
+          table.hold = { seat: shooter, startedAt: now, duration }; table.aiStep = 'fire'; table.aiNextAt[shooter] = now + duration; return true;
+        }
+        fire(room, table, shooter, false, now); return true;
+      }
+      // The Host takes over for a shooter who stalls: the same staged shot as story mode.
+      if (due) { table.hold = null; table.forcedAt = now; setPhase(table, 'forced', now, FORCED_SHOT_MS); return true; }
       return false;
     }
+    case 'forced':
+      if (!due) return false;
+      fire(room, table, table.shooter!, true, now); return true;
     case 'result':
       if (!due) return false;
       if (table.dead !== null) { setPhase(table, 'over', now, 0); return true; }
@@ -221,6 +245,7 @@ export function nextWakeAt(room: Room): number | null {
     if (t.phase === 'over') continue;
     next = Math.min(next, t.phaseEndsAt);
     for (const s of t.seats) if (aiControlled(room, s) && t.aiNextAt[s] !== undefined && (t.phase === 'deciding' ? !t.done[s] : t.phase === 'shooting' && t.shooter === s)) next = Math.min(next, t.aiNextAt[s]);
+    if (t.phase === 'shooting' && t.hold && !aiControlled(room, t.hold.seat)) next = Math.min(next, t.hold.startedAt + t.hold.duration + 1500);
   }
   return Number.isFinite(next) ? next : null;
 }
@@ -239,10 +264,11 @@ export function viewFor(room: Room, you: number, now: number): RoomView {
 
 function tableView(t: Table, me: number): TableView {
   const opponent = t.seats.find(s => s !== me)!;
-  const shown = t.phase === 'reveal' || t.phase === 'shooting' || t.phase === 'over' || (t.phase === 'result' && !t.outcome?.fold);
+  const shown = t.phase === 'reveal' || t.phase === 'shooting' || t.phase === 'forced' || t.phase === 'over' || (t.phase === 'result' && !t.outcome?.fold);
   const opponentCards: ViewCard[] = (t.hands[opponent] ?? []).map((card, i) => (shown || i === 0 ? card : { id: card.id, hidden: true as const }));
   const outcome = !t.outcome ? null : t.outcome.fold !== null ? 'fold' : t.outcome.winner === null ? 'tie' : t.outcome.winner === me ? 'win' : 'lose';
   return { id: t.id, phase: t.phase, phaseStartedAt: t.phaseStartedAt, phaseEndsAt: t.phaseEndsAt, round: t.round, me, opponent,
     myCards: [...(t.hands[me] ?? [])], opponentCards, myDone: !!t.done[me], opponentDone: !!t.done[opponent], folds: t.folds[me] ?? 0,
-    spinUsed: !!t.spinUsed[me], currentChamber: t.revolver.currentChamber, shooter: t.shooter, shot: t.shot, outcome, winner: t.winner };
+    spinUsed: !!t.spinUsed[me], currentChamber: t.revolver.currentChamber, shooter: t.shooter, shot: t.shot, outcome, winner: t.winner,
+    hold: t.hold, spin: t.spin, forcedAt: t.forcedAt };
 }

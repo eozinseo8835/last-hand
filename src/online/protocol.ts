@@ -9,14 +9,17 @@ export const MAX_SEATS = 8;
 /** Seconds a human gets for each decision online (shorter than story mode, so other players never wait long). */
 export const ONLINE_DECISION_MS = 20000;
 export const ONLINE_TRIGGER_MS = 20000;
-export const DEAL_MS = 2200, REVEAL_MS = 2600, RESULT_MS = 3200, GUN_SLIDE_MS = 1500;
+export const DEAL_MS = 2200, REVEAL_MS = 2600, RESULT_MS = 3400, GUN_SLIDE_MS = 1500;
+/** Same staging as story mode: a 3-second trigger hold, a 1.4-second cylinder spin, and the Host's 4.2-second forced shot. */
+export const TRIGGER_HOLD_MS = 3000, SPIN_MS = 1400, FORCED_SHOT_MS = 4200;
 export const ROOM_CODE_LENGTH = 4;
 /** Room codes avoid letters that are easy to misread (0/O, 1/I/L). */
 export const ROOM_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
 export type SeatKind = 'empty' | 'human' | 'ai';
-export type TablePhase = 'dealing' | 'deciding' | 'reveal' | 'shooting' | 'result' | 'over';
-export type Action = 'hit' | 'stand' | 'fold' | 'spin' | 'pull';
+export type TablePhase = 'dealing' | 'deciding' | 'reveal' | 'shooting' | 'forced' | 'result' | 'over';
+/** hold/release: the shooter presses and lets go of the trigger (both players see it); pull: the 3-second hold completed. */
+export type Action = 'hit' | 'stand' | 'fold' | 'spin' | 'hold' | 'release' | 'pull';
 
 /** Matchmaking: wait a little for real players, then fill the rest of the eight seats with computer guests. */
 export const QUEUE_FILL_WAIT_MS = 20000;     // two or more waiting this long → start with whoever is here
@@ -62,6 +65,12 @@ export type TableView = {
   currentChamber: number;
   /** Set during shooting and after: who holds the revolver. */
   shooter: number | null;
+  /** The shooter is holding the trigger (raising the revolver): started at, and how long until it fires. */
+  hold: { seat: number; startedAt: number; duration: number } | null;
+  /** The last cylinder spin at this table (either player). */
+  spin: { seat: number; at: number } | null;
+  /** When the Host began a forced shot (phase 'forced'). */
+  forcedAt: number | null;
   /** Set during the result: what the last pull did. */
   shot: { seat: number; fired: boolean; forced: boolean; at: number } | null;
   /** 'win' | 'lose' | 'tie' | 'fold' for the hand just revealed, from the viewer's side. */
