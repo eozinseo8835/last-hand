@@ -11,6 +11,8 @@ import HoldTrigger from './HoldTrigger';
 import { HOST, OPPONENTS, type RunStats } from './campaign';
 import { FINAL_HOST_LINE } from './campaignDialogue';
 import { opponentCardReadout } from './presentation';
+import OnlineGame from './online/OnlineGame';
+import { onlineAvailable } from './online/useOnline';
 import { FILM, FLASHBACK, MASK_CAPTIONS, PAYOUT_CAPTION, SEASON, TRANSFER_STORY, liveOdds, viewerCount } from './storyBeats';
 import type { CSSProperties } from 'react';
 
@@ -72,10 +74,12 @@ export default function App() {
   const [menuStep, setMenuStep] = useState<'menu' | 'name' | 'credits'>('menu');
   const [playerName, setPlayerName] = useState(() => { try { return cleanName(localStorage.getItem('last-hand-name') ?? '') || DEFAULT_NAME; } catch { return DEFAULT_NAME; } });
   const [nameDraft, setNameDraft] = useState(() => playerName === DEFAULT_NAME ? '' : playerName);
+  const [nameFor, setNameFor] = useState<'story' | 'online'>('story'), [onlineMode, setOnlineMode] = useState(false);
   function beginStory() {
     const name = cleanName(nameDraft) || DEFAULT_NAME;
     setPlayerName(name); try { localStorage.setItem('last-hand-name', name === DEFAULT_NAME ? '' : name); } catch { /* private mode */ }
-    setMenuStep('menu'); start({ prologue: true });
+    setMenuStep('menu');
+    if (nameFor === 'online') setOnlineMode(true); else start({ prologue: true });
   }
   // The decision clock: a ring that empties over 30 seconds, red for the last ten.
   const [clockNow, setClockNow] = useState(() => Date.now());
@@ -128,7 +132,8 @@ export default function App() {
     </header>
     <main className="main-frame">
       <div className="stage-viewport" style={{ width: 1440 * scale, height: 810 * scale }}>
-        <section className={`stage ${intro ? 'intro-scene' : 'active-scene'} ${danger ? 'danger-stage' : ''} ${story ? 'story-scene' : ''} ${game.cinematic ? 'has-cinematic' : ''}`} data-room={game.roomNumber} data-story-stage={game.storyStage} style={{ transform: `scale(${scale})` }} aria-label="Last Hand game table">
+        <section className={`stage ${onlineMode ? 'active-scene online-stage' : intro ? 'intro-scene' : 'active-scene'} ${danger ? 'danger-stage' : ''} ${story ? 'story-scene' : ''} ${game.cinematic ? 'has-cinematic' : ''}`} data-room={game.roomNumber} data-story-stage={game.storyStage} style={{ transform: `scale(${scale})` }} aria-label="Last Hand game table">
+          {onlineMode ? <OnlineGame playerName={playerName} graphics={graphics} onExit={() => setOnlineMode(false)}/> : <>
           <Scene key={graphics} graphics={graphics} phase={game.phase} round={game.round} roundNumber={game.roundNumber} revealed={game.revealed} suspense={game.suspense} dead={game.dead} shotEffect={game.shotEffect} danger={danger} recenterToken={recenterToken} reaction={game.reaction} lookDisabled={rulesOpen || over} chambersFired={chambersFired} tell={game.tell} triggerHeld={game.triggerHeld} triggerProgress={game.triggerProgress} spinning={game.spinning} spinSerial={game.spinSerial} peekActor={game.peekActor} peekSerial={game.peekSerial} peekedCard={game.peekActor === 'player' ? game.round?.deck[0] : game.peekedCard} event={game.event} roomNumber={game.roomNumber} speaker={speaker} addressedTo={game.speech?.addressedTo} feedDeaths={game.feedDeaths} feedDeathSerial={game.feedDeathSerial} guestsRemaining={game.guestsRemaining} storyStage={game.storyStage} cinematic={game.cinematic} tiesCut={game.tiesCut} distantShot={game.distantShot} ambientEvent={game.ambientEvent} aiShotStartedAt={game.aiShotStartedAt} aiShotDurationMs={game.aiShotDurationMs ?? undefined} gunTransfer={game.gunTransfer} attention={game.attention} stress={game.stress} caught={game.caught} peekStartedAt={game.peekStartedAt} forceShotAt={game.forceShotAt} forceTarget={game.forceTarget} onOpponentInView={setOpponentInView}/>
           <div className="scene-edge"/>
           <div className="hud-layer">
@@ -141,15 +146,17 @@ export default function App() {
                 <h1>LAST<br/><span>HAND</span><i>♠</i></h1>
                 <p className="intro-subtitle">Eight guests. Four tables. One door.<br/>A hand you can’t afford to lose.</p>
                 {menuStep === 'menu' && <nav className="main-menu" aria-label="Main menu">
-                  <button className="primary-button sit-button" onClick={() => setMenuStep('name')}><span>Story mode</span><ArrowRight size={20}/></button>
-                  <button className="menu-option locked" disabled aria-describedby="online-soon"><span>Online 1v1</span><small id="online-soon">COMING SOON</small></button>
+                  <button className="primary-button sit-button" onClick={() => { setNameFor('story'); setMenuStep('name'); }}><span>Story mode</span><ArrowRight size={20}/></button>
+                  {onlineAvailable()
+                    ? <button className="menu-option" onClick={() => { setNameFor('online'); setMenuStep('name'); }}><span>Online 1v1</span><small>UP TO 8 GUESTS</small></button>
+                    : <button className="menu-option locked" disabled aria-describedby="online-soon"><span>Online 1v1</span><small id="online-soon">COMING SOON</small></button>}
                   <div className="menu-links"><button className="text-button" onClick={openRules}>How to play</button><button className="text-button" onClick={() => setMenuStep('credits')}>Credits</button></div>
                 </nav>}
                 {menuStep === 'name' && <form className="name-entry" onSubmit={event => { event.preventDefault(); beginStory(); }}>
                   <label htmlFor="guest-name">WHAT DO THEY CALL YOU?</label>
                   <input id="guest-name" value={nameDraft} maxLength={16} placeholder={DEFAULT_NAME} autoComplete="off" spellCheck={false} autoFocus onChange={event => setNameDraft(event.target.value)}/>
                   <small>Leave it blank to stay {DEFAULT_NAME}. Saved in this browser only.</small>
-                  <div className="name-actions"><button type="button" className="text-button" onClick={() => setMenuStep('menu')}>Back</button><button type="submit" className="primary-button sit-button"><span>Sit down</span><ArrowRight size={20}/></button></div>
+                  <div className="name-actions"><button type="button" className="text-button" onClick={() => setMenuStep('menu')}>Back</button><button type="submit" className="primary-button sit-button"><span>{nameFor === 'online' ? 'Continue' : 'Sit down'}</span><ArrowRight size={20}/></button></div>
                 </form>}
                 {menuStep === 'credits' && <div className="credits-panel">
                   <span className="small-label">CREDITS</span>
@@ -236,6 +243,7 @@ export default function App() {
           {opening && <div className="opening-controls"><span>{game.storyStage === 'prologue' ? 'PROLOGUE' : game.cinematic?.mode === 'arrival' ? `ROOM ${game.roomNumber} / 3` : game.introShort ? 'WELCOME BACK.' : `THE RULES · ${Math.min(game.introIndex + 1, 6)} / 6`}</span>{game.storyStage !== 'prologue' && <button className="secondary-button" onClick={advanceOpening} disabled={game.storyStage !== 'rules'}>Continue<ArrowRight size={17}/></button>}<button className="text-button skip-opening" onClick={skipOpening}>Skip introduction</button></div>}
           {story && <div className={`story-overlay story-${game.phase.toLowerCase()} story-${game.storyStage}`} aria-hidden="true"><div className="hood-fabric"/><span className="story-room-label">{game.phase === 'TRANSITION' ? `ROOM ${game.roomNumber} / 3` : ''}</span>{game.phase === 'ENDING_DEATH' && game.storyStage === 'no-signal' && <span className="no-signal">NO SIGNAL</span>}{game.phase === 'ENDING_WIN' && game.storyStage === 'title' && <span className="ending-title">LAST HAND</span>}</div>}
           {over && <div className="end-screen campaign-end"><div className="end-content"><span className="eyebrow">TRANSMISSION ENDED</span><h2>{game.stats.roomsCleared === 3 ? 'SURVIVED' : 'YOU DIED'}<span>.</span></h2><p>{game.stats.roomsCleared === 3 ? `One guest. One open door. Season ${SEASON + 1} is coming.` : `Room ${game.roomNumber}. Your seat is empty.`}</p><span className="run-name">{playerName}</span><RunSummary stats={game.stats} guests={game.guestsRemaining}/><button className="primary-button" onClick={() => start()}><RotateCcw size={17}/>Play Again<ArrowRight size={18}/></button><span className="end-footnote">THE AUDIENCE WILL BE WAITING.</span></div></div>}
+          </>}
         </section>
       </div>
     </main>

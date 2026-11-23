@@ -1,0 +1,17 @@
+# LAST HAND room server. Deploy from this folder: npx wrangler deploy
+name = "last-hand-server"
+main = "src/worker.ts"
+compatibility_date = "2025-09-01"
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "LastHandRoom"
+
+# The free plan needs SQLite-backed Durable Objects.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["LastHandRoom"]
+
+[vars]
+# Sites allowed to open rooms (the Netlify game and local development).
+ALLOWED_ORIGINS = "https://dulcet-zuccutto-df56d7.netlify.app,https://poetic-alfajores-084ea6.netlify.app,http://localhost:5173,http://127.0.0.1:5173"
