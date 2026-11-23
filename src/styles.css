@@ -51,7 +51,7 @@ a { color: inherit; text-decoration: none; }
 .eyebrow { font-size: 10px; letter-spacing: 2.5px; color: #c49c68; display: flex; align-items: center; gap: 11px; }
 .eyebrow > span { height: 1px; width: 20px; background: #c49c68; }
 h1 { font-family: 'DM Sans', sans-serif; font-size: 117px; font-weight: 700; line-height: .86; letter-spacing: -7px; margin: 30px 0 25px; width: 400px; position: relative; color: #e1dec2; text-shadow: 2px 0 #bdbba828, -1px 1px #8c9a6f2e; }
-h1 > span { color: #aeb99b; }h1 > i { font-family: Georgia, serif; font-size: 23px; font-style: normal; color: #bd955e; position: absolute; right: 18px; bottom: 11px; letter-spacing: 0; }
+h1 > span { color: #aeb99b; }
 .intro-subtitle { font-size: 14px; line-height: 1.9; color: #a2b195; margin: 0 0 30px; }
 .primary-button { min-height: 49px; padding: 0 24px; display: inline-flex; align-items: center; justify-content: center; gap: 15px; color: #162015; background: #caa372; border: 1px solid #e0b681; font-size: 13px; font-weight: 700; letter-spacing: 1px; box-shadow: inset 0 2px #f1dab531, 0 3px 0 #3d3524; }
 .primary-button:hover:not(:disabled) { background: #e2b986; border-color: #f5d2a6; }

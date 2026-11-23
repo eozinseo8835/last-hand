@@ -149,7 +149,7 @@ export default function App() {
               <div className="scene-index"><span className="live-dot"/> SUBLEVEL 06 <span className="index-line"/> PRIVATE TABLE</div>
               <div className="intro-copy">
                 <div className="eyebrow"><span/> A GAME OF NERVE</div>
-                <h1>LAST<br/><span>HAND</span><i>♠</i></h1>
+                <h1>LAST<br/><span>HAND</span></h1>
                 <p className="intro-subtitle">Eight guests. Four tables. One door.<br/>A hand you can’t afford to lose.</p>
                 {menuStep === 'menu' && <nav className="main-menu" aria-label="Main menu">
                   <button className="primary-button sit-button" onClick={() => { setNameFor('story'); setMenuStep('name'); }}><span>Story mode</span><ArrowRight size={20}/></button>
