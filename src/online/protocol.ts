@@ -9,7 +9,9 @@ export const MAX_SEATS = 8;
 /** Seconds a human gets for each decision online (shorter than story mode, so other players never wait long). */
 export const ONLINE_DECISION_MS = 20000;
 export const ONLINE_TRIGGER_MS = 20000;
-export const DEAL_MS = 2200, REVEAL_MS = 2600, RESULT_MS = 3400, GUN_SLIDE_MS = 1500;
+/** The deal is staged like story mode: the Host shuffles, deals four cards one at a time, then the opponent checks the hole card. */
+export const SHUFFLE_MS = 900, DEAL_CARD_MS = 650, HOLE_CHECK_MS = 600;
+export const DEAL_MS = SHUFFLE_MS + 4 * DEAL_CARD_MS + HOLE_CHECK_MS, REVEAL_MS = 2600, RESULT_MS = 3400, GUN_SLIDE_MS = 1500;
 /** Same staging as story mode: a 3-second trigger hold, a 1.4-second cylinder spin, and the Host's 4.2-second forced shot. */
 export const TRIGGER_HOLD_MS = 3000, SPIN_MS = 1400, FORCED_SHOT_MS = 4200;
 export const ROOM_CODE_LENGTH = 4;

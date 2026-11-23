@@ -11,7 +11,8 @@ import HoldTrigger from './HoldTrigger';
 import { HOST, OPPONENTS, type RunStats } from './campaign';
 import { FINAL_HOST_LINE } from './campaignDialogue';
 import { opponentCardReadout } from './presentation';
-import OnlineGame from './online/OnlineGame';
+import OnlineOverlay from './online/OnlineGame';
+import { useOnlineGame } from './online/useOnlineGame';
 import { onlineAvailable } from './online/useOnline';
 import { FILM, FLASHBACK, MASK_CAPTIONS, PAYOUT_CAPTION, SEASON, TRANSFER_STORY, liveOdds, viewerCount } from './storyBeats';
 import type { CSSProperties } from 'react';
@@ -69,12 +70,16 @@ export default function App() {
   const [textSpeed,setTextSpeed]=useState<TextSpeed>('Normal'),[logOpen,setLogOpen]=useState(false);
   const [graphics,setGraphics]=useState<GraphicsMode>(()=>{try{return localStorage.getItem('last-hand-graphics')==='pixel'?'pixel':'cinematic';}catch{return 'cinematic';}});
   const chooseGraphics=(mode:GraphicsMode)=>{setGraphics(mode);try{localStorage.setItem('last-hand-graphics',mode);}catch{/* private mode */}};
-  const { game, finishTyping, start, fold, hit, stand, beginTriggerHold, endTriggerHold, spinCylinder, peek, finishSpeech, advanceOpening, skipOpening, setOpponentInView, pauseDecisionClock } = useGame(textSpeed);
-  // Title menu: Story mode asks for a name (kept in this browser only), then plays the prologue film.
+  // Menu and name come first: story mode and online mode both use them.
   const [menuStep, setMenuStep] = useState<'menu' | 'name' | 'credits'>('menu');
   const [playerName, setPlayerName] = useState(() => { try { return cleanName(localStorage.getItem('last-hand-name') ?? '') || DEFAULT_NAME; } catch { return DEFAULT_NAME; } });
   const [nameDraft, setNameDraft] = useState(() => playerName === DEFAULT_NAME ? '' : playerName);
   const [nameFor, setNameFor] = useState<'story' | 'online'>('story'), [onlineMode, setOnlineMode] = useState(false);
+  // Online play runs through exactly the same HUD and scene as story mode: only where the game state comes from differs.
+  const storyApi = useGame(textSpeed), onlineApi = useOnlineGame(playerName, onlineMode);
+  const api = onlineMode ? onlineApi : storyApi;
+  const { game, finishTyping, start, fold, hit, stand, beginTriggerHold, endTriggerHold, spinCylinder, peek, finishSpeech, advanceOpening, skipOpening, setOpponentInView, pauseDecisionClock } = api;
+  // Title menu: Story mode asks for a name (kept in this browser only), then plays the prologue film.
   function beginStory() {
     const name = cleanName(nameDraft) || DEFAULT_NAME;
     setPlayerName(name); try { localStorage.setItem('last-hand-name', name === DEFAULT_NAME ? '' : name); } catch { /* private mode */ }
@@ -99,9 +104,10 @@ export default function App() {
   const opening = game.phase === 'OPENING';
   const story = opening || game.phase === 'TRANSITION' || game.phase === 'ENDING_WIN' || game.phase === 'ENDING_DEATH';
   const opponent = OPPONENTS[game.roomNumber];
+  const opponentName = onlineMode ? onlineApi.opponentName : opponent.name;
   const speaker = game.speech?.speaker ?? null;
-  const speakerName = speaker === 'host' ? HOST.name : opponent.name;
-  const ready = game.phase === 'PLAYER_DECISION' && game.tiesCut?.player !== false;
+  const speakerName = speaker === 'host' ? HOST.name : opponentName;
+  const ready = game.phase === 'PLAYER_DECISION' && game.tiesCut?.player !== false && !(onlineMode && onlineApi.decided);
   const playerScore = handScore(game.round?.player ?? []);
   const dealerScore = handScore(game.round?.ai ?? []);
   const danger = !intro && game.revolver.currentChamber >= CONFIG.DANGER_CHAMBER;
@@ -133,12 +139,12 @@ export default function App() {
     <main className="main-frame">
       <div className="stage-viewport" style={{ width: 1440 * scale, height: 810 * scale }}>
         <section className={`stage ${onlineMode ? 'active-scene online-stage' : intro ? 'intro-scene' : 'active-scene'} ${danger ? 'danger-stage' : ''} ${story ? 'story-scene' : ''} ${game.cinematic ? 'has-cinematic' : ''}`} data-room={game.roomNumber} data-story-stage={game.storyStage} style={{ transform: `scale(${scale})` }} aria-label="Last Hand game table">
-          {onlineMode ? <OnlineGame playerName={playerName} graphics={graphics} onExit={() => setOnlineMode(false)}/> : <>
           <Scene key={graphics} graphics={graphics} phase={game.phase} round={game.round} roundNumber={game.roundNumber} revealed={game.revealed} suspense={game.suspense} dead={game.dead} shotEffect={game.shotEffect} danger={danger} recenterToken={recenterToken} reaction={game.reaction} lookDisabled={rulesOpen || over} chambersFired={chambersFired} tell={game.tell} triggerHeld={game.triggerHeld} triggerProgress={game.triggerProgress} spinning={game.spinning} spinSerial={game.spinSerial} peekActor={game.peekActor} peekSerial={game.peekSerial} peekedCard={game.peekActor === 'player' ? game.round?.deck[0] : game.peekedCard} event={game.event} roomNumber={game.roomNumber} speaker={speaker} addressedTo={game.speech?.addressedTo} feedDeaths={game.feedDeaths} feedDeathSerial={game.feedDeathSerial} guestsRemaining={game.guestsRemaining} storyStage={game.storyStage} cinematic={game.cinematic} tiesCut={game.tiesCut} distantShot={game.distantShot} ambientEvent={game.ambientEvent} aiShotStartedAt={game.aiShotStartedAt} aiShotDurationMs={game.aiShotDurationMs ?? undefined} gunTransfer={game.gunTransfer} attention={game.attention} stress={game.stress} caught={game.caught} peekStartedAt={game.peekStartedAt} forceShotAt={game.forceShotAt} forceTarget={game.forceTarget} onOpponentInView={setOpponentInView}/>
           <div className="scene-edge"/>
           <div className="hud-layer">
             <div className="scene-corner top-left"/><div className="scene-corner top-right"/><div className="scene-corner bottom-left"/><div className="scene-corner bottom-right"/>
-            {intro ? <>
+            {onlineMode && <OnlineOverlay online={onlineApi.online} playerName={playerName} now={onlineApi.now} onExit={() => { setOnlineMode(false); setMenuStep('menu'); }}/>}
+            {onlineMode && intro ? null : intro ? <>
               <div className="intro-shade"/>
               <div className="scene-index"><span className="live-dot"/> SUBLEVEL 06 <span className="index-line"/> PRIVATE TABLE</div>
               <div className="intro-copy">
@@ -171,9 +177,9 @@ export default function App() {
               <div className="intro-rules"><div><span>01</span><p>Get close to 21.<br/><b>Never go over.</b></p></div><div><span>02</span><p>Lose the hand.<br/><b>Pull the trigger.</b></p></div><div><span>03</span><p>Six chambers.<br/><b>One bullet.</b></p></div></div>
             </> : <>
               <div className="game-hud hud-left"><span className="small-label">FOLDS LEFT</span><div className="fold-indicators">{Array.from({ length: 3 }, (_, i) => <span key={i} className={i < game.folds ? 'full' : ''}/>)}<b>{game.folds} / 3</b></div><span className="ability-summary" aria-label={`Your abilities: SPIN ${Number(game.abilities.player.spin)}, PEEK ${Number(game.abilities.player.peek)}`}>SPIN {Number(game.abilities.player.spin)} · PEEK {Number(game.abilities.player.peek)}</span></div>
-              <div className="round-hud campaign-hud"><div><span className="live-dot"/> <b>ROOM {game.roomNumber} / 3</b><i/><span>ROUND {String(game.roundNumber).padStart(2, '0')}</span></div><span className="opponent-name">{opponent.name}</span><span className="guest-count" role="status">GUESTS REMAINING: {game.guestsRemaining}</span>{game.roomNumber >= 2 && (() => { const odds = liveOdds(chambersFired, game.lossStreak ?? 0, game.roomNumber); return <span className="live-odds" aria-label="Live betting odds"><span className="rec-dot"/>LIVE · {(viewerCount(game.roomNumber * 13) + chambersFired * 1840).toLocaleString('en-US')} WATCHING · <b>{playerName} {odds.you}x</b> · {opponent.name.replace(/^THE /, '')} {odds.them}x</span>; })()}</div>
-              <div className={`game-hud hud-right ${danger ? 'danger-hud' : ''}`}><div><span className="small-label">SHARED CYLINDER</span><b>CHAMBER {Math.min(game.revolver.currentChamber, 6)} <span>/ 6</span></b><span className="ability-summary" aria-label={`${opponent.name} abilities: SPIN ${Number(game.abilities.ai.spin)}, PEEK ${Number(game.abilities.ai.peek)}`}>SPIN {Number(game.abilities.ai.spin)} · PEEK {Number(game.abilities.ai.peek)}</span></div><Cylinder chamber={game.revolver.currentChamber}/></div>
-              {!story && !over && <div className="opponent-readout"><span className="small-label">{opponent.name}</span><span className="opponent-card-readout" aria-label={`Visible cards for ${opponent.name}`}>{opponentCardReadout(game.round?.ai ?? [], game.revealed)}</span><b>{game.revealed && game.round ? <>{dealerScore.soft && <small className="soft-prefix">Soft </small>}{dealerScore.total}</> : '??'}<small> POINTS</small></b></div>}
+              <div className="round-hud campaign-hud"><div><span className="live-dot"/> <b>ROOM {game.roomNumber} / 3</b><i/><span>ROUND {String(onlineMode ? onlineApi.displayRound : game.roundNumber).padStart(2, '0')}</span></div><span className="opponent-name">{opponentName}</span><span className="guest-count" role="status">GUESTS REMAINING: {game.guestsRemaining}</span>{game.roomNumber >= 2 && (() => { const odds = liveOdds(chambersFired, game.lossStreak ?? 0, game.roomNumber); return <span className="live-odds" aria-label="Live betting odds"><span className="rec-dot"/>LIVE · {(viewerCount(game.roomNumber * 13) + chambersFired * 1840).toLocaleString('en-US')} WATCHING · <b>{playerName} {odds.you}x</b> · {opponentName.replace(/^THE /, '')} {odds.them}x</span>; })()}</div>
+              <div className={`game-hud hud-right ${danger ? 'danger-hud' : ''}`}><div><span className="small-label">SHARED CYLINDER</span><b>CHAMBER {Math.min(game.revolver.currentChamber, 6)} <span>/ 6</span></b><span className="ability-summary" aria-label={`${opponentName} abilities: SPIN ${Number(game.abilities.ai.spin)}, PEEK ${Number(game.abilities.ai.peek)}`}>SPIN {Number(game.abilities.ai.spin)} · PEEK {Number(game.abilities.ai.peek)}</span></div><Cylinder chamber={game.revolver.currentChamber}/></div>
+              {!story && !over && <div className="opponent-readout"><span className="small-label">{opponentName}</span><span className="opponent-card-readout" aria-label={`Visible cards for ${opponentName}`}>{opponentCardReadout(game.round?.ai ?? [], game.revealed)}</span><b>{game.revealed && game.round ? <>{dealerScore.soft && <small className="soft-prefix">Soft </small>}{dealerScore.total}</> : '??'}<small> POINTS</small></b></div>}
               {game.speech && !over && <div className={`stranger-transmission speaker-${speaker}`} data-speaker={speaker} data-speech-id={game.speech.id}>
                 <div className="opponent-caption"><span className="small-label speaker-label">{speakerName}</span><span className="transmission-line"/></div>
                 <Typewriter key={game.speech.id} text={game.speech.text} category={game.speech.category} danger={game.speech.danger} chambersFired={game.speech.chambersFired} speaker={game.speech.speaker} profile={speaker === 'host' ? HOST.voice : opponent.voice} textSpeed={game.speech.textSpeed??textSpeed} onTyped={finishTyping} behind={game.phase === 'ENDING_WIN' && game.speech.text === FINAL_HOST_LINE} onFinish={finishSpeech}/>
@@ -243,7 +249,6 @@ export default function App() {
           {opening && <div className="opening-controls"><span>{game.storyStage === 'prologue' ? 'PROLOGUE' : game.cinematic?.mode === 'arrival' ? `ROOM ${game.roomNumber} / 3` : game.introShort ? 'WELCOME BACK.' : `THE RULES · ${Math.min(game.introIndex + 1, 6)} / 6`}</span>{game.storyStage !== 'prologue' && <button className="secondary-button" onClick={advanceOpening} disabled={game.storyStage !== 'rules'}>Continue<ArrowRight size={17}/></button>}<button className="text-button skip-opening" onClick={skipOpening}>Skip introduction</button></div>}
           {story && <div className={`story-overlay story-${game.phase.toLowerCase()} story-${game.storyStage}`} aria-hidden="true"><div className="hood-fabric"/><span className="story-room-label">{game.phase === 'TRANSITION' ? `ROOM ${game.roomNumber} / 3` : ''}</span>{game.phase === 'ENDING_DEATH' && game.storyStage === 'no-signal' && <span className="no-signal">NO SIGNAL</span>}{game.phase === 'ENDING_WIN' && game.storyStage === 'title' && <span className="ending-title">LAST HAND</span>}</div>}
           {over && <div className="end-screen campaign-end"><div className="end-content"><span className="eyebrow">TRANSMISSION ENDED</span><h2>{game.stats.roomsCleared === 3 ? 'SURVIVED' : 'YOU DIED'}<span>.</span></h2><p>{game.stats.roomsCleared === 3 ? `One guest. One open door. Season ${SEASON + 1} is coming.` : `Room ${game.roomNumber}. Your seat is empty.`}</p><span className="run-name">{playerName}</span><RunSummary stats={game.stats} guests={game.guestsRemaining}/><button className="primary-button" onClick={() => start()}><RotateCcw size={17}/>Play Again<ArrowRight size={18}/></button><span className="end-footnote">THE AUDIENCE WILL BE WAITING.</span></div></div>}
-          </>}
         </section>
       </div>
     </main>

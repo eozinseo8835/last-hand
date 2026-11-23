@@ -352,3 +352,6 @@ h1 > span { color: #aeb99b; }h1 > i { font-family: Georgia, serif; font-size: 23
 .online-panel .secondary-button { min-height: 40px; padding: 0 16px; }
 .online-panel.queue .queue-time { font-family: 'Courier New', monospace; font-size: 28px; color: #f0d6a8; }
 .online-hint { position: absolute; left: 50%; bottom: -26px; transform: translateX(-50%); white-space: nowrap; font-family: 'Courier New', monospace; font-size: 11px; letter-spacing: 1px; color: #c9cdb5; }
+.online-code { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 13; font-family: 'Courier New', monospace; font-size: 10px; letter-spacing: 2px; color: #c9b9a0; display: inline-flex; align-items: center; gap: 14px; white-space: nowrap; }
+.online-code .text-button { display: inline-flex; gap: 4px; align-items: center; font-size: 10px; }
+.online-code .rec-dot { width: 7px; height: 7px; }
